@@ -1,0 +1,25 @@
+# 同义词表：业务术语 -> 指标/维度
+# 冲突检测：一个词映射多个指标时必须进审核队列（见 AGENTS.md 术语表）
+# confidence 用于 rerank 排序
+
+synonyms:
+  - term: 成交额
+    maps_to: { type: metric, name: gmv }
+    confidence: 0.95
+    source: manual
+  - term: GMV
+    maps_to: { type: metric, name: gmv }
+    confidence: 0.99
+    source: manual
+  - term: 流水
+    maps_to: { type: metric, name: gmv }
+    confidence: 0.80
+    source: manual
+  - term: 客单价
+    maps_to: { type: metric, name: aov }
+    confidence: 0.95
+    source: manual
+  - term: 华东
+    maps_to: { type: dimension, name: region, value: "华东" }
+    confidence: 0.99
+    source: manual

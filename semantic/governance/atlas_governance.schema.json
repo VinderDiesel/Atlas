@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/apache/ossie/contrib/atlas_governance.schema.json",
+  "title": "Atlas Governance Extension",
+  "description": "Atlas 治理扩展：补齐 Apache Ossie 核心规范未覆盖的 ownership / lineage / freshness / policy / quality。挂载在 Ossie 的 custom_extensions[].data 字段（vendor_name = ATLAS）内，该字段为 JSON 字符串，解析后按本 Schema 校验。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "governance": {
+      "type": "object",
+      "description": "归属与版本：Ossie 核心规范完全缺失的部分，是本项目的核心价值",
+      "required": ["owner", "version", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "owner": {
+          "type": "string",
+          "description": "口径争议时的唯一裁决人，邮箱格式",
+          "format": "email"
+        },
+        "version": { "type": "integer", "minimum": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["active", "deprecated", "draft"]
+        },
+        "review_cycle_days": { "type": "integer", "minimum": 1 },
+        "supersedes": {
+          "type": ["string", "null"],
+          "description": "本版本取代的旧指标名。非 null 时 reason 与 migration_window 必填"
+        },
+        "reason": { "type": ["string", "null"] },
+        "migration_window": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "supersedes": { "type": "string" } },
+            "required": ["supersedes"]
+          },
+          "then": { "required": ["reason", "migration_window"] }
+        }
+      ]
+    },
+    "lineage": {
+      "type": "object",
+      "description": "血缘：Ossie 核心规范未提供",
+      "additionalProperties": false,
+      "properties": {
+        "source_system": { "type": "string" },
+        "source_catalog": { "type": "string" },
+        "source_tables": { "type": "array", "items": { "type": "string" } },
+        "source_columns": { "type": "array", "items": { "type": "string" } },
+        "transform_jobs": { "type": "array", "items": { "type": "string" } },
+        "dependencies": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "依赖的其他指标名，用于影响面分析"
+        },
+        "downstream_consumers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "description": "新鲜度与 SLA：Ossie 核心规范未提供",
+      "additionalProperties": false,
+      "properties": {
+        "schedule": { "type": "string", "description": "cron 表达式" },
+        "sla_minutes": { "type": "integer", "minimum": 1 },
+        "expected_lag_hours": {
+          "description": "实测后填写，禁止预估",
+          "type": ["number", "string"]
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "description": "访问策略：Ossie 不定义行级权限，Atlas 在此声明引用",
+      "additionalProperties": false,
+      "properties": {
+        "default_row_policy": {
+          "type": "string",
+          "description": "引用 semantic/policies/ 下的策略名"
+        },
+        "require_approval_for_change": { "type": "boolean" },
+        "approvers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "description": "质量与评测绑定：把语义定义和黄金集关联起来",
+      "additionalProperties": false,
+      "properties": {
+        "gold_test_cases": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "关联的黄金集用例 ID"
+        },
+        "expected_value_snapshot_sha": {
+          "type": ["string", "null"],
+          "description": "期望值绑定的数据快照 sha"
+        },
+        "last_validated_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "fibo_alignment": {
+      "type": "object",
+      "description": "FIBO L2 概念对齐（ADR-0007）：Ossie 不标准化'信任'，FIBO 映射给出可审计的业务含义锚点。概念 IRI 必须已由 data/fibo/check_iris.py 实测验证存在。",
+      "required": ["layer", "fibo_commit", "mappings"],
+      "additionalProperties": false,
+      "properties": {
+        "layer": { "type": "string", "const": "L2" },
+        "fibo_commit": { "type": "string", "description": "FIBO 仓库锁定 commit sha（概念版本）" },
+        "commons_release": { "type": "string", "description": "OMG Commons 发布版本（基础概念来源）" },
+        "verification": { "type": "string", "description": "IRI 存在性校验脚本路径" },
+        "mappings": {
+          "type": "object",
+          "description": "dataset/field/metric → FIBO 概念映射。key 格式：dataset、dataset.field 或 metric:<name>",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["concept", "match_type"],
+            "additionalProperties": false,
+            "properties": {
+              "concept": {
+                "type": "string",
+                "format": "uri",
+                "description": "FIBO 或 OMG Commons 概念 IRI，必须存在于锁定版本的本体闭包"
+              },
+              "match_type": {
+                "type": "string",
+                "enum": ["exact_match", "broad_match", "related"],
+                "description": "exact_match=语义一致；broad_match=概念等价但粒度不同；related=强相关但不等同"
+              },
+              "confidence": {
+                "type": "string",
+                "enum": ["high", "medium", "low"],
+                "description": "人工核对确信度（标注过程属性，非实测性能数字）；概念映射准确率由评测实测并另行报告"
+              },
+              "verified_at": { "type": "string", "format": "date" },
+              "note": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

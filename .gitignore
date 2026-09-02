@@ -1,0 +1,48 @@
+# 环境与密钥
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 数据与快照产物（大文件不入库，只提交 sha 与元数据）
+data/raw/
+data/snapshots/*.parquet
+data/snapshots/*.csv
+data/snapshots/*.sql.gz
+
+# FIBO 本体与 OMG Commons/LCC 依赖（外部下载，只提交锁定 sha 与 README）
+data/fibo/fibo-src/
+data/fibo/vendor/
+
+# 模型权重（不入库，只提交训练配置）
+lora/weights/
+*.safetensors
+*.bin
+*.pt
+
+# Airflow 生成的 DAG —— 禁止手改，也禁止入库
+airflow/dags/generated/*
+!airflow/dags/generated/.gitkeep
+
+# 评测产物（报告入库，临时结果不入库）
+eval/reports/tmp_*
+eval/failures/raw_*
+query.plan.json
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

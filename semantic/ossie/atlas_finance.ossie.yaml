@@ -1,0 +1,1189 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/apache/ossie/main/core-spec/ossie-schema.json
+#
+# Atlas 金融语义模型 —— Apache Ossie Core Metadata Spec 0.2.0.dev0
+#
+# 数据来源：TPC-DI v1.1.0 零售证券经纪基准（公开注册下载），不对应任何真实企业指标。
+# 表结构遵循 TPC-DI 规范 DW schema（dim_account / dim_trade / fact_cash_balances 等），
+# 代理键列名保留 SK_ 前缀，字段名与规范一致，可审计。
+#
+# 治理扩展（owner/version/supersedes/lineage/row_policy）不在 Ossie 核心规范中，
+# 通过 custom_extensions: vendor_name = ATLAS 承载，见 ../governance/
+# FIBO 概念对齐（fibo_alignment，ADR-0007 L2 层）同样挂载于此，
+# 所有概念 IRI 已经 data/fibo/check_iris.py 实测验证存在。
+#
+# ⚠️ 0.2.0.dev0 为 DRAFT，schema 可能变化。锁定时需在 README 记录具体 commit sha。
+
+version: "0.2.0.dev0"
+
+semantic_model:
+  - name: atlas_finance_analytics
+    description: >
+      Atlas 金融分析语义模型，基于 TPC-DI 零售证券经纪基准重建。
+      覆盖交易、持仓、现金余额、账户、客户、证券、经纪机构七个域，
+      用于验证语义层 → 指标平台 → NL2SQL 的端到端链路，并承载 FIBO 概念对齐。
+    ai_context:
+      instructions: >
+        使用本模型进行证券经纪业务分析。
+        涉及"交易额/成交金额"优先使用 total_trade_value（数量 × 成交价）；
+        涉及"佣金"使用 commission_revenue；
+        涉及"持仓"使用 holdings_value（按最新快照日）；
+        涉及"现金"使用 cash_balance；
+        所有金额默认单位为美元，时间默认时区 +08:00。
+        当用户问句存在歧义（未指明时间范围、未指明拆分维度）时，必须反问澄清，不要猜测。
+      synonyms:
+        - "金融分析"
+        - "证券分析"
+        - "经纪业务"
+        - "交易分析"
+        - "财富管理"
+
+    # ===================================================================
+    # 治理扩展：Ossie 核心规范不覆盖的部分（本项目价值所在）
+    # ===================================================================
+    custom_extensions:
+      - vendor_name: ATLAS
+        data: |
+          {
+            "governance": {
+              "owner": "finance@atlas.local",
+              "version": 1,
+              "status": "active",
+              "review_cycle_days": 30,
+              "supersedes": null,
+              "reason": null,
+              "migration_window": null
+            },
+            "lineage": {
+              "source_system": "TPC-DI v1.1.0 SF1",
+              "source_catalog": "iceberg_rest.atlas",
+              "source_tables": ["dim_account", "dim_broker", "dim_customer", "dim_security", "dim_date", "dim_trade", "fact_cash_balances", "fact_holdings"],
+              "transform_jobs": ["sql/dwd/*", "sql/dws/*"],
+              "downstream_consumers": []
+            },
+            "freshness": {
+              "schedule": "30 1 * * *",
+              "sla_minutes": 90,
+              "expected_lag_hours": "<待实测填写>"
+            },
+            "policy": {
+              "default_row_policy": "rp_branch_visible",
+              "require_approval_for_change": true,
+              "approvers": ["finance-metric-owners"]
+            },
+            "quality": {
+              "gold_test_cases": ["gold-101", "gold-102", "gold-103"],
+              "last_validated_at": null
+            },
+            "fibo_alignment": {
+              "layer": "L2",
+              "fibo_commit": "119fa8c091aa4beece7d22aefa6fe138021a4355",
+              "commons_release": "20250801",
+              "verification": "data/fibo/check_iris.py",
+              "mappings": {
+                "dim_customer": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/Person",
+                  "match_type": "exact_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "TPC-DI 客户均为自然人（含 gender/DOB），FIBO Person = individual human being"
+                },
+                "dim_account": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "TPC-DI 账户为证券经纪账户，FIBO BrokerageAccount = 由经纪公司提供的投资账户"
+                },
+                "dim_account->dim_customer": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/AccountHolder",
+                  "match_type": "related",
+                  "confidence": "medium",
+                  "verified_at": "2026-09-02",
+                  "note": "账户与客户的归属关系对应 AccountHolder 语义"
+                },
+                "dim_security": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+                  "match_type": "exact_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "TPC-DI 证券（股票/基金）即 FIBO Security 的子类集合"
+                },
+                "dim_broker": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/FinancialServicesEntities/BrokerageFirm",
+                  "match_type": "broad_match",
+                  "confidence": "medium",
+                  "verified_at": "2026-09-02",
+                  "note": "TPC-DI broker 为经纪公司雇员，映射至其所属机构 BrokerageFirm；个体角色映射待扩展"
+                },
+                "dim_broker.Branch": {
+                  "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+                  "match_type": "broad_match",
+                  "confidence": "medium",
+                  "verified_at": "2026-09-02",
+                  "note": "营业部/分支是组织的子单元，FIBO 2.0 该概念位于 OMG Commons"
+                },
+                "dim_date": {
+                  "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+                  "match_type": "exact_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "FIBO 2.0 时间基础概念位于 OMG Commons DatesAndTimes"
+                },
+                "fact_trades": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+                  "match_type": "exact_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "TPC-DI 交易事实即证券交易；上层概念 MarketTransaction（FND/TransactionsExt）亦已验证存在"
+                },
+                "fact_trades.TradePrice": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "成交价是货币金额"
+                },
+                "fact_trades.Commission": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "佣金是经纪服务收取的费用"
+                },
+                "fact_cash_balances.Cash": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Balance",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "现金余额是账户余额的一种"
+                },
+                "metric:total_trade_value": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "交易额的量纲是货币金额"
+                },
+                "metric:commission_revenue": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "佣金收入对应经纪服务 Fee"
+                },
+                "metric:holdings_value": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+                  "match_type": "related",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "持仓市值按货币金额度量；持仓本体概念（MD 域）未纳入本次子集，待扩展"
+                },
+                "metric:cash_balance": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Balance",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "现金余额即账户 Balance"
+                },
+                "metric:trade_count": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+                  "match_type": "related",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "交易笔数是对证券交易事件的计数"
+                },
+                "metric:active_account_count": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+                  "match_type": "related",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "活跃账户数是对经纪账户的计数"
+                }
+              }
+            }
+          }
+
+    # ===================================================================
+    # Datasets
+    # 列名遵循 TPC-DI 规范（SK_ 代理键前缀），不做重命名，保证可审计
+    # ===================================================================
+    datasets:
+      - name: fact_trades
+        source: iceberg_rest.atlas.dwd_fact_trades
+        primary_key:
+          - TradeID
+        unique_keys:
+          - [TradeID]
+        description: 证券交易事实（TPC-DI dim_trade 中的成交记录），每行一笔已执行交易
+        ai_context:
+          synonyms:
+            - "交易明细"
+            - "成交记录"
+            - "交易流水"
+        fields:
+          - name: TradeID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: TradeID
+            description: 交易标识（自然键）
+            datatype: Integer
+            dimension:
+              is_time: false
+
+          - name: SK_CreateDateID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_CreateDateID
+            description: 成交日期外键，指向 dim_date
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "交易日期"
+                - "成交日期"
+
+          - name: SK_AccountID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_AccountID
+            description: 账户外键，指向 dim_account
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "账户"
+                - "客户账户"
+
+          - name: SK_CustomerID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_CustomerID
+            description: 客户外键，指向 dim_customer
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "客户"
+                - "交易客户"
+
+          - name: SK_BrokerID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_BrokerID
+            description: 经纪人外键，指向 dim_broker
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "经纪人"
+                - "客户经理"
+
+          - name: SK_SecurityID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_SecurityID
+            description: 证券外键，指向 dim_security
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "证券"
+                - "标的"
+
+          - name: Quantity
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Quantity
+            description: 成交数量（股/份）
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "数量"
+                - "成交量"
+
+          - name: TradePrice
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: TradePrice
+            description: 成交单价（美元）
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "成交价"
+                - "成交单价"
+                - "价格"
+
+          - name: Commission
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Commission
+            description: 佣金（美元），经纪服务费
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "佣金"
+                - "手续费"
+
+          - name: Tax
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Tax
+            description: 交易税（美元）
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "税费"
+                - "交易税"
+
+          - name: CashFlag
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: CashFlag
+            description: 现金交易标记（true=现金 / false=融资）
+            datatype: Boolean
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "现金交易"
+                - "融资交易"
+
+          - name: Status
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Status
+            description: 交易状态（完成/取消等）
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "交易状态"
+
+          - name: Type
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Type
+            description: 交易类型（买入/卖出等）
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "交易类型"
+                - "买卖方向"
+
+      - name: fact_holdings
+        source: iceberg_rest.atlas.dwd_fact_holdings
+        primary_key:
+          - HoldingID
+        unique_keys:
+          - [HoldingID]
+        description: 持仓事实（账户在某日的持仓快照）
+        ai_context:
+          synonyms:
+            - "持仓明细"
+            - "持仓快照"
+        fields:
+          - name: HoldingID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: HoldingID
+            description: 持仓标识
+            datatype: Integer
+            dimension:
+              is_time: false
+
+          - name: SK_AccountID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_AccountID
+            description: 账户外键，指向 dim_account
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "账户"
+
+          - name: SK_SecurityID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_SecurityID
+            description: 证券外键，指向 dim_security
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "证券"
+
+          - name: SK_DateID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_DateID
+            description: 持仓日期外键，指向 dim_date
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "持仓日期"
+
+          - name: CurrentQty
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: CurrentQty
+            description: 当前持仓数量
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "持仓数量"
+
+          - name: CurrentPrice
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: CurrentPrice
+            description: 当前市价（美元）
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "市价"
+                - "现价"
+
+          - name: CurrentValue
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: CurrentValue
+            description: 持仓市值（数量 × 市价，美元）
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "持仓市值"
+                - "市值"
+
+      - name: fact_cash_balances
+        source: iceberg_rest.atlas.dwd_fact_cash_balances
+        primary_key:
+          - SK_AccountID
+          - SK_DateID
+        unique_keys:
+          - [SK_AccountID, SK_DateID]
+        description: 现金余额事实（账户每日余额）
+        ai_context:
+          synonyms:
+            - "现金余额"
+            - "账户余额"
+        fields:
+          - name: SK_AccountID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_AccountID
+            description: 账户外键，指向 dim_account
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "账户"
+
+          - name: SK_CustomerID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_CustomerID
+            description: 客户外键，指向 dim_customer
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "客户"
+
+          - name: SK_DateID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_DateID
+            description: 余额日期外键，指向 dim_date
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "日期"
+
+          - name: Cash
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Cash
+            description: 当日现金余额（美元）
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "现金"
+                - "余额"
+
+      - name: dim_account
+        source: iceberg_rest.atlas.dwd_dim_account
+        primary_key:
+          - SK_AccountID
+        unique_keys:
+          - [SK_AccountID]
+        description: 账户维度（含状态与税务类型）
+        ai_context:
+          synonyms:
+            - "账户维度"
+            - "账户主数据"
+        fields:
+          - name: SK_AccountID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_AccountID
+            description: 账户代理键
+            datatype: Integer
+            dimension:
+              is_time: false
+
+          - name: SK_BrokerID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_BrokerID
+            description: 托管经纪人外键，指向 dim_broker
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "托管经纪人"
+
+          - name: SK_CustomerID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_CustomerID
+            description: 账户持有人外键，指向 dim_customer
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "账户持有人"
+
+          - name: Status
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Status
+            description: 账户状态（active/closed）
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "账户状态"
+
+          - name: TaxStatus
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: TaxStatus
+            description: 税务状态（0/1/2）
+            datatype: Integer
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "税务状态"
+
+      - name: dim_customer
+        source: iceberg_rest.atlas.dwd_dim_customer
+        primary_key:
+          - SK_CustomerID
+        unique_keys:
+          - [SK_CustomerID]
+        description: 客户维度（含分层与财富属性）
+        ai_context:
+          synonyms:
+            - "客户维度"
+            - "客户主数据"
+        fields:
+          - name: SK_CustomerID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_CustomerID
+            description: 客户代理键
+            datatype: Integer
+            dimension:
+              is_time: false
+
+          - name: Tier
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Tier
+            description: 客户分层（等级越高越优质）
+            datatype: Integer
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "客户分层"
+                - "客户等级"
+                - "客户梯队"
+
+          - name: Gender
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Gender
+            description: 性别
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "性别"
+
+          - name: NetWorth
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: NetWorth
+            description: 净资产估算（美元）
+            datatype: Integer
+            ai_context:
+              synonyms:
+                - "净资产"
+                - "净财富"
+
+          - name: CreditRating
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: CreditRating
+            description: 信用评级（数值）
+            datatype: Integer
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "信用评级"
+
+      - name: dim_security
+        source: iceberg_rest.atlas.dwd_dim_security
+        primary_key:
+          - SK_SecurityID
+        unique_keys:
+          - [SK_SecurityID]
+        description: 证券维度（股票/基金等）
+        ai_context:
+          synonyms:
+            - "证券维度"
+            - "证券主数据"
+            - "标的维度"
+        fields:
+          - name: SK_SecurityID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_SecurityID
+            description: 证券代理键
+            datatype: Integer
+            dimension:
+              is_time: false
+
+          - name: Symbol
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Symbol
+            description: 证券代码（ticker）
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "证券代码"
+                - "代码"
+
+          - name: Issue
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Issue
+            description: 证券类型（股票/共同基金等）
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "证券类型"
+
+          - name: ExchangeID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ExchangeID
+            description: 交易所代码
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "交易所"
+
+          - name: Name
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Name
+            description: 证券名称
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "证券名称"
+
+          - name: Dividend
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Dividend
+            description: 每股年股息（美元）
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "股息"
+                - "分红"
+
+      - name: dim_broker
+        source: iceberg_rest.atlas.dwd_dim_broker
+        primary_key:
+          - SK_BrokerID
+        unique_keys:
+          - [SK_BrokerID]
+        description: 经纪人维度（含所属分支）
+        ai_context:
+          synonyms:
+            - "经纪人维度"
+            - "员工主数据"
+        fields:
+          - name: SK_BrokerID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_BrokerID
+            description: 经纪人代理键
+            datatype: Integer
+            dimension:
+              is_time: false
+
+          - name: BrokerID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: BrokerID
+            description: 经纪人自然键（HR 编号）
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "经纪人编号"
+
+          - name: Branch
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Branch
+            description: 所属分支/营业部
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "分支"
+                - "营业部"
+                - "网点"
+
+          - name: Office
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: Office
+            description: 办公室编号或描述
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "办公室"
+
+      - name: dim_date
+        source: iceberg_rest.atlas.dwd_dim_date
+        primary_key:
+          - SK_DateID
+        unique_keys:
+          - [SK_DateID]
+        description: 日期维度表
+        ai_context:
+          synonyms:
+            - "日期维度"
+            - "日历"
+        fields:
+          - name: SK_DateID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: SK_DateID
+            description: 日期代理键
+            datatype: Integer
+            dimension:
+              is_time: false
+
+          - name: DateValue
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: DateValue
+            description: 实际日期，用于时间范围过滤
+            datatype: Date
+            dimension:
+              is_time: true
+            ai_context:
+              synonyms:
+                - "日期"
+                - "天"
+
+          - name: CalendarYearID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: CalendarYearID
+            description: 自然年（如 2024）
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "年"
+                - "年份"
+
+          - name: CalendarMonthID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: CalendarMonthID
+            description: 自然月（如 202407）
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "月"
+                - "月份"
+
+          - name: CalendarQtrID
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: CalendarQtrID
+            description: 自然季度（如 20242）
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "季度"
+                - "季"
+
+    # ===================================================================
+    # Relationships
+    # ===================================================================
+    relationships:
+      - name: trades_to_date
+        from: fact_trades
+        to: dim_date
+        from_columns: [SK_CreateDateID]
+        to_columns: [SK_DateID]
+        ai_context:
+          synonyms:
+            - "成交日期关联"
+
+      - name: trades_to_account
+        from: fact_trades
+        to: dim_account
+        from_columns: [SK_AccountID]
+        to_columns: [SK_AccountID]
+        ai_context:
+          synonyms:
+            - "交易账户关联"
+
+      - name: trades_to_customer
+        from: fact_trades
+        to: dim_customer
+        from_columns: [SK_CustomerID]
+        to_columns: [SK_CustomerID]
+        ai_context:
+          synonyms:
+            - "交易客户关联"
+
+      - name: trades_to_broker
+        from: fact_trades
+        to: dim_broker
+        from_columns: [SK_BrokerID]
+        to_columns: [SK_BrokerID]
+        ai_context:
+          synonyms:
+            - "交易经纪人关联"
+
+      - name: trades_to_security
+        from: fact_trades
+        to: dim_security
+        from_columns: [SK_SecurityID]
+        to_columns: [SK_SecurityID]
+        ai_context:
+          synonyms:
+            - "交易标的关联"
+
+      - name: holdings_to_account
+        from: fact_holdings
+        to: dim_account
+        from_columns: [SK_AccountID]
+        to_columns: [SK_AccountID]
+        ai_context:
+          synonyms:
+            - "持仓账户关联"
+
+      - name: holdings_to_security
+        from: fact_holdings
+        to: dim_security
+        from_columns: [SK_SecurityID]
+        to_columns: [SK_SecurityID]
+        ai_context:
+          synonyms:
+            - "持仓标的关联"
+
+      - name: holdings_to_date
+        from: fact_holdings
+        to: dim_date
+        from_columns: [SK_DateID]
+        to_columns: [SK_DateID]
+        ai_context:
+          synonyms:
+            - "持仓日期关联"
+
+      - name: cash_to_account
+        from: fact_cash_balances
+        to: dim_account
+        from_columns: [SK_AccountID]
+        to_columns: [SK_AccountID]
+        ai_context:
+          synonyms:
+            - "余额账户关联"
+
+      - name: cash_to_date
+        from: fact_cash_balances
+        to: dim_date
+        from_columns: [SK_DateID]
+        to_columns: [SK_DateID]
+        ai_context:
+          synonyms:
+            - "余额日期关联"
+
+      - name: account_to_customer
+        from: dim_account
+        to: dim_customer
+        from_columns: [SK_CustomerID]
+        to_columns: [SK_CustomerID]
+        ai_context:
+          synonyms:
+            - "账户持有人关联"
+
+      - name: account_to_broker
+        from: dim_account
+        to: dim_broker
+        from_columns: [SK_BrokerID]
+        to_columns: [SK_BrokerID]
+        ai_context:
+          synonyms:
+            - "托管经纪人关联"
+
+    # ===================================================================
+    # Metrics
+    # 注意：expression 按方言存储（Ossie 是 expression-carrying）
+    #       DATABRICKS 方言为占位，需实测后填写，不得编造
+    # ===================================================================
+    metrics:
+      - name: total_trade_value
+        description: 总交易额（成交金额），成交数量 × 成交单价合计
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_trades.Quantity * fact_trades.TradePrice)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "交易额"
+            - "成交额"
+            - "成交金额"
+            - "交易量金额"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.Quantity", "fact_trades.TradePrice"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-101"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
+
+      - name: commission_revenue
+        description: 佣金收入合计（经纪服务费）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_trades.Commission)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "佣金收入"
+            - "佣金"
+            - "手续费收入"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.Commission"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-101"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
+
+      - name: holdings_value
+        description: 持仓市值合计（持仓快照的当前市值）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_holdings.CurrentValue)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "持仓市值"
+            - "持仓金额"
+            - "持仓规模"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_holdings.CurrentValue"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-102"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
+
+      - name: cash_balance
+        description: 现金余额合计（账户当日现金余额）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_cash_balances.Cash)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "现金余额"
+            - "账户现金"
+            - "可用资金"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_cash_balances.Cash"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-102"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
+
+      - name: trade_count
+        description: 交易笔数
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(fact_trades.TradeID)
+        datatype: Integer
+        ai_context:
+          synonyms:
+            - "交易笔数"
+            - "交易数量"
+            - "成交笔数"
+
+      - name: active_account_count
+        description: 活跃账户数（当期有成交的账户去重）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT fact_trades.SK_AccountID)
+        datatype: Integer
+        ai_context:
+          synonyms:
+            - "活跃账户数"
+            - "交易账户数"
+            - "动账账户数"

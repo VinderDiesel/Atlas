@@ -1,0 +1,13 @@
+{
+  "id": "gold-047",
+  "question": "最近卖得怎么样？",
+  "expected_metric": null,
+  "expected_dimensions": [],
+  "expected_time": null,
+  "expected_sql": null,
+  "result_hash": null,
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": ["ambiguous", "clarification"],
+  "ambiguous": true,
+  "clarification": "需要澄清：①「卖得怎么样」指 GMV 还是订单量？②「最近」是近 7 天还是近 30 天？③需要按什么维度拆分吗？"
+}

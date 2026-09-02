@@ -1,0 +1,28 @@
+name: lint
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Ruff
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Mypy (strict on core modules)
+        run: mypy agent semantic eval retrieval
+      - name: Semantic layer lint
+        run: python -m semantic.lint --all
+      - name: Protect generated DAGs
+        run: |
+          if git diff --name-only origin/main...HEAD | grep -q '^airflow/dags/generated/'; then
+            echo "ERROR: 禁止手工编辑生成目录（AGENTS.md N5）"
+            exit 1
+          fi

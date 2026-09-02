@@ -1,0 +1,26 @@
+{
+  "id": "gold-102",
+  "question": "按分支统计 2005 年佣金收入，列出前 5 名",
+  "expected_metric": "commission_revenue",
+  "expected_dimensions": ["Branch"],
+  "expected_time": "2005",
+  "expected_sql": "SELECT db.Branch AS branch, SUM(ft.Commission) AS commission_revenue FROM iceberg_rest.atlas.dwd_fact_trades ft JOIN iceberg_rest.atlas.dwd_dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN iceberg_rest.atlas.dwd_dim_broker db ON ft.SK_BrokerID = db.SK_BrokerID WHERE dd.CalendarYearID = 2005 GROUP BY db.Branch ORDER BY commission_revenue DESC LIMIT 5",
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": ["aggregation", "dimension_group_by", "ranking", "time_range", "fibo_alignment"],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "佣金收入",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+      "role": "measure",
+      "note": "佣金是经纪服务收取的费用"
+    },
+    {
+      "term": "分支",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "营业部/分支是组织的子单元（OMG Commons）"
+    }
+  ]
+}

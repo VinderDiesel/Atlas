@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Metric",
+  "description": "Atlas 指标定义。指标是 Git 中的一等对象，不是 LLM 提示词里的字段别名。",
+  "type": "object",
+  "required": ["name", "label", "type", "owner", "version", "status", "expression", "base_measure", "time_granularity"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "唯一标识，小写下划线。CI 禁止同名 active 指标并存。"
+    },
+    "label": { "type": "string", "description": "中文展示名" },
+    "type": { "type": "string", "enum": ["atomic", "derived", "ratio"] },
+    "owner": { "type": "string", "description": "负责人邮箱，口径争议的唯一裁决人" },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": { "type": "string", "enum": ["active", "deprecated", "draft"] },
+    "base_measure": { "type": "string", "description": "基础度量，格式 model.measure" },
+    "expression": { "type": "string", "description": "聚合表达式，必须可被 sqlglot 解析" },
+    "dimensions": { "type": "array", "items": { "type": "string" } },
+    "time_granularity": { "type": "array", "items": { "type": "string", "enum": ["day", "week", "month", "quarter", "year"] } },
+    "filters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "sql"],
+        "properties": {
+          "name": { "type": "string" },
+          "sql": { "type": "string" }
+        }
+      }
+    },
+    "primary_entity": { "type": "string" },
+    "refresh": {
+      "type": "object",
+      "properties": {
+        "schedule": { "type": "string", "description": "cron 表达式" },
+        "sla_minutes": { "type": "integer" }
+      }
+    },
+    "accuracy": {
+      "type": "object",
+      "properties": {
+        "test_cases": { "type": "array", "items": { "type": "string" }, "description": "关联黄金集用例" }
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "properties": {
+        "source_tables": { "type": "array", "items": { "type": "string" } },
+        "dependencies": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "row_policy": { "type": "string", "description": "引用 semantic/policies 下的策略名" },
+        "approval": { "type": "string" }
+      }
+    },
+    "supersedes": {
+      "type": "string",
+      "description": "升级时必须填写：被本指标取代的旧指标名"
+    },
+    "reason": { "type": "string", "description": "创建新版本的原因（supersedes 时必填）" },
+    "migration_window": { "type": "string", "description": "迁移窗口（supersedes 时必填）" }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["supersedes"] },
+      "then": { "required": ["reason", "migration_window"] }
+    }
+  ]
+}

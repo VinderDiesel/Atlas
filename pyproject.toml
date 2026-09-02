@@ -1,0 +1,70 @@
+[project]
+name = "atlas"
+version = "0.1.0"
+description = "Atlas - 可信 AI 问数平台（Apache Ossie 语义层 + 受控 NL2SQL + 可解释 Data Agent）"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+
+dependencies = [
+    # 语义层：Apache Ossie 规范校验
+    "pyyaml>=6.0",
+    "jsonschema>=4.23",
+    # SQL 解析与校验（MVP 阶段，见 ADR-0005：Calcite 列入 Phase 2 评估）
+    "sqlglot>=25.0",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    # 存储与查询引擎
+    "pyiceberg>=0.7",          # Apache Iceberg Python 客户端
+    "mysql-connector-python>=9.0",  # Apache Doris（MySQL 协议）
+    "psycopg[binary]>=3.2",    # PostgreSQL（Polaris / Atlas 元数据）
+    # 向量检索
+    "pymilvus>=2.4",
+    "networkx>=3.3",           # MVP 图存储（Neo4j 为可选扩展）
+    # Agent
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
+    # 可观测
+    "opentelemetry-api>=1.24",
+    "opentelemetry-sdk>=1.24",
+    "opentelemetry-exporter-otlp>=1.24",
+    "prometheus-client>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pre-commit>=3.8",
+]
+ml = [
+    "torch>=2.4",
+    "transformers>=4.44",
+    "peft>=0.12",
+    "vllm>=0.6",
+]
+# Apache Calcite 不作为 MVP 依赖（ADR-0005）
+# 如需 Phase 2 引入，需要 JVM + 独立服务，不在此处声明
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["agent", "semantic", "eval", "retrieval"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: 需要完整数据集的测试",
+    "security: 只读网关安全测试（必须通过）",
+    "ossie: Apache Ossie 规范校验测试",
+    "iceberg: Iceberg time travel / 快照相关测试",
+]

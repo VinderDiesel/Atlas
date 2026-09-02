@@ -1,0 +1,30 @@
+# owner: growth@atlas.local
+# 最后修改: 初始定义，用于 MVP 联调
+# 注意: 本项目数据来自 TPC-DS 公开基准，不对应任何真实企业指标
+
+name: gmv
+label: 成交 GMV
+type: derived
+owner: growth@atlas.local
+version: 1
+status: active
+base_measure: fact_order_line.amount
+expression: "sum(amount) filter (where order_status = 'PAID')"
+dimensions: [order_date, region, product_category]
+time_granularity: [day, week, month, quarter]
+filters:
+  - name: paid_only
+    sql: "order_status = 'PAID'"
+primary_entity: order
+refresh:
+  schedule: "0 2 * * *"
+  sla_minutes: 120
+accuracy:
+  test_cases:
+    - "gold/gmv_by_region_month.yml"
+lineage:
+  source_tables: [dwd.fact_order_line, dim_order]
+  dependencies: [metric.paid_order_count]
+permissions:
+  row_policy: rp_dept_visible
+  approval: metrics-owners

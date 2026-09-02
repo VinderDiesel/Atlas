@@ -1,0 +1,7 @@
+name: order_date
+label: 订单日期
+type: time
+granularity: [day, week, month, quarter, year]
+value_source: fact_order_line.order_date
+timezone: "+08:00"
+calendar: gregorian

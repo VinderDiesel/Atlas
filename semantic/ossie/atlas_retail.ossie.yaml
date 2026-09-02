@@ -1,0 +1,540 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/apache/ossie/main/core-spec/ossie-schema.json
+#
+# Atlas 零售语义模型 —— Apache Ossie Core Metadata Spec 0.2.0.dev0
+#
+# 数据来源：TPC-DS SF1 公开基准（约 1GB），不对应任何真实企业指标。
+# 结构参考：apache/ossie/examples/tpcds_semantic_model.yaml（官方 631 行 TPC-DS 示例）
+#
+# 治理扩展（owner/version/supersedes/lineage/row_policy）不在 Ossie 核心规范中，
+# 通过 custom_extensions: vendor_name = ATLAS 承载，见 ../governance/
+#
+# ⚠️ 0.2.0.dev0 为 DRAFT，schema 可能变化。锁定时需在 README 记录具体 commit sha。
+
+version: "0.2.0.dev0"
+
+semantic_model:
+  - name: atlas_retail_analytics
+    description: >
+      Atlas 零售分析语义模型，基于 TPC-DS 公开基准重建。
+      覆盖销售、客户、商品、门店四个域，用于验证语义层 → 指标平台 → NL2SQL 的端到端链路。
+    ai_context:
+      instructions: >
+        使用本模型进行零售分析。
+        涉及"销售额/营收/成交额"时优先使用 total_sales_price；
+        涉及"利润"使用 net_profit（已扣成本）；
+        所有金额默认单位为美元，时间默认时区 +08:00。
+        当用户问句存在歧义（未指明时间范围、未指明拆分维度）时，必须反问澄清，不要猜测。
+      synonyms:
+        - "零售分析"
+        - "销售分析"
+        - "门店经营"
+
+    # ===================================================================
+    # 治理扩展：Ossie 核心规范不覆盖的部分（本项目价值所在）
+    # ===================================================================
+    custom_extensions:
+      - vendor_name: ATLAS
+        data: |
+          {
+            "governance": {
+              "owner": "growth@atlas.local",
+              "version": 1,
+              "status": "active",
+              "review_cycle_days": 30,
+              "supersedes": null,
+              "reason": null,
+              "migration_window": null
+            },
+            "lineage": {
+              "source_system": "TPC-DS SF1",
+              "source_catalog": "iceberg_rest.atlas",
+              "source_tables": ["store_sales", "date_dim", "item", "customer", "store"],
+              "transform_jobs": ["sql/dwd/*", "sql/dws/*"],
+              "downstream_consumers": []
+            },
+            "freshness": {
+              "schedule": "0 2 * * *",
+              "sla_minutes": 120,
+              "expected_lag_hours": "<待实测填写>"
+            },
+            "policy": {
+              "default_row_policy": "rp_dept_visible",
+              "require_approval_for_change": true,
+              "approvers": ["metrics-owners"]
+            },
+            "quality": {
+              "gold_test_cases": ["gold-001"],
+              "last_validated_at": null
+            }
+          }
+
+    # ===================================================================
+    # Datasets
+    # ===================================================================
+    datasets:
+      - name: store_sales
+        source: iceberg_rest.atlas.dwd_fact_store_sales
+        primary_key:
+          - ss_item_sk
+          - ss_ticket_number
+        unique_keys:
+          - [ss_item_sk, ss_ticket_number]
+        description: 门店销售事实表，每行一个订单明细项
+        ai_context:
+          synonyms:
+            - "销售明细"
+            - "交易流水"
+            - "订单明细"
+            - "POS 数据"
+        fields:
+          - name: ss_ticket_number
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ss_ticket_number
+            description: 订单票号（一次结账交易的标识，用于订单级去重）
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "订单号"
+                - "票号"
+
+          - name: ss_sold_date_sk
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ss_sold_date_sk
+            description: 销售日期外键，指向 date_dim
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "销售日期"
+                - "交易日期"
+
+          - name: ss_item_sk
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ss_item_sk
+            description: 商品外键，指向 item
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "商品"
+                - "产品"
+                - "SKU"
+
+          - name: ss_customer_sk
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ss_customer_sk
+            description: 客户外键，指向 customer
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "客户"
+                - "买家"
+                - "会员"
+
+          - name: ss_store_sk
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ss_store_sk
+            description: 门店外键，指向 store
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "门店"
+                - "店铺"
+                - "分店"
+
+          - name: ss_quantity
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ss_quantity
+            description: 销售数量
+            datatype: Integer
+            ai_context:
+              synonyms:
+                - "销量"
+                - "销售数量"
+                - "件数"
+
+          - name: ss_sales_price
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ss_sales_price
+            description: 单价（每件售价）
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "单价"
+                - "售价"
+                - "价格"
+
+          - name: ss_ext_sales_price
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ss_ext_sales_price
+            description: 明细行销售额（数量 × 单价）
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "销售额"
+                - "金额"
+                - "成交额"
+                - "GMV"
+
+          - name: ss_net_profit
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: ss_net_profit
+            description: 净利润（已扣除成本）
+            datatype: Decimal
+            ai_context:
+              synonyms:
+                - "利润"
+                - "毛利"
+                - "盈利"
+
+      - name: date_dim
+        source: iceberg_rest.atlas.dwd_dim_date
+        primary_key:
+          - d_date_sk
+        description: 日期维度表
+        ai_context:
+          synonyms:
+            - "日期维度"
+            - "日历"
+        fields:
+          - name: d_date_sk
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: d_date_sk
+            description: 日期代理键
+            datatype: Integer
+            dimension:
+              is_time: false
+
+          - name: d_date
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: d_date
+            description: 实际日期，用于时间范围过滤
+            datatype: Date
+            dimension:
+              is_time: true
+            ai_context:
+              synonyms:
+                - "日期"
+                - "天"
+
+          - name: d_year
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: d_year
+            description: 年份
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "年"
+                - "年份"
+
+          - name: d_moy
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: d_moy
+            description: 月份（1-12）
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "月"
+                - "月份"
+
+          - name: d_qoy
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: d_qoy
+            description: 季度（1-4）
+            datatype: Integer
+            dimension:
+              is_time: false
+            ai_context:
+              synonyms:
+                - "季度"
+                - "季"
+
+      - name: item
+        source: iceberg_rest.atlas.dwd_dim_item
+        primary_key:
+          - i_item_sk
+        description: 商品维度表
+        ai_context:
+          synonyms:
+            - "商品维度"
+            - "产品主数据"
+        fields:
+          - name: i_item_sk
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: i_item_sk
+            description: 商品代理键
+            datatype: Integer
+            dimension:
+              is_time: false
+
+          - name: i_category
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: i_category
+            description: 商品大类
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "品类"
+                - "大类"
+                - "商品类别"
+
+          - name: i_brand
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: i_brand
+            description: 品牌
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "品牌"
+                - "牌子"
+
+      - name: store
+        source: iceberg_rest.atlas.dwd_dim_store
+        primary_key:
+          - s_store_sk
+        description: 门店维度表
+        ai_context:
+          synonyms:
+            - "门店维度"
+            - "店铺主数据"
+        fields:
+          - name: s_store_sk
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: s_store_sk
+            description: 门店代理键
+            datatype: Integer
+            dimension:
+              is_time: false
+
+          - name: s_state
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: s_state
+            description: 门店所在州/省
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "省份"
+                - "州"
+                - "地区"
+
+          - name: s_city
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: s_city
+            description: 门店所在城市
+            datatype: String
+            dimension: {}
+            ai_context:
+              synonyms:
+                - "城市"
+                - "市"
+
+    # ===================================================================
+    # Relationships
+    # ===================================================================
+    relationships:
+      - name: sales_to_date
+        from: store_sales
+        to: date_dim
+        from_columns: [ss_sold_date_sk]
+        to_columns: [d_date_sk]
+        ai_context:
+          synonyms:
+            - "销售日期关联"
+
+      - name: sales_to_item
+        from: store_sales
+        to: item
+        from_columns: [ss_item_sk]
+        to_columns: [i_item_sk]
+        ai_context:
+          synonyms:
+            - "商品关联"
+
+      - name: sales_to_store
+        from: store_sales
+        to: store
+        from_columns: [ss_store_sk]
+        to_columns: [s_store_sk]
+        ai_context:
+          synonyms:
+            - "门店关联"
+
+    # ===================================================================
+    # Metrics
+    # 注意：expression 按方言存储（Ossie 是 expression-carrying）
+    #       DATABRICKS 方言为占位，需实测后填写，不得编造
+    # ===================================================================
+    metrics:
+      - name: total_sales_price
+        description: 总销售额（成交金额），所有门店销售明细的金额合计
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(store_sales.ss_ext_sales_price)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "销售额"
+            - "成交额"
+            - "GMV"
+            - "营收"
+            - "流水"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "growth@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["store_sales.ss_ext_sales_price"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-001"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
+
+      - name: total_quantity
+        description: 总销售件数
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(store_sales.ss_quantity)
+        datatype: Integer
+        ai_context:
+          synonyms:
+            - "销量"
+            - "销售数量"
+            - "件数"
+
+      - name: net_profit
+        description: 净利润合计（已扣除成本）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(store_sales.ss_net_profit)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "利润"
+            - "毛利"
+            - "净利润"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["store_sales.ss_net_profit"],
+                  "dependencies": ["total_sales_price"]
+                },
+                "quality": {
+                  "gold_test_cases": []
+                }
+              }
+
+      - name: avg_order_value
+        description: 客单价 = 总销售额 / 订单数
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: >
+                SUM(store_sales.ss_ext_sales_price)
+                / NULLIF(COUNT(DISTINCT store_sales.ss_ticket_number), 0)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "客单价"
+            - "平均订单金额"
+            - "AOV"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "growth@atlas.local",
+                  "version": 1,
+                  "status": "active"
+                },
+                "lineage": {
+                  "dependencies": ["total_sales_price", "order_count"]
+                }
+              }
+
+      - name: order_count
+        description: 订单数（按票号去重）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT store_sales.ss_ticket_number)
+        datatype: Integer
+        ai_context:
+          synonyms:
+            - "订单量"
+            - "订单数"
+            - "单量"

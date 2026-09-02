@@ -1,0 +1,9 @@
+# owner: growth@atlas.local
+# 时间维度必须显式声明时区与日历，避免口径歧义
+
+name: region
+label: 地区
+type: categorical
+value_source: dim_region.region_name
+valid_values: ["华东", "华北", "华南", "华中", "西南", "西北", "东北"]
+hierarchy: [country, region, province, city]

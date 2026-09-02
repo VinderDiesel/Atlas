@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Dimension",
+  "type": "object",
+  "required": ["name", "label", "type", "value_source"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "label": { "type": "string" },
+    "type": { "type": "string", "enum": ["categorical", "time", "numeric"] },
+    "granularity": { "type": "array", "items": { "type": "string" } },
+    "value_source": { "type": "string", "description": "来源列或枚举定义，格式 model.column" },
+    "timezone": { "type": "string", "default": "+08:00", "description": "时间维度必须显式声明时区" },
+    "calendar": { "type": "string", "description": "日期维度必须说明日历：gregorian / fiscal / retail" },
+    "valid_values": { "type": "array", "items": {}, "description": "枚举维度必须登记有效值域" },
+    "hierarchy": { "type": "array", "items": { "type": "string" }, "description": "如 大区 > 省 > 城市" }
+  }
+}

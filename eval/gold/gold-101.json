@@ -1,0 +1,26 @@
+{
+  "id": "gold-101",
+  "question": "2005 年第二季度总交易额是多少？",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "2005Q2",
+  "expected_sql": "SELECT SUM(ft.Quantity * ft.TradePrice) AS total_trade_value FROM iceberg_rest.atlas.dwd_fact_trades ft JOIN iceberg_rest.atlas.dwd_dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarQtrID = 20052",
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": ["aggregation", "time_range", "fibo_alignment"],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "交易额以货币金额度量（数量 × 成交价）"
+    },
+    {
+      "term": "交易",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "TPC-DI 交易事实对应证券交易事件"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+name: semantic-lint
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal deps
+        run: pip install pyyaml jsonschema sqlglot
+
+      - name: Semantic layer lint (structure / governance / gold schema)
+        # CI 无 FIBO 闭包：governance_validate 走权威注册表（data/fibo/iri_registry.json）轻量校验，
+        # 闭包级深度校验（rdflib）由本地 data/fibo/validate_alignments.py 与 eval/gold/validate_gold.py 执行
+        run: make PYTHON=python lint
+
+      - name: Contract tests (compiler Plan→SQL)
+        # unittest 零依赖，pytest 兼容；覆盖 gold-101~103 编译链路与确定性错误
+        run: make PYTHON=python test

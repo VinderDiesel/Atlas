@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GoldSample",
+  "description": "自建黄金集样本。主评测集，与公开集分开报告。编号段：gold-001~050 零售场景（TPC-DS）、gold-101+ 金融场景（TPC-DI）。",
+  "type": "object",
+  "required": ["id", "question", "expected_metric", "expected_dimensions", "expected_time", "expected_sql", "result_hash", "snapshot_sha"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^gold-\\d{3}$" },
+    "question": { "type": "string", "description": "中文自然语言问句" },
+    "expected_metric": { "type": ["string", "null"] },
+    "expected_dimensions": { "type": "array", "items": { "type": "string" } },
+    "expected_time": { "type": ["string", "null"], "description": "如 last_month / last_7_days / yoy / 2005Q2" },
+    "expected_sql": { "type": ["string", "null"], "description": "人工标注的参考 SQL，必须带 LIMIT 与时间范围约束" },
+    "result_hash": { "type": ["string", "null"], "description": "固定快照下执行结果的哈希" },
+    "snapshot_sha": { "type": "string", "description": "数据快照 git sha，保证可复现" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "ambiguous": { "type": "boolean", "default": false, "description": "故意设计的歧义问句，用于测试澄清机制" },
+    "clarification": { "type": "string", "description": "歧义问句期望的反问内容" },
+    "fibo_concepts": {
+      "type": "array",
+      "description": "问句业务术语 → FIBO 概念人工标注（ADR-0007 可解释链的评测载体），IRI 必须已由 data/fibo/check_iris.py 验证存在",
+      "items": {
+        "type": "object",
+        "required": ["term", "concept", "role"],
+        "properties": {
+          "term": { "type": "string", "description": "问句中的业务术语原文" },
+          "concept": { "type": "string", "format": "uri", "description": "FIBO 或 OMG Commons 概念 IRI" },
+          "role": { "type": "string", "enum": ["measure", "event", "entity", "dimension", "time"] },
+          "note": { "type": "string" }
+        }
+      }
+    }
+  }
+}

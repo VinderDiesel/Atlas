@@ -1,0 +1,34 @@
+# SemanticModel：指标与维度绑定的逻辑模型
+# Join 必须有主键和基数约束，禁止无约束笛卡尔积
+
+name: orders
+label: 订单模型
+base_table: dwd.fact_order_line
+primary_key: order_line_id
+description: 零售订单明细，TPC-DS 重建场景
+
+measures:
+  - name: amount
+    column: order_amount
+    agg: sum
+  - name: order_count
+    column: order_id
+    agg: count_distinct
+  - name: quantity
+    column: quantity
+    agg: sum
+
+dimensions:
+  - order_date
+  - region
+  - product_category
+
+joins:
+  - name: dim_order
+    table: dwd.dim_order
+    on: "fact_order_line.order_id = dim_order.order_id"
+    cardinality: many_to_one
+  - name: dim_region
+    table: dwd.dim_region
+    on: "fact_order_line.region_id = dim_region.region_id"
+    cardinality: many_to_one
