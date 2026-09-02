@@ -1,0 +1,24 @@
+{
+  "id": "gold-129",
+  "question": "2014 年第一季度平均成交价是多少？",
+  "expected_metric": "avg_trade_price",
+  "expected_dimensions": [],
+  "expected_time": "2014Q1",
+  "expected_sql": "SELECT AVG(ft.TradePrice) AS avg_trade_price FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarQtrID = 20141 LIMIT 100",
+  "result_hash": "81613a1ac0853e4d182eb1758b7c355cbe9adbb7a88fc893169a001650efe27b",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "平均成交价",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "成交单价是货币金额，均价为其简单平均"
+    }
+  ]
+}

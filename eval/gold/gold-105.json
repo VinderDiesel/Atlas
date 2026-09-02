@@ -1,0 +1,30 @@
+{
+  "id": "gold-105",
+  "question": "2016 年总成交量是多少？",
+  "expected_metric": "total_trade_quantity",
+  "expected_dimensions": [],
+  "expected_time": "2016",
+  "expected_sql": "SELECT SUM(ft.Quantity) AS total_trade_quantity FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarYearID = 2016 LIMIT 100",
+  "result_hash": "7e7efb704eb34a47dbcc40c86e396a9db77b2a56257cf1764d8f39519aa062e7",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "总成交量",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "成交量是证券交易数量（股/份）的合计，对应证券交易事件"
+    },
+    {
+      "term": "证券",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+      "role": "entity",
+      "note": "成交对象为证券"
+    }
+  ]
+}

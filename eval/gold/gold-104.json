@@ -6,8 +6,12 @@
   "expected_time": null,
   "expected_sql": null,
   "result_hash": null,
-  "snapshot_sha": "<待锁定后填写>",
-  "tags": ["ambiguous", "clarification", "fibo_alignment"],
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "ambiguous",
+    "clarification",
+    "fibo_alignment"
+  ],
   "ambiguous": true,
   "clarification": "需要澄清：①「交易情况」指交易额、佣金收入还是交易笔数？②「最近」是近 7 天、近 30 天还是本季度？③需要按分支/证券拆分吗？",
   "fibo_concepts": [

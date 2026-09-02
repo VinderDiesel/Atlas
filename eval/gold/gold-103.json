@@ -1,13 +1,18 @@
 {
   "id": "gold-103",
-  "question": "2005 年 12 月 31 日全账户持仓市值合计是多少？",
+  "question": "2017 年 7 月 7 日全账户持仓市值合计是多少？",
   "expected_metric": "holdings_value",
   "expected_dimensions": [],
-  "expected_time": "2005-12-31",
-  "expected_sql": "SELECT SUM(fh.CurrentValue) AS holdings_value FROM iceberg_rest.atlas.dwd_fact_holdings fh JOIN iceberg_rest.atlas.dwd_dim_date dd ON fh.SK_DateID = dd.SK_DateID WHERE dd.DateValue = DATE '2005-12-31'",
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
-  "tags": ["aggregation", "as_of_snapshot", "time_range", "fibo_alignment"],
+  "expected_time": "2017-07-07",
+  "expected_sql": "SELECT SUM(fh.CurrentValue) AS holdings_value FROM atlas.dwd.fact_holdings fh JOIN atlas.dwd.dim_date dd ON fh.SK_DateID = dd.SK_DateID WHERE dd.DateValue = DATE '2017-07-07' LIMIT 100",
+  "result_hash": "5ddc5735d45b2ce14c5c6e3d50f6491e1446180c4ccd358c2ad280f58155d6aa",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "time_range",
+    "fibo_alignment"
+  ],
   "ambiguous": false,
   "fibo_concepts": [
     {

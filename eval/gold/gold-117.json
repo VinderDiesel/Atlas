@@ -1,0 +1,34 @@
+{
+  "id": "gold-117",
+  "question": "按证券类型统计 2013 年成交量，列出前 5 名",
+  "expected_metric": "total_trade_quantity",
+  "expected_dimensions": [
+    "Issue"
+  ],
+  "expected_time": "2013",
+  "expected_sql": "SELECT ds.Issue AS issue, SUM(ft.Quantity) AS total_trade_quantity FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_security ds ON ft.SK_SecurityID = ds.SK_SecurityID WHERE dd.CalendarYearID = 2013 GROUP BY ds.Issue ORDER BY total_trade_quantity DESC LIMIT 5",
+  "result_hash": "c617dc3986868c16873b4c04b33c6570d26d99cb20467173f279825c982ffbfc",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "证券类型",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/FinancialInstrument",
+      "role": "dimension",
+      "note": "Issue 区分股票（COMMON/PREF）等证券子类，属金融工具"
+    },
+    {
+      "term": "成交量",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "成交量是证券交易数量的合计"
+    }
+  ]
+}

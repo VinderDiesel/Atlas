@@ -1,0 +1,31 @@
+{
+  "id": "gold-132",
+  "question": "2017 年活跃账户数是多少？",
+  "expected_metric": "active_account_count",
+  "expected_dimensions": [],
+  "expected_time": "2017",
+  "expected_sql": "SELECT COUNT(DISTINCT ft.SK_AccountID) AS active_account_count FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarYearID = 2017 LIMIT 100",
+  "result_hash": "ed946f65d2c785d90e827c5ffd879ce3b49c68d4c88013074176a7e73bc58bcf",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "boundary",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "活跃账户",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+      "role": "entity",
+      "note": "活跃账户 = 期内有成交的经纪账户"
+    },
+    {
+      "term": "2017 年",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "数据段尾部年份(仅 1-7 月)"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "id": "gold-115",
+  "question": "2014 年 5 月交易笔数是多少？",
+  "expected_metric": "trade_count",
+  "expected_dimensions": [],
+  "expected_time": "201405",
+  "expected_sql": "SELECT COUNT(ft.TradeID) AS trade_count FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarMonthID = 20145 LIMIT 100",
+  "result_hash": "ec8b19be39eb32ee923d4945f3d051320c8654747102aefc23da8d56cd4012d4",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "month_granularity",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "交易笔数是对证券交易事件的计数"
+    },
+    {
+      "term": "2014 年 5 月",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "月粒度（dim_date.CalendarMonthID = YYYYM 编码 20145）"
+    }
+  ]
+}

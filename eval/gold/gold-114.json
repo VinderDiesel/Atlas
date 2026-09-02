@@ -1,0 +1,31 @@
+{
+  "id": "gold-114",
+  "question": "2014 年 3 月 31 日全账户现金余额合计是多少？",
+  "expected_metric": "cash_balance",
+  "expected_dimensions": [],
+  "expected_time": "2014-03-31",
+  "expected_sql": "SELECT SUM(fcb.Cash) AS cash_balance FROM atlas.dwd.fact_cash_balances fcb JOIN atlas.dwd.dim_date dd ON fcb.SK_DateID = dd.SK_DateID WHERE dd.DateValue = DATE '2014-03-31' LIMIT 100",
+  "result_hash": "9fd94197d3574cc4208ff2d2b1cb726c9c8fca2f3384f929ef30713918149c6a",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "现金余额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Balance",
+      "role": "measure",
+      "note": "现金余额是账户余额的一种（可为负，融资余额）"
+    },
+    {
+      "term": "账户",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+      "role": "entity",
+      "note": "余额按经纪账户记录"
+    }
+  ]
+}

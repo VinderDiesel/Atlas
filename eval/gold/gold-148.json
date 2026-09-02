@@ -1,0 +1,31 @@
+{
+  "id": "gold-148",
+  "question": "2014 年成交笔数和成交证券数分别是多少？",
+  "expected_metric": null,
+  "expected_dimensions": [],
+  "expected_time": null,
+  "expected_sql": null,
+  "result_hash": null,
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "ambiguous",
+    "clarification",
+    "fibo_alignment"
+  ],
+  "ambiguous": true,
+  "clarification": "需要澄清：问句同时命中「成交笔数」与「成交证券数」两个指标口径（trade_count / traded_security_count），请二选一或分别提问。",
+  "fibo_concepts": [
+    {
+      "term": "成交笔数",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "歧义用例：双指标口径冲突（笔数 vs 证券去重数）"
+    },
+    {
+      "term": "成交证券数",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+      "role": "entity",
+      "note": "歧义用例：双指标口径冲突（笔数 vs 证券去重数）"
+    }
+  ]
+}

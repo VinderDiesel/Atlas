@@ -1,0 +1,30 @@
+{
+  "id": "gold-113",
+  "question": "2016 年平均成交价是多少？",
+  "expected_metric": "avg_trade_price",
+  "expected_dimensions": [],
+  "expected_time": "2016",
+  "expected_sql": "SELECT AVG(ft.TradePrice) AS avg_trade_price FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarYearID = 2016 LIMIT 100",
+  "result_hash": "8e6981d46b6018d4ebda9683371752c6d2073869b2ce6d88fe2b04d33d744902",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "平均成交价",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "成交单价是货币金额，均价为其简单平均"
+    },
+    {
+      "term": "成交",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "均价基于证券交易事件计算"
+    }
+  ]
+}

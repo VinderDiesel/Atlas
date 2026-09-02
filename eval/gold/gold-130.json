@@ -1,0 +1,24 @@
+{
+  "id": "gold-130",
+  "question": "2016 年成交证券数是多少？",
+  "expected_metric": "traded_security_count",
+  "expected_dimensions": [],
+  "expected_time": "2016",
+  "expected_sql": "SELECT COUNT(DISTINCT ft.SK_SecurityID) AS traded_security_count FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarYearID = 2016 LIMIT 100",
+  "result_hash": "70d432707ec2478670d5b36a95d5b1000cb9c3ef6ea1fb7be14b060775723d03",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "证券",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+      "role": "entity",
+      "note": "成交证券数 = 期内有成交的去重证券数"
+    }
+  ]
+}

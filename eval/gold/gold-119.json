@@ -1,0 +1,40 @@
+{
+  "id": "gold-119",
+  "question": "按性别统计 2015 年佣金收入，列出前 5 名",
+  "expected_metric": "commission_revenue",
+  "expected_dimensions": [
+    "Gender"
+  ],
+  "expected_time": "2015",
+  "expected_sql": "SELECT dc.Gender AS gender, SUM(ft.Commission) AS commission_revenue FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_customer dc ON ft.SK_CustomerID = dc.SK_CustomerID WHERE dd.CalendarYearID = 2015 GROUP BY dc.Gender ORDER BY commission_revenue DESC LIMIT 5",
+  "result_hash": "62291611029ebf55f1673484826ee574dafdbd0bb74984c2302a8be7fda9a424",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "佣金收入",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+      "role": "measure",
+      "note": "佣金是经纪服务收取的费用"
+    },
+    {
+      "term": "性别",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/Person",
+      "role": "dimension",
+      "note": "Gender 是客户（自然人）属性"
+    },
+    {
+      "term": "交易",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "佣金按证券交易事件记录"
+    }
+  ]
+}

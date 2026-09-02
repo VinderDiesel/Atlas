@@ -1,0 +1,30 @@
+{
+  "id": "gold-127",
+  "question": "2016 年第四季度佣金收入合计是多少？",
+  "expected_metric": "commission_revenue",
+  "expected_dimensions": [],
+  "expected_time": "2016Q4",
+  "expected_sql": "SELECT SUM(ft.Commission) AS commission_revenue FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarQtrID = 20164 LIMIT 100",
+  "result_hash": "cc6d61ce22e348df8cefe4377cddc363cd621c9b85c407728e0b8a1fca5608ee",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "佣金收入",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+      "role": "measure",
+      "note": "佣金是经纪服务收取的费用"
+    },
+    {
+      "term": "交易",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "佣金按证券交易事件记录"
+    }
+  ]
+}

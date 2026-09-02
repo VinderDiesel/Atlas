@@ -1,0 +1,34 @@
+{
+  "id": "gold-140",
+  "question": "按办公室统计 2015 年佣金收入，列出前 5 名",
+  "expected_metric": "commission_revenue",
+  "expected_dimensions": [
+    "Office"
+  ],
+  "expected_time": "2015",
+  "expected_sql": "SELECT db.Office AS office, SUM(ft.Commission) AS commission_revenue FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_broker db ON ft.SK_BrokerID = db.SK_BrokerID WHERE dd.CalendarYearID = 2015 GROUP BY db.Office ORDER BY commission_revenue DESC LIMIT 5",
+  "result_hash": "ab92a999cb1303a89a889eda67b3965753cb06a4be2768b9b44a79047ea773f9",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "佣金收入",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+      "role": "measure",
+      "note": "佣金是经纪服务收取的费用"
+    },
+    {
+      "term": "办公室",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "办公室是经纪机构组织内子单元"
+    }
+  ]
+}

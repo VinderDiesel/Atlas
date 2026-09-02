@@ -1,0 +1,31 @@
+{
+  "id": "gold-112",
+  "question": "2015 年 6 月 30 日现金账户数是多少？",
+  "expected_metric": "cash_account_count",
+  "expected_dimensions": [],
+  "expected_time": "2015-06-30",
+  "expected_sql": "SELECT COUNT(DISTINCT fcb.SK_AccountID) AS cash_account_count FROM atlas.dwd.fact_cash_balances fcb JOIN atlas.dwd.dim_date dd ON fcb.SK_DateID = dd.SK_DateID WHERE dd.DateValue = DATE '2015-06-30' LIMIT 100",
+  "result_hash": "1253e9373e781b7500266caa55150e08e210bc8cd8cc70d89985e3600155e860",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "现金账户",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+      "role": "entity",
+      "note": "现金账户 = 快照日有现金余额记录的经纪账户"
+    },
+    {
+      "term": "2015 年 6 月 30 日",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "余额快照日"
+    }
+  ]
+}

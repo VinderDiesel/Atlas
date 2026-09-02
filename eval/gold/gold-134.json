@@ -1,0 +1,31 @@
+{
+  "id": "gold-134",
+  "question": "2015 年 12 月 31 日全账户持仓市值合计是多少？",
+  "expected_metric": "holdings_value",
+  "expected_dimensions": [],
+  "expected_time": "2015-12-31",
+  "expected_sql": "SELECT SUM(fh.CurrentValue) AS holdings_value FROM atlas.dwd.fact_holdings fh JOIN atlas.dwd.dim_date dd ON fh.SK_DateID = dd.SK_DateID WHERE dd.DateValue = DATE '2015-12-31' LIMIT 100",
+  "result_hash": "79926ab5e7b371c3f220b43b3fd6659c6c249cb9bcdb73f4e26e442c7733665d",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "持仓市值",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "持仓市值以货币金额度量"
+    },
+    {
+      "term": "2015 年 12 月 31 日",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "持仓快照日"
+    }
+  ]
+}

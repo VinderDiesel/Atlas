@@ -1,3 +1,9 @@
+# 依赖源：默认走清华镜像（个人开发环境网络限制，2026-09 实测 Docker Hub 可达、PyPI 直连超时）
+[[tool.uv.index]]
+name = "tsinghua"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
 [project]
 name = "atlas"
 version = "0.1.0"
@@ -19,7 +25,9 @@ dependencies = [
     "mysql-connector-python>=9.0",  # Apache Doris（MySQL 协议）
     "psycopg[binary]>=3.2",    # PostgreSQL（Polaris / Atlas 元数据）
     # 向量检索
-    "pymilvus>=2.4",
+    # 客户端与服务端版本匹配：compose 用 milvusdb/milvus:v2.4.13，
+    # pymilvus 3.x 与其协议不兼容（实测连接失败，2026-09-02），故锁 <3
+    "pymilvus>=2.4,<3",
     "networkx>=3.3",           # MVP 图存储（Neo4j 为可选扩展）
     # Agent
     "langgraph>=0.2",
@@ -59,6 +67,12 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.11"
 strict = true
 files = ["agent", "semantic", "eval", "retrieval"]
+
+# 第三方库无类型 stub（或不在主依赖，如 rdflib 仅供 eval/gold 可选脚本）：
+# 边界值按 Any 处理，校验价值集中在 agent/semantic/eval 自身逻辑上。
+[[tool.mypy.overrides]]
+module = ["yaml", "jsonschema", "rdflib", "rdflib.*", "pymilvus", "pymilvus.*", "networkx"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

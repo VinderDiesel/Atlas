@@ -1,0 +1,34 @@
+{
+  "id": "gold-147",
+  "question": "按性别统计 2014 年交易税，列出前 5 名",
+  "expected_metric": "total_trade_tax",
+  "expected_dimensions": [
+    "Gender"
+  ],
+  "expected_time": "2014",
+  "expected_sql": "SELECT dc.Gender AS gender, SUM(ft.Tax) AS total_trade_tax FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_customer dc ON ft.SK_CustomerID = dc.SK_CustomerID WHERE dd.CalendarYearID = 2014 GROUP BY dc.Gender ORDER BY total_trade_tax DESC LIMIT 5",
+  "result_hash": "40d5d831ea89443e1f1de7d7dcf84dfcbf19bbeac49594ecdfdbbf716a069e11",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易税",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "交易税以货币金额度量"
+    },
+    {
+      "term": "性别",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/Person",
+      "role": "dimension",
+      "note": "Gender 是客户(自然人)属性"
+    }
+  ]
+}

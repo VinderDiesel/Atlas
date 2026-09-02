@@ -9,7 +9,7 @@
     "question": { "type": "string", "description": "中文自然语言问句" },
     "expected_metric": { "type": ["string", "null"] },
     "expected_dimensions": { "type": "array", "items": { "type": "string" } },
-    "expected_time": { "type": ["string", "null"], "description": "如 last_month / last_7_days / yoy / 2005Q2" },
+    "expected_time": { "type": ["string", "null"], "description": "如 last_month / last_7_days / yoy / 2013Q2" },
     "expected_sql": { "type": ["string", "null"], "description": "人工标注的参考 SQL，必须带 LIMIT 与时间范围约束" },
     "result_hash": { "type": ["string", "null"], "description": "固定快照下执行结果的哈希" },
     "snapshot_sha": { "type": "string", "description": "数据快照 git sha，保证可复现" },

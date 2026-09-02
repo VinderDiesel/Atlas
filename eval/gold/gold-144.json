@@ -1,0 +1,34 @@
+{
+  "id": "gold-144",
+  "question": "按客户等级统计 2015 年成交量，列出前 5 名",
+  "expected_metric": "total_trade_quantity",
+  "expected_dimensions": [
+    "Tier"
+  ],
+  "expected_time": "2015",
+  "expected_sql": "SELECT dc.Tier AS tier, SUM(ft.Quantity) AS total_trade_quantity FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_customer dc ON ft.SK_CustomerID = dc.SK_CustomerID WHERE dd.CalendarYearID = 2015 GROUP BY dc.Tier ORDER BY total_trade_quantity DESC LIMIT 5",
+  "result_hash": "6fec7d1056990b0d842628354e375577633e15a091bb6b71a2ee3ef525a7d0d7",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "客户等级",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/Person",
+      "role": "dimension",
+      "note": "Tier 是客户的分层属性"
+    },
+    {
+      "term": "成交量",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "成交量是证券交易数量的合计"
+    }
+  ]
+}

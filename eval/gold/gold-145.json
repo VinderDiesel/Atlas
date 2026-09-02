@@ -1,0 +1,34 @@
+{
+  "id": "gold-145",
+  "question": "按证券类型统计 2015 年成交笔数，列出前 5 名",
+  "expected_metric": "trade_count",
+  "expected_dimensions": [
+    "Issue"
+  ],
+  "expected_time": "2015",
+  "expected_sql": "SELECT ds.Issue AS issue, COUNT(ft.TradeID) AS trade_count FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_security ds ON ft.SK_SecurityID = ds.SK_SecurityID WHERE dd.CalendarYearID = 2015 GROUP BY ds.Issue ORDER BY trade_count DESC LIMIT 5",
+  "result_hash": "292e91c8a8d722b9e4d6ef951b738262d6980928f219d4e94b78a132ceb6967b",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "证券类型",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/FinancialInstrument",
+      "role": "dimension",
+      "note": "Issue 区分股票(COMMON/PREF)等证券子类"
+    },
+    {
+      "term": "成交笔数",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "对证券交易事件的计数"
+    }
+  ]
+}

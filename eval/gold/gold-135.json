@@ -1,0 +1,31 @@
+{
+  "id": "gold-135",
+  "question": "2015 年 6 月 30 日全账户持仓量合计是多少？",
+  "expected_metric": "holdings_quantity",
+  "expected_dimensions": [],
+  "expected_time": "2015-06-30",
+  "expected_sql": "SELECT SUM(fh.CurrentQty) AS holdings_quantity FROM atlas.dwd.fact_holdings fh JOIN atlas.dwd.dim_date dd ON fh.SK_DateID = dd.SK_DateID WHERE dd.DateValue = DATE '2015-06-30' LIMIT 100",
+  "result_hash": "deda55ad8c39a1dd7ab64fcdae64bbf4e3fb42011fbad494cd5c4298f252f4f2",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "持仓量",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+      "role": "entity",
+      "note": "持仓量是证券持仓数量的合计"
+    },
+    {
+      "term": "2015 年 6 月 30 日",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "持仓快照日"
+    }
+  ]
+}

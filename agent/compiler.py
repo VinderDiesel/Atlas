@@ -50,7 +50,7 @@ class CompileError(Exception):
 class TimeSpec:
     """时间规格。granularity ∈ {year, quarter, month, date}。
 
-    value：year=2005；quarter="2005Q2"（Q 大写）；month=200507；date="2005-12-31"。
+    value：year=2013；quarter="2013Q2"（Q 大写）；month=201307；date="2017-07-07"。
     """
 
     granularity: str
@@ -96,6 +96,7 @@ class Field:
     name: str
     physical: str
     is_time: bool = False
+    synonyms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,7 @@ class Relationship:
     from_columns: tuple[str, ...]
     to_columns: tuple[str, ...]
 
-    def reversed(self) -> "Relationship":
+    def reversed(self) -> Relationship:
         return Relationship(
             name=self.name,
             from_ds=self.to_ds,
@@ -124,7 +125,7 @@ class Relationship:
 
 
 class SemanticModel:
-    """从 ossie.yaml 加载的语义模型（Compiler 的只读输入）。"""
+    """从 ossie.yaml 加载的语义模型（Compiler / Planner 的只读输入）。"""
 
     def __init__(self, path: Path = FINANCE_MODEL) -> None:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -132,6 +133,9 @@ class SemanticModel:
         self.datasets: dict[str, Dataset] = {}
         self.relationships: list[Relationship] = []
         self.metrics: dict[str, str] = {}
+        self.metric_descriptions: dict[str, str] = {}
+        self.metric_synonyms: dict[str, tuple[str, ...]] = {}
+        self.dimension_synonyms: dict[str, tuple[str, ...]] = {}
 
         for ds in model["datasets"]:
             fields: dict[str, Field] = {}
@@ -139,14 +143,24 @@ class SemanticModel:
                 physical = f["expression"]["dialects"][0]["expression"]
                 if physical != f["name"]:
                     raise CompileError(
-                        f"dataset {ds['name']} 字段 {f['name']} 的物理表达式 {physical!r} ≠ 字段名，"
-                        "MVP 编译器暂不支持字段重命名"
+                        f"dataset {ds['name']} 字段 {f['name']} 的物理表达式"
+                        f" {physical!r} ≠ 字段名，MVP 编译器暂不支持字段重命名"
                     )
                 is_time = bool(f.get("dimension", {}).get("is_time"))
-                fields[f["name"]] = Field(name=f["name"], physical=physical, is_time=is_time)
-            self.datasets[ds["name"]] = Dataset(
-                name=ds["name"], source=ds["source"], fields=fields
-            )
+                synonyms = tuple(f.get("ai_context", {}).get("synonyms", []))
+                fields[f["name"]] = Field(
+                    name=f["name"], physical=physical, is_time=is_time, synonyms=synonyms
+                )
+            self.datasets[ds["name"]] = Dataset(name=ds["name"], source=ds["source"], fields=fields)
+            # 维度同义词索引：仅收集 dim_* 表（维度表约定）的非时间字段，
+            # 避免事实表外键/度量字段（如 Commission、SK_AccountID）被误当作分组维度
+            if ds["name"].startswith("dim_"):
+                for f in ds["fields"]:
+                    if f.get("dimension", {}).get("is_time"):
+                        continue
+                    synonyms = tuple(f.get("ai_context", {}).get("synonyms", []))
+                    if synonyms:
+                        self.dimension_synonyms[f["name"]] = synonyms
 
         for rel in model["relationships"]:
             self.relationships.append(
@@ -164,6 +178,10 @@ class SemanticModel:
                 if dialect["dialect"] == "ANSI_SQL":
                     self.metrics[m["name"]] = dialect["expression"]
                     break
+            desc = m.get("description")
+            if isinstance(desc, str):
+                self.metric_descriptions[m["name"]] = desc
+            self.metric_synonyms[m["name"]] = tuple(m.get("ai_context", {}).get("synonyms", []))
 
     def find_field(self, field_name: str) -> tuple[str, Field] | None:
         """按逻辑字段名查找（维度解析：branch → dim_broker.Branch）。"""
@@ -207,7 +225,7 @@ class Compiler:
             dim_targets[ds_name] = field.physical
             dim_columns.append((ds_name, field.physical, dim))
 
-        time_predicates: list[exp.Expression] = []
+        time_predicates: list[exp.Expr] = []
         if plan.time is not None:
             time_predicates.append(self._time_predicate(plan.time))
 
@@ -221,7 +239,7 @@ class Compiler:
 
         # 组装 SELECT（AST 构建）：维度列在前（分组键可见），指标在后
         alias = exp.to_identifier(plan.metric)
-        select_exprs: list[exp.Expression] = [
+        select_exprs: list[exp.Expr] = [
             self._column_ast(ds, col).as_(name) for ds, col, name in dim_columns
         ]
         select_exprs.append(metric_ast.as_(alias))
@@ -244,7 +262,7 @@ class Compiler:
             group_cols = [self._column_ast(ds_name, col) for ds_name, col in dim_targets.items()]
             select.set("group", exp.Group(expressions=group_cols))
 
-        order_exprs: list[exp.Expression] = []
+        order_exprs: list[exp.Expr] = []
         for spec in plan.order_by:
             if spec.column == plan.metric:
                 # 按指标排序：引用 SELECT 别名（聚合结果列不可引用物理列）
@@ -278,7 +296,9 @@ class Compiler:
         ds = self.model.datasets[ds_name]
         parts = ds.source.split(".")
         if len(parts) != 3:
-            raise CompileError(f"dataset {ds_name} 的 source 必须是 catalog.db.table 形式：{ds.source}")
+            raise CompileError(
+                f"dataset {ds_name} 的 source 必须是 catalog.db.table 形式：{ds.source}"
+            )
         table = exp.Table(this=parts[2], db=parts[1], catalog=parts[0])
         table.set("alias", exp.TableAlias(this=exp.to_identifier(ds_name)))
         return table
@@ -286,7 +306,7 @@ class Compiler:
     def _column_ast(self, ds_name: str, column: str) -> exp.Column:
         return exp.column(column, table=ds_name)
 
-    def _resolve_refs(self, ast: exp.Expression) -> None:
+    def _resolve_refs(self, ast: exp.Expr) -> None:
         """校验 metric expression 中 dataset.field 引用，并统一为 alias.物理列。"""
         for col in ast.find_all(exp.Column):
             if col.table is None:
@@ -297,14 +317,14 @@ class Compiler:
             if col.name not in ds.fields:
                 raise CompileError(f"expression 引用不存在的字段：{col.table}.{col.name}")
 
-    def _main_dataset(self, metric_ast: exp.Expression) -> str:
+    def _main_dataset(self, metric_ast: exp.Expr) -> str:
         """主表 = metric expression 中第一个被引用的 dataset（确定性约定）。"""
         for col in metric_ast.find_all(exp.Column):
             if col.table is not None and col.table in self.model.datasets:
                 return col.table
         raise CompileError("metric expression 未引用任何 dataset")
 
-    def _time_predicate(self, time: TimeSpec) -> exp.Expression:
+    def _time_predicate(self, time: TimeSpec) -> exp.Expr:
         if time.granularity not in TIME_COLUMNS:
             raise CompileError(f"不支持的粒度：{time.granularity}（支持 {sorted(TIME_COLUMNS)}）")
         column = TIME_COLUMNS[time.granularity]
@@ -313,19 +333,26 @@ class Compiler:
             raise CompileError(f"dim_date 缺少时间列 {column}（granularity={time.granularity}）")
 
         if time.granularity == "quarter":
-            # "2005Q2" → CalendarQtrID = 20052（Q 固定在第 5 位）
+            # "2013Q2" → CalendarQtrID = 20132（Q 固定在第 5 位）
             text = str(time.value).strip().upper()
             if len(text) != 6 or text[4] != "Q" or not (text[:4].isdigit() and text[5].isdigit()):
-                raise CompileError(f"季度格式必须为 YYYYQn，如 2005Q2：{time.value!r}")
+                raise CompileError(f"季度格式必须为 YYYYQn，如 2013Q2：{time.value!r}")
             value = int(text[:4] + text[5:])
         elif time.granularity == "date":
             literal = exp.cast(exp.Literal.string(str(time.value)), to="DATE")
             return exp.EQ(this=self._column_ast("dim_date", column), expression=literal)
         else:
             value = int(time.value)
-        return exp.EQ(this=self._column_ast("dim_date", column), expression=exp.Literal.number(value))
+            if time.granularity == "month":
+                # TPC-DI dim_date.CalendarMonthID = YYYYM 拼接（2014 年 5 月 = 20145，
+                # 10-12 月 = 201410 等），无前导零；而 TimeSpec 用 YYYYMM（201405）
+                # 承载月粒度，此处换算（实测：直接 int 匹配 201405 命中 0 行）
+                value = int(f"{value // 100}{value % 100}")
+        return exp.EQ(
+            this=self._column_ast("dim_date", column), expression=exp.Literal.number(value)
+        )
 
-    def _filter_predicate(self, f: Filter) -> exp.Expression:
+    def _filter_predicate(self, f: Filter) -> exp.Expr:
         found = self.model.find_field(f.column)
         if found is None:
             raise CompileError(f"过滤字段不存在：{f.column}")
@@ -335,7 +362,7 @@ class Compiler:
         if f.op not in ops:
             raise CompileError(f"不支持的过滤操作符：{f.op}")
         if isinstance(f.value, (int, float)):
-            right: exp.Expression = exp.Literal.number(f.value)
+            right: exp.Expr = exp.Literal.number(f.value)
         else:
             right = exp.Literal.string(str(f.value))
         return ops[f.op](this=left, expression=right)
@@ -355,7 +382,11 @@ class Compiler:
         while queue:
             current, chain = queue.pop(0)
             for rel in self.model.relationships:
-                edge = rel if rel.from_ds == current else (rel.reversed() if rel.to_ds == current else None)
+                edge = (
+                    rel
+                    if rel.from_ds == current
+                    else (rel.reversed() if rel.to_ds == current else None)
+                )
                 if edge is None or edge.to_ds in visited:
                     continue
                 new_chain = chain + [edge]
@@ -371,14 +402,12 @@ class Compiler:
                 queue.append((edge.to_ds, new_chain))
 
         if targets:
-            raise CompileError(
-                f"无法从 {main_ds} 通过 relationships 到达：{sorted(targets)}"
-            )
+            raise CompileError(f"无法从 {main_ds} 通过 relationships 到达：{sorted(targets)}")
         return joins, notes
 
     def _join_ast(self, edge: Relationship) -> exp.Join:
-        on = None
-        for fc, tc in zip(edge.from_columns, edge.to_columns):
+        on: exp.Condition | None = None
+        for fc, tc in zip(edge.from_columns, edge.to_columns, strict=True):
             cond = exp.EQ(
                 this=self._column_ast(edge.from_ds, fc),
                 expression=self._column_ast(edge.to_ds, tc),

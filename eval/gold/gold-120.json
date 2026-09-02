@@ -1,0 +1,30 @@
+{
+  "id": "gold-120",
+  "question": "2013 年活跃账户数是多少？",
+  "expected_metric": "active_account_count",
+  "expected_dimensions": [],
+  "expected_time": "2013",
+  "expected_sql": "SELECT COUNT(DISTINCT ft.SK_AccountID) AS active_account_count FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarYearID = 2013 LIMIT 100",
+  "result_hash": "02f99d2002c703f1669e358989f1663e1e38e96297dcb3bb70fb67b0d74fb877",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "活跃账户",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+      "role": "entity",
+      "note": "活跃账户 = 期内有成交的经纪账户"
+    },
+    {
+      "term": "成交",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "以证券交易事件界定活跃"
+    }
+  ]
+}

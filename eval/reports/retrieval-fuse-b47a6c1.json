@@ -1,0 +1,24 @@
+{
+  "task": "metric-retrieval-rrf-bm25+milvus",
+  "engine": "rrf-bm25+milvus",
+  "sha": "b47a6c1",
+  "corpus": {
+    "source": "atlas_finance.ossie.yaml",
+    "n_docs": 15
+  },
+  "queries": {
+    "source": "eval/gold gold-1xx ambiguous=false",
+    "n": 44
+  },
+  "params": {
+    "k": 60,
+    "depth_per_engine": 20,
+    "method": "reciprocal-rank-fusion"
+  },
+  "metrics": {
+    "recall_at_1": "44/44",
+    "recall_at_5": "44/44",
+    "fail_cases": 0
+  },
+  "fail_cases": []
+}

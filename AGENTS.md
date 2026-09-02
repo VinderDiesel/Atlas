@@ -166,7 +166,7 @@ make up          # 启动 PostgreSQL / ClickHouse / Milvus / Grafana
 make down        # 停止
 make seed        # 生成 TPC-DI 数据并建仓
 make lint        # 语义层校验（Schema + 唯一性 + 血缘 + 权限）
-make plan    Q="2005 年第二季度总交易额"   # 问句 → Plan（不执行 SQL）
+make plan    Q="2013 年第二季度总交易额"   # 问句 → Plan（不执行 SQL）
 make compile                    # Plan → 只读 SQL
 make eval                       # 跑评测，产出 eval/reports/<sha>.json
 make train                      # 用确认后的失败样本训练 LoRA

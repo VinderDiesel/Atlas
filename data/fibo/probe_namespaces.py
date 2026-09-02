@@ -8,11 +8,10 @@
 
 from __future__ import annotations
 
-from rdflib import Graph, Literal, RDF, URIRef
-from rdflib.namespace import OWL, RDFS, SKOS
-
 # 复用 check_iris 的扩展种子与闭包加载（含 TransactionsExt / FBC 域）
 from check_iris import load_graph  # type: ignore[import-not-found]
+from rdflib import RDF, Graph, Literal, URIRef
+from rdflib.namespace import OWL, RDFS, SKOS
 
 # 需要探查的命名空间前缀（失败候选的来源域）
 PREFIXES = [

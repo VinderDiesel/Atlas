@@ -56,12 +56,12 @@ BLOCKED_FUNCTIONS = frozenset(
 )
 
 # 禁止的语句节点类型（DDL / DML / 管理语句）
+# 注意：sqlglot 30.17 的 ALTER 节点是 exp.Alter（exp.AlterTable 不存在，已实测）
 FORBIDDEN_NODES = (
     exp.Insert,
     exp.Update,
     exp.Delete,
     exp.Drop,
-    exp.AlterTable,
     exp.Alter,
     exp.Grant,
     exp.Revoke,
@@ -72,6 +72,8 @@ FORBIDDEN_NODES = (
     exp.Detach,
     exp.TruncateTable,
     exp.Merge,
+    exp.Set,
+    exp.Transaction,
 )
 
 
@@ -115,14 +117,14 @@ class Policy:
         """
         rendered = self.condition
         for key, value in user_context.items():
-            placeholder = "{{ user.%s }}" % key
+            placeholder = f"{{{{ user.{key} }}}}"
             if placeholder in rendered:
                 rendered = rendered.replace(placeholder, _escape_literal(value))
         if "{{" in rendered:
-            raise UnsafeQuery("策略中存在未渲染的占位符：%s" % rendered)
+            raise UnsafeQuery(f"策略中存在未渲染的占位符：{rendered}")
         return rendered
 
-    def rewrite(self, tree: exp.Expression) -> exp.Expression:
+    def rewrite(self, tree: exp.Expr) -> exp.Expr:
         """把谓词注入到 WHERE 子句（AND 连接，不覆盖已有条件）。"""
         predicate_sql = self.condition
         predicate = sqlglot.parse_one(predicate_sql, read="clickhouse")
@@ -152,45 +154,55 @@ class BudgetExceeded(Exception):
 
 
 def _escape_literal(value: object) -> str:
-    """转义字面量，防注入。
+    """校验并转义字面量，防注入。
 
+    只做合法性校验与引号转义，**不包引号**——引号由策略模板负责
+    （模板约定：`branch = '{{ user.branch }}'`），否则会双重引号。
     这是**兜底防御**，不是主要防线。主要防线是 AST 校验 + 参数化。
     """
     if isinstance(value, (int, float)):
         return str(value)
     text = str(value)
     if not re.fullmatch(r"[A-Za-z0-9_\-.:]+", text):
-        raise UnsafeQuery("用户上下文字面量含非法字符：%r" % text)
-    return "'%s'" % text.replace("'", "''")
+        raise UnsafeQuery(f"用户上下文字面量含非法字符：{text!r}")
+    # 正则已排除单引号，此转义仅为纵深防御保留
+    return text.replace("'", "''")
 
 
-def parse(sql: str, dialect: str) -> exp.Expression:
+def parse(sql: str, dialect: str) -> exp.Expr:
     """解析为 AST。解析失败一律拒绝（不尝试修复）。"""
     try:
         tree = sqlglot.parse_one(sql, read=dialect)
     except Exception as exc:  # noqa: BLE001 - 解析失败必须拒绝
-        raise UnsafeQuery("SQL 无法解析：%s" % exc) from exc
+        raise UnsafeQuery(f"SQL 无法解析：{exc}") from exc
     if tree is None:
         raise UnsafeQuery("SQL 解析结果为空")
     return tree
 
 
-def check_readonly(tree: exp.Expression) -> None:
+def check_readonly(tree: exp.Expr) -> None:
     """禁 DDL / DML / 管理语句。"""
     for node_type in FORBIDDEN_NODES:
         if tree.find(node_type) is not None:
-            raise UnsafeQuery("检测到禁止的语句类型：%s" % node_type.__name__)
+            raise UnsafeQuery(f"检测到禁止的语句类型：{node_type.__name__}")
 
 
-def check_functions(tree: exp.Expression) -> None:
-    """函数黑名单。"""
-    for func in tree.find_all(exp.Func):
+def check_functions(tree: exp.Expr) -> None:
+    """函数黑名单。
+
+    注意：不认识的函数会被 sqlglot 解析为 exp.Anonymous（实测 sleep 即如此），
+    因此 Anonymous 也必须过黑名单，否则形同虚设。
+    """
+    for func in tree.find_all(exp.Func, exp.Anonymous):
         name = func.sql_name().lower()
+        if isinstance(func, exp.Anonymous):
+            # 实测：Anonymous.sql_name() 恒为 'ANONYMOUS'，函数名在 this 中
+            name = str(func.this).lower()
         if name in BLOCKED_FUNCTIONS:
-            raise UnsafeQuery("检测到禁止的函数：%s" % name)
+            raise UnsafeQuery(f"检测到禁止的函数：{name}")
 
 
-def check_tables(tree: exp.Expression, budget: Budget) -> None:
+def check_tables(tree: exp.Expr, budget: Budget) -> None:
     """表白名单（如果配置了）。
 
     注意：视图展开可能绕过表白名单，需要递归解析视图定义（待实现）。
@@ -198,14 +210,12 @@ def check_tables(tree: exp.Expression, budget: Budget) -> None:
     if not budget.allowed_tables:
         return
     for table in tree.find_all(exp.Table):
-        full_name = ".".join(
-            part for part in (table.catalog, table.db, table.name) if part
-        )
+        full_name = ".".join(part for part in (table.catalog, table.db, table.name) if part)
         if full_name not in budget.allowed_tables:
-            raise UnsafeQuery("表不在白名单内：%s" % full_name)
+            raise UnsafeQuery(f"表不在白名单内：{full_name}")
 
 
-def apply_limit(tree: exp.Expression, max_rows: int) -> exp.Expression:
+def apply_limit(tree: exp.Expr, max_rows: int) -> exp.Expr:
     """强制 LIMIT。已有更小的 LIMIT 则保留原值。"""
     tree = tree.copy()
     limit = tree.find(exp.Limit)
@@ -218,7 +228,7 @@ def apply_limit(tree: exp.Expression, max_rows: int) -> exp.Expression:
     return tree
 
 
-def apply_time_range(tree: exp.Expression, budget: Budget) -> exp.Expression:
+def apply_time_range(tree: exp.Expr, budget: Budget) -> exp.Expr:
     """强制时间范围。
 
     MVP 阶段：若查询中已包含对 time_column 的过滤，则跳过；
@@ -235,7 +245,7 @@ def apply_time_range(tree: exp.Expression, budget: Budget) -> exp.Expression:
     return tree
 
 
-def estimate_cost(tree: exp.Expression) -> float:
+def estimate_cost(tree: exp.Expr) -> float:
     """成本估算。
 
     MVP 阶段返回占位值。**必须替换为基于统计信息的真实估算**
@@ -280,6 +290,6 @@ def enforce(
 
     cost = estimate_cost(tree)
     if budget.exceeded(cost):
-        raise BudgetExceeded("预估成本 %.2f 超过预算 %.2f" % (cost, budget.max_cost_units))
+        raise BudgetExceeded(f"预估成本 {cost:.2f} 超过预算 {budget.max_cost_units:.2f}")
 
     return tree.sql(dialect=budget.dialect), cost

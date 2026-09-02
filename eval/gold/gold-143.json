@@ -1,0 +1,35 @@
+{
+  "id": "gold-143",
+  "question": "按分支统计 2015 年 12 月 31 日现金余额，列出前 5 名",
+  "expected_metric": "cash_balance",
+  "expected_dimensions": [
+    "Branch"
+  ],
+  "expected_time": "2015-12-31",
+  "expected_sql": "SELECT db.Branch AS branch, SUM(fcb.Cash) AS cash_balance FROM atlas.dwd.fact_cash_balances fcb JOIN atlas.dwd.dim_date dd ON fcb.SK_DateID = dd.SK_DateID JOIN atlas.dwd.dim_account da ON fcb.SK_AccountID = da.SK_AccountID JOIN atlas.dwd.dim_broker db ON da.SK_BrokerID = db.SK_BrokerID WHERE dd.DateValue = DATE '2015-12-31' GROUP BY db.Branch ORDER BY cash_balance DESC LIMIT 5",
+  "result_hash": "f9496d343d8f2657acb92a12797a0f05be3efdb2cbe99f6ea3b952c8076722e4",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "dimension_group_by",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "现金余额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Balance",
+      "role": "measure",
+      "note": "现金余额是账户余额的一种"
+    },
+    {
+      "term": "分支",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "分支经账户托管关系归属"
+    }
+  ]
+}

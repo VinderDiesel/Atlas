@@ -1,0 +1,30 @@
+{
+  "id": "gold-108",
+  "question": "2015 年活跃客户数是多少？",
+  "expected_metric": "active_customer_count",
+  "expected_dimensions": [],
+  "expected_time": "2015",
+  "expected_sql": "SELECT COUNT(DISTINCT ft.SK_CustomerID) AS active_customer_count FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarYearID = 2015 LIMIT 100",
+  "result_hash": "3dd9c0995d54c0abd51a90f1d57b1ce77bc885fc8a7cea52dcad3c2540dda5ee",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "客户",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/Person",
+      "role": "entity",
+      "note": "活跃客户 = 期内有成交的去重客户（TPC-DI 客户均为自然人）"
+    },
+    {
+      "term": "成交",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "以证券交易事件界定活跃"
+    }
+  ]
+}

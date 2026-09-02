@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -24,13 +25,21 @@ REPO = Path(__file__).resolve().parent.parent
 # 提取 expression 中 `dataset.field` 形式的引用（dataset 名限定为小写 snake_case）
 FIELD_REF = re.compile(r"(?<![\w.])([a-z][a-z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*)")
 
-REQUIRED_MODEL_KEYS = ("name", "description", "ai_context", "custom_extensions", "datasets", "relationships", "metrics")
+REQUIRED_MODEL_KEYS = (
+    "name",
+    "description",
+    "ai_context",
+    "custom_extensions",
+    "datasets",
+    "relationships",
+    "metrics",
+)
 REQUIRED_DATASET_KEYS = ("name", "source", "primary_key", "fields")
 REQUIRED_FIELD_KEYS = ("name", "expression", "datatype")
 REQUIRED_METRIC_KEYS = ("name", "description", "expression", "datatype", "ai_context")
 
 
-def validate_model(model: dict, errors: list[str], seen_names: dict[str, str]) -> None:
+def validate_model(model: dict[str, Any], errors: list[str], seen_names: dict[str, str]) -> None:
     """校验单个 semantic_model 的结构与内部引用。"""
     name = model.get("name")
     if not name:
@@ -97,10 +106,14 @@ def validate_model(model: dict, errors: list[str], seen_names: dict[str, str]) -
                 errors.append(f"{name}.{rel_name}: {side} 引用的 dataset {ds_ref} 不存在")
         for col in rel.get("from_columns", []):
             if col not in fields_by_ds.get(rel.get("from"), set()):
-                errors.append(f"{name}.{rel_name}: from_columns 引用字段 {col} 不存在于 {rel.get('from')}")
+                errors.append(
+                    f"{name}.{rel_name}: from_columns 引用字段 {col} 不存在于 {rel.get('from')}"
+                )
         for col in rel.get("to_columns", []):
             if col not in fields_by_ds.get(rel.get("to"), set()):
-                errors.append(f"{name}.{rel_name}: to_columns 引用字段 {col} 不存在于 {rel.get('to')}")
+                errors.append(
+                    f"{name}.{rel_name}: to_columns 引用字段 {col} 不存在于 {rel.get('to')}"
+                )
 
     for metric in model.get("metrics", []):
         mname = metric.get("name")

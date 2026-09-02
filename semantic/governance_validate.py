@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 import yaml
@@ -26,10 +27,10 @@ POLICY_PATH = REPO / "semantic" / "policies" / "row_policy.yml"
 GOLD_DIR = REPO / "eval" / "gold"
 
 
-def load_governance_payloads(path: Path) -> list[tuple[str, dict]]:
+def load_governance_payloads(path: Path) -> list[tuple[str, dict[str, Any]]]:
     """提取文件内所有 ATLAS 治理扩展 payload，返回 [(model_name, data)]。"""
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    payloads: list[tuple[str, dict]] = []
+    payloads: list[tuple[str, dict[str, Any]]] = []
     for model in doc.get("semantic_model", []):
         for ext in model.get("custom_extensions", []):
             if ext.get("vendor_name") != "ATLAS":
@@ -43,7 +44,7 @@ def load_governance_payloads(path: Path) -> list[tuple[str, dict]]:
     return payloads
 
 
-def validate_file(path: Path, schema: dict, errors: list[str]) -> None:
+def validate_file(path: Path, schema: dict[str, Any], errors: list[str]) -> None:
     """校验单个文件的所有治理扩展。"""
     registry = _load_registry(errors)
     policy_names = _load_policy_names(errors)
@@ -62,15 +63,23 @@ def validate_file(path: Path, schema: dict, errors: list[str]) -> None:
         alignment = data.get("fibo_alignment")
         if alignment:
             if registry is None:
-                errors.append(f"{prefix}: 缺少权威注册表 {REGISTRY_PATH.name}（运行 data/fibo 的注册表导出命令）")
+                errors.append(
+                    f"{prefix}: 缺少权威注册表 {REGISTRY_PATH.name}"
+                    "（运行 data/fibo 的注册表导出命令）"
+                )
             else:
                 for key, mapping in alignment.get("mappings", {}).items():
                     concept = mapping.get("concept")
                     if concept not in registry:
-                        errors.append(f"{prefix}.fibo_alignment.{key}: 概念 {concept} 不在权威注册表（{len(registry)} 条）")
+                        errors.append(
+                            f"{prefix}.fibo_alignment.{key}: 概念 {concept}"
+                            f" 不在权威注册表（{len(registry)} 条）"
+                        )
         policy_ref = data.get("policy", {}).get("default_row_policy")
         if policy_ref and policy_names is not None and policy_ref not in policy_names:
-            errors.append(f"{prefix}: default_row_policy 引用的策略 {policy_ref} 不存在于 {POLICY_PATH.name}")
+            errors.append(
+                f"{prefix}: default_row_policy 引用的策略 {policy_ref} 不存在于 {POLICY_PATH.name}"
+            )
         for case_id in data.get("quality", {}).get("gold_test_cases", []):
             if gold_ids is not None and case_id not in gold_ids:
                 errors.append(f"{prefix}: gold_test_cases 引用的用例 {case_id} 不存在于 eval/gold/")

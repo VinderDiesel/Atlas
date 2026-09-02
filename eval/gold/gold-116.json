@@ -1,0 +1,40 @@
+{
+  "id": "gold-116",
+  "question": "按客户等级统计 2014 年交易额，列出前 5 名",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [
+    "Tier"
+  ],
+  "expected_time": "2014",
+  "expected_sql": "SELECT dc.Tier AS tier, SUM(ft.Quantity * ft.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_customer dc ON ft.SK_CustomerID = dc.SK_CustomerID WHERE dd.CalendarYearID = 2014 GROUP BY dc.Tier ORDER BY total_trade_value DESC LIMIT 5",
+  "result_hash": "a9c06c05fbd7ad08fd4f8ad9557d81253249b05485fee9ee9109aff484dcb788",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "交易额 = 数量 × 成交价合计，以货币金额度量"
+    },
+    {
+      "term": "客户等级",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/Person",
+      "role": "dimension",
+      "note": "Tier 是客户的分层属性（TPC-DI 客户均为自然人）"
+    },
+    {
+      "term": "交易",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "统计对象为证券交易事件"
+    }
+  ]
+}

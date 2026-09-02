@@ -1,0 +1,31 @@
+{
+  "id": "gold-139",
+  "question": "2016 年 12 月 31 日全账户现金余额合计是多少？",
+  "expected_metric": "cash_balance",
+  "expected_dimensions": [],
+  "expected_time": "2016-12-31",
+  "expected_sql": "SELECT SUM(fcb.Cash) AS cash_balance FROM atlas.dwd.fact_cash_balances fcb JOIN atlas.dwd.dim_date dd ON fcb.SK_DateID = dd.SK_DateID WHERE dd.DateValue = DATE '2016-12-31' LIMIT 100",
+  "result_hash": "4e5bae516e9ff79e97ddb27b468fed0b754f9c1b6e764e2b2627d4e9514d5436",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "现金余额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Balance",
+      "role": "measure",
+      "note": "现金余额是账户余额的一种(可为负)"
+    },
+    {
+      "term": "2016 年 12 月 31 日",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "余额快照日"
+    }
+  ]
+}

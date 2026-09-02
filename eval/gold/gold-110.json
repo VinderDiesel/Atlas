@@ -1,0 +1,31 @@
+{
+  "id": "gold-110",
+  "question": "2013 年 12 月 31 日持仓账户数是多少？",
+  "expected_metric": "holding_account_count",
+  "expected_dimensions": [],
+  "expected_time": "2013-12-31",
+  "expected_sql": "SELECT COUNT(DISTINCT fh.SK_AccountID) AS holding_account_count FROM atlas.dwd.fact_holdings fh JOIN atlas.dwd.dim_date dd ON fh.SK_DateID = dd.SK_DateID WHERE dd.DateValue = DATE '2013-12-31' LIMIT 100",
+  "result_hash": "38d66d9692ac590000a91b03a88da1c88d51fab2b78f63171f553ecc551a0c6f",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "账户",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+      "role": "entity",
+      "note": "持仓账户 = 快照日持有证券的经纪账户"
+    },
+    {
+      "term": "2013 年 12 月 31 日",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "持仓快照日"
+    }
+  ]
+}

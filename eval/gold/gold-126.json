@@ -1,0 +1,31 @@
+{
+  "id": "gold-126",
+  "question": "2017 年第一季度总成交量是多少？",
+  "expected_metric": "total_trade_quantity",
+  "expected_dimensions": [],
+  "expected_time": "2017Q1",
+  "expected_sql": "SELECT SUM(ft.Quantity) AS total_trade_quantity FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarQtrID = 20171 LIMIT 100",
+  "result_hash": "97cb48ad90078e7b115064b908553843dce5c7c60952de2ca9ff0d4459067b3d",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "boundary",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "总成交量",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "成交量是证券交易数量合计"
+    },
+    {
+      "term": "2017 年第一季度",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "数据段尾部(2012-07 至 2017-07)边界季度"
+    }
+  ]
+}

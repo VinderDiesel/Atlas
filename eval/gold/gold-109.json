@@ -1,0 +1,31 @@
+{
+  "id": "gold-109",
+  "question": "2013 年 12 月 31 日全账户持仓量合计是多少？",
+  "expected_metric": "holdings_quantity",
+  "expected_dimensions": [],
+  "expected_time": "2013-12-31",
+  "expected_sql": "SELECT SUM(fh.CurrentQty) AS holdings_quantity FROM atlas.dwd.fact_holdings fh JOIN atlas.dwd.dim_date dd ON fh.SK_DateID = dd.SK_DateID WHERE dd.DateValue = DATE '2013-12-31' LIMIT 100",
+  "result_hash": "183d7a39a3060fb9487c838c8693bb94ed8f36821323530c140f0d40ea779f66",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "持仓量",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+      "role": "entity",
+      "note": "持仓量是证券持仓数量的合计"
+    },
+    {
+      "term": "2013 年 12 月 31 日",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "持仓快照日"
+    }
+  ]
+}

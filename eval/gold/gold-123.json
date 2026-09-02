@@ -1,0 +1,30 @@
+{
+  "id": "gold-123",
+  "question": "2015 年全年交易额是多少？",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "2015",
+  "expected_sql": "SELECT SUM(ft.Quantity * ft.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarYearID = 2015 LIMIT 100",
+  "result_hash": "66663d77892fff6eed79274eaf83c20a2030747873e72d5a5a37ce450d63b67d",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "交易额 = 数量 × 成交价合计"
+    },
+    {
+      "term": "交易",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "统计对象为证券交易事件"
+    }
+  ]
+}

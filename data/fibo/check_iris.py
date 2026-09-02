@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rdflib import Graph, Literal, RDF, URIRef
+from rdflib import RDF, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDFS, SKOS
 
 # 复用冒烟脚本的加载逻辑

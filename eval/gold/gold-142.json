@@ -1,0 +1,41 @@
+{
+  "id": "gold-142",
+  "question": "按分支统计 2014 年 12 月 31 日持仓市值，列出前 5 名",
+  "expected_metric": "holdings_value",
+  "expected_dimensions": [
+    "Branch"
+  ],
+  "expected_time": "2014-12-31",
+  "expected_sql": "SELECT db.Branch AS branch, SUM(fh.CurrentValue) AS holdings_value FROM atlas.dwd.fact_holdings fh JOIN atlas.dwd.dim_date dd ON fh.SK_DateID = dd.SK_DateID JOIN atlas.dwd.dim_account da ON fh.SK_AccountID = da.SK_AccountID JOIN atlas.dwd.dim_broker db ON da.SK_BrokerID = db.SK_BrokerID WHERE dd.DateValue = DATE '2014-12-31' GROUP BY db.Branch ORDER BY holdings_value DESC LIMIT 5",
+  "result_hash": "593a56b616df4c1ed67683c1588af695d76ca4e8d3d390e66631d467919b54da",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "dimension_group_by",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "持仓市值",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "持仓市值以货币金额度量"
+    },
+    {
+      "term": "分支",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "分支经账户托管关系归属(account→broker)"
+    },
+    {
+      "term": "2014 年 12 月 31 日",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "持仓快照日"
+    }
+  ]
+}

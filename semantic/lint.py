@@ -72,7 +72,8 @@ def main() -> int:
     if errors:
         print(f"\n[gold] 校验失败：{len(errors)} 个问题")
         return 1
-    print(f"✅ [gold] 黄金集结构校验通过：{len(glob.glob(str(REPO / 'eval' / 'gold' / 'gold-*.json')))} 条样本")
+    n_gold = len(glob.glob(str(REPO / "eval" / "gold" / "gold-*.json")))
+    print(f"✅ [gold] 黄金集结构校验通过：{n_gold} 条样本")
 
     print("\nlint 全部通过")
     return 0

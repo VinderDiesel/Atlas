@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 import xml.etree.ElementTree as ET
 
-from rdflib import Graph, Literal, RDF, RDFS, URIRef
+from rdflib import RDF, RDFS, Graph, Literal, URIRef
 from rdflib.namespace import OWL, SKOS
 
 ROOT = "/Users/yangxinlong/gitee/Atlas/data/fibo"
@@ -102,7 +102,10 @@ def main() -> None:
                 queue.append(str(imp))
     elapsed_load = time.time() - t0
 
-    print(f"[2/4] 闭包加载完成：{len(loaded)} 个本体文件，{len(g):,} 条三元组，耗时 {elapsed_load:.1f}s")
+    print(
+        f"[2/4] 闭包加载完成：{len(loaded)} 个本体文件，{len(g):,} 条三元组，"
+        f"耗时 {elapsed_load:.1f}s"
+    )
     if missing:
         print(f"    ⚠️ 未解析的 import（{len(missing)}）：")
         for m in missing[:15]:
@@ -115,7 +118,10 @@ def main() -> None:
         g.subjects(RDF.type, OWL.DatatypeProperty)
     )
     sub_of = list(g.subjects(RDFS.subClassOf, None))
-    print(f"[3/4] TBox 统计：owl:Class={len(classes):,}，属性={len(props):,}，subClassOf={len(sub_of):,}")
+    print(
+        f"[3/4] TBox 统计：owl:Class={len(classes):,}，属性={len(props):,}，"
+        f"subClassOf={len(sub_of):,}"
+    )
 
     print("[4/4] 关键概念验证：")
     # 注意：FIBO 2.0 已将 Party 等基础概念下沉至 OMG Commons

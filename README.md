@@ -11,11 +11,7 @@
 
 Atlas 是一个**个人主导建设的 AI 数据平台设计项目**：以**金融为主场景**（TPC-DI 零售经纪数据），
 **FIBO 金融业务本体作为语义锚点**（L2 概念对齐层，ADR-0007），使用声明式语义层、指标编排、
-受控 SQL 执行与 LangGraph Agent，打通
-
-> **业务术语 → FIBO 概念 → 指标计划 → 安全查询 → 可解释结果 → 评测回流**
-
-的完整闭环。
+受控 SQL 执行与 LangGraph Agent，打通**业务术语 → FIBO 概念 → 指标计划 → 安全查询 → 可解释结果 → 评测回流**的完整闭环。
 
 **它刻意不做的事**：不训练基座模型、不追求 NL2SQL 榜单分数、不声称企业级生产能力。
 **它刻意做好的事**：口径唯一、权限下推、SQL 只读、结果可解释、评测可复现。
@@ -133,15 +129,19 @@ make install
 # 2) 启动 Apache 全栈（Polaris / Doris / Iceberg+MinIO / Milvus / Grafana）
 make up
 
-# 3) 生成 TPC-DI 数据（零售经纪，2004-07~2006-07 数据段）→ 写入 Iceberg → 锁定快照
+# 3) TPC-DI Batch1（零售经纪，2012-07-07~2017-07-07 实测数据段）→ 装载 17 张 ODS → 锁定快照
+#    （load 耗时分钟级；快照 meta 见 data/snapshots/<sha>.meta.json）
 make seed
+
+# 3b) DWD 加工：在 Doris 内执行 sql/dwd 的 8 张幂等 SQL（依赖 Doris 已建 atlas catalog）
+make dwd
 
 # 4) 校验语义层（Ossie 规范 + Atlas 治理扩展）
 make lint-ossie
 make lint-governance
 
-# 5) 跑一次完整链路："2005 年第二季度总交易额是多少？"
-make plan   Q="2005 年第二季度总交易额是多少？"
+# 5) 跑一次完整链路："2013 年第二季度总交易额是多少？"
+make plan   Q="2013 年第二季度总交易额是多少？"
 make compile
 make eval
 
@@ -154,11 +154,16 @@ make export
 
 ### 3.3 验证成功
 
-- [ ] `make lint-ossie` 通过（Ossie 官方 schema 校验）
-- [ ] `make lint-governance` 通过（owner / lineage / policy 齐全）
-- [ ] `make plan` 输出包含 `metric: total_trade_value`、`time: 2005Q2`（对应 gold-101）
-- [ ] `make compile` 产出带 `LIMIT` 与行级谓词的只读 SQL
-- [ ] `make eval` 生成 `eval/reports/<commit-sha>.json`
+- [x] `make lint-ossie` 通过（Ossie 官方 schema 校验）
+- [x] `make lint-governance` 通过（owner / lineage / policy 齐全）
+- [x] `make plan` 输出 Plan 含 `metric='total_trade_value'`、`value='2013Q2'`（对应 gold-101，15/15 契约测试通过）
+- [x] `make compile` 产出带 `LIMIT` 与时间范围约束的只读 SQL（gold-101~103 实测）
+- [x] TPC-DI Batch1 → tpcdi 17 张 ODS 装载完成，行数与源文件逐行核验一致（data/loader.py QA 口径）
+- [x] DWD 8 张加工完成（INSERT OVERWRITE 幂等，Doris 侧 COUNT 与 pyiceberg 侧双验一致），行数与 snapshot id 锁定于 `data/snapshots/b47a6c1.meta.json`
+- [x] 语义层 source 命名与 Doris 实际路径统一（`atlas.dwd.*`）；gold-101~103 参考 SQL 已在 Doris 实跑返回（2013Q2 交易额 344129059.35 等，仅供链路验证，非评测数字）
+- [x] `make eval` 已跑通且幂等：金融段 48 例（44 可解析 + 4 歧义）Plan Acc 44/44、歧义反问 4/4、EX 44/44，报告 `eval/reports/b47a6c1.json`（gold 共 50 条含零售 2，50 条目标达成，见 5.3）
+- [x] `make retrieve` 指标检索双路实测：语料 15 指标文档（与 gold 同源）、查询 44 条可解析问句；BM25 Recall@1 44/44、Milvus 稀疏向量 Recall@1 42/44（两路 @5 均 44/44），报告 `eval/reports/retrieval-bm25-b47a6c1.json` / `retrieval-milvus-b47a6c1.json`
+- [x] `make retrieve ENGINE=fuse` RRF 融合实测：BM25 + Milvus 双路各 top-20 融合后 Recall@1 = 44/44、@5 = 44/44（修复向量路 2 条 top-1 失手），报告 `eval/reports/retrieval-fuse-b47a6c1.json`；SemanticGraph 图约束过滤跨实体错配（现金域 × 证券维度），13 组 gold 维度样本契约测试全保留（tests/test_graph_store.py）
 - [ ] Grafana 面板能看到 TTFT / p95 / token_cost
 
 ---
@@ -317,10 +322,10 @@ eval/
 ```json
 {
   "id": "gold-101",
-  "question": "2005 年第二季度总交易额是多少？",
+  "question": "2013 年第二季度总交易额是多少？",
   "expected_metric": "total_trade_value",
   "expected_dimensions": [],
-  "expected_time": "2005Q2",
+  "expected_time": "2013Q2",
   "expected_sql": "<人工标注 SQL>",
   "result_hash": "<固定数据快照下的执行结果哈希>",
   "snapshot_sha": "<git rev-parse HEAD of data snapshot>",
@@ -331,7 +336,16 @@ eval/
 }
 ```
 
-### 5.3 准确率提升手段（按优先级）
+### 5.3 评测执行（eval/runner.py）
+
+链路：`gold 问句 → Planner → Plan（记 Plan Acc）→ Compiler → Guard（只读 + 表白名单=快照内表）→ Doris 执行 → 结果 sha256`，与标注 `result_hash` 一致即 EX pass。
+
+- 评测只认当前 HEAD：启动时复核 `data/snapshots/<sha>.meta.json` 数据指纹，漂移即拒绝出报告
+- 首轮执行自动锚定：gold JSON 的 `result_hash` 占位符回填为实测 sha256（`snapshot_sha` 同步绑定），此后比对即 EX
+- 歧义样本（`ambiguous: true`）要求返回澄清反问；反问命中 = pass，不猜
+- 产出：`eval/reports/<git sha>.json`（当前 `b47a6c1`：金融段 48 例，Plan Acc 44/44、反问 4/4、EX 44/44）
+
+### 5.4 准确率提升手段（按优先级）
 
 1. **Schema Linking 两阶段**：图域约束粗筛 → BM25 + 向量召回 → 列级 rerank → JOIN 可达性验证
 2. **自洽投票（self-consistency）**：多次采样，按执行结果聚类取众数
@@ -371,7 +385,7 @@ parse(AST) → 禁 DDL/DML → 函数黑名单 → apply LIMIT → apply 时间�
 
 | 数据 | 用途 | 来源 |
 |---|---|---|
-| TPC-DI（零售经纪，2004-07~2006-07 数据段） | 主场景数据：重建金融库表关系、指标场景 | 公开基准，注册下载 |
+| TPC-DI（零售经纪，2012-07-07~2017-07-07 实测数据段；已装载 17 张 ODS + 8 张 DWD，快照 `b47a6c1`） | 主场景数据：重建金融库表关系、指标场景 | 公开基准，注册下载 |
 | FIBO 本体（FND+FBC+BE 域）+ OMG Commons/LCC | 语义锚点：概念 IRI 注册表与对齐映射 | EDM Council（MIT）/ OMG 规范（研究用途） |
 | BIRD finance | 公开集能力对照（仅参照，不混报） | 公开学术基准 |
 | 自建黄金集（50 例目标） | 主评测集 | 本人基于 TPC-DI 人工标注 |
@@ -418,11 +432,12 @@ atlas-data-platform/
 |---|---|
 | `make install` | 安装依赖 |
 | `make up` | 启动基础设施 |
-| `make seed` | 生成 TPC-DI 数据并建仓 |
+| `make seed` | 装载 TPC-DI Batch1 → Iceberg → 锁定快照 |
 | `make lint` | 校验语义层定义（JSON Schema + 唯一性 + 血缘） |
 | `make plan Q="..."` | 问句 → 指标计划（不执行） |
 | `make compile` | 计划 → 只读 SQL |
 | `make eval` | 跑评测集，产出 report JSON |
+| `make retrieve` | 指标检索评测（BM25；`ENGINE=milvus` 走 Milvus 稀疏向量；`ENGINE=fuse` 走 RRF 双路融合） |
 | `make train` | 用确认后的失败样本训练 SQL LoRA |
 | `make report` | 生成 EVAL_REPORT.md |
 | `make test` | 全量单元 + 契约测试 |
@@ -433,7 +448,7 @@ atlas-data-platform/
 
 > 这一节是**诚实性的核心**，禁止删除或美化。
 
-1. **数据规模有限**：TPC-DI 为基准默认规模（2004-07~2006-07 数据段），与真实金融机构 PB 级、上千张表的复杂度不可比
+1. **数据规模有限**：TPC-DI 为基准默认规模（实测数据段 2012-07-07~2017-07-07，294 万行），与真实金融机构 PB 级、上千张表的复杂度不可比
 2. **Schema Linking 未大规模验证**：当前仅在 15 张表子集上验证；1000 表场景属于**待验证假设**
 3. **权限模型简化**：行级策略为自研简化实现，未经过真实 IAM/审计/合规检验
 4. **并发与容灾未验证**：MVP 为单机部署，无高可用、无限流压测
@@ -446,6 +461,16 @@ atlas-data-platform/
    若单机资源不足，按 ADR-0004 降级
 9. **Apache Calcite 未引入**：MVP 用 sqlglot，无 CBO 与语义校验（取舍见 ADR-0005）
 10. **图表与归因能力为最小实现**：仅做确定性渲染，无自动洞察
+11. **Planner 为确定性规则版**：维度解析要求显式分组结构词（“按X统计/分组”）
+    且仅匹配 dim_* 维度表字段；相对时间（“上个月/最近”）不支持（返回澄清）；
+    filter 解析未实现（详见 agent/planner.py 已知边界）
+12. **检索语料与查询同源、MVP 向量为词法级**：Recall 评测的问句措辞来自语义层
+    同义词（同源口径验证，非跨领域泛化数字）；Milvus 向量为确定性词法稀疏向量
+    （tf-IP，无 idf），不编码语义相似（“佣金”与“手续费”不同 token），嵌入与
+    rerank 待 Schema Linking 阶段评估（见 retrieval/bm25.py、milvus_client.py）
+13. **图约束比 Compiler 保守**：SemanticGraph 禁止事实表间桥接（dim→fact 回跳）的
+    跨实体召回，Compiler 目前技术上能编译这类多跳 SQL（缺维度域检查）；检索层先剔除，
+    双方口径差异属已知边界（见 retrieval/graph_store.py）
 
 **如果有真实企业数据，我会优先补做**：数据契约、IAM 集成、审计留痕、容灾、并发压测、模型红队测试、变更管理流程。
 
@@ -469,9 +494,8 @@ atlas-data-platform/
 
 ## 12. 许可与声明
 
-- 代码：`<待选择，建议 Apache-2.0 或 MIT>`
+- 代码：`Apache-2.0`
 - 数据：TPC-DI / BIRD / FIBO（MIT）/ OMG Commons（研究用途）遵循各自原始许可
-- 本项目为**个人学习与设计验证项目**，与任何雇主无关
 
 ---
 
@@ -486,3 +510,26 @@ atlas-data-platform/
 - 公开基准官方结果
 
 **没有计算脚本的数字，不写。单次运行得出的性能结论，不写。**
+
+---
+
+## 关于作者与交流
+
+**范德塞尔** · 江苏 苏州
+
+> 数据平台 / 可信 AI 问数方向。Atlas 是我个人设计与实现的完整项目——
+> 从 Apache 语义层（Ossie + 自研治理扩展）到确定性 NL2SQL 编译器、
+> 再到可复现评测闭环（黄金集 + 快照锁定），全链路动手实现；
+> 本 README 中的每一个数字都绑定 commit 或评测报告（见文末《我的诚实承诺》）。
+
+如果你在做同类方向（语义层 / 指标平台 / NL2SQL / 数据 Agent），欢迎交流：
+项目里踩过的坑（Ossie 不是运行时、固定快照评测、TPC-DI 时间编码等）
+也许能帮你少走弯路，也欢迎对 Atlas 提 issue / PR。
+
+<div align="center">
+
+<img src="docs/contact-wechat.png" width="280" alt="微信二维码：扫一扫添加好友" />
+
+**扫码添加微信，备注「Atlas」**（注明来意，方便我知道你是从仓库来的）
+
+</div>

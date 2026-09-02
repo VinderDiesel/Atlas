@@ -1,0 +1,25 @@
+{
+  "id": "gold-121",
+  "question": "上个月总成交量是多少？",
+  "expected_metric": null,
+  "expected_dimensions": [],
+  "expected_time": null,
+  "expected_sql": null,
+  "result_hash": null,
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "ambiguous",
+    "clarification",
+    "fibo_alignment"
+  ],
+  "ambiguous": true,
+  "clarification": "需要澄清：「上个月」是相对时间，在固定快照评测下会漂移。请指定绝对月份（如 2016 年 8 月）。",
+  "fibo_concepts": [
+    {
+      "term": "总成交量",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "歧义用例：指标口径可解析（成交量），时间需澄清为绝对日期"
+    }
+  ]
+}

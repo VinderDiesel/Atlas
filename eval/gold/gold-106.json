@@ -1,0 +1,30 @@
+{
+  "id": "gold-106",
+  "question": "2014 年第三季度交易税合计是多少？",
+  "expected_metric": "total_trade_tax",
+  "expected_dimensions": [],
+  "expected_time": "2014Q3",
+  "expected_sql": "SELECT SUM(ft.Tax) AS total_trade_tax FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID WHERE dd.CalendarQtrID = 20143 LIMIT 100",
+  "result_hash": "d1760666567b64ebbb91e8414e18525d8a11bbeb15290b2d0ad126a7ec877080",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易税",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "交易税以货币金额度量（证券交易税）"
+    },
+    {
+      "term": "交易",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "交易税随证券交易产生"
+    }
+  ]
+}

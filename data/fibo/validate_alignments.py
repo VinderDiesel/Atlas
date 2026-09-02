@@ -5,7 +5,8 @@
 1. 内嵌 JSON 通过 atlas_governance.schema.json（含 fibo_alignment 结构约束）
 2. 每个 concept IRI 真实存在于锁定版本的 FIBO/Commons 闭包（防引用失效概念）
 
-用法：.venv/bin/python data/fibo/validate_alignments.py [semantic/ossie/atlas_finance.ossie.yaml ...]
+用法：.venv/bin/python data/fibo/validate_alignments.py
+     [semantic/ossie/atlas_finance.ossie.yaml ...]
 """
 
 from __future__ import annotations
@@ -16,10 +17,9 @@ from pathlib import Path
 
 import jsonschema
 import yaml
+from check_iris import ROOT, load_graph  # type: ignore[import-not-found]
 from rdflib import RDF, URIRef
 from rdflib.namespace import OWL
-
-from check_iris import ROOT, load_graph  # type: ignore[import-not-found]
 
 REPO = ROOT.parent.parent
 SCHEMA = REPO / "semantic" / "governance" / "atlas_governance.schema.json"
@@ -41,7 +41,8 @@ def extract_alignment(yaml_path: Path) -> list[dict]:
 
 
 def main() -> None:
-    paths = [Path(p) for p in sys.argv[1:]] or [REPO / "semantic" / "ossie" / "atlas_finance.ossie.yaml"]
+    default_model = REPO / "semantic" / "ossie" / "atlas_finance.ossie.yaml"
+    paths = [Path(p) for p in sys.argv[1:]] or [default_model]
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
     g = load_graph()
     classes = {c for c in g.subjects(RDF.type, OWL.Class)}
@@ -66,7 +67,11 @@ def main() -> None:
                 for key, iri in missing:
                     print(f"  ❌ {name}.{key}: {iri} 不存在于 FIBO 闭包")
             else:
-                print(f"  ✅ {name}: {len(mappings)} 条映射 IRI 全部存在于 FIBO 闭包（锁定 commit {item['data']['fibo_alignment']['fibo_commit']}）")
+                commit = item["data"]["fibo_alignment"]["fibo_commit"]
+                print(
+                    f"  ✅ {name}: {len(mappings)} 条映射 IRI 全部存在于 FIBO 闭包"
+                    f"（锁定 commit {commit}）"
+                )
 
     if not ok:
         sys.exit(1)

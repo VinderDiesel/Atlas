@@ -1,0 +1,31 @@
+{
+  "id": "gold-111",
+  "question": "2014 年 12 月 31 日持仓证券数是多少？",
+  "expected_metric": "holding_security_count",
+  "expected_dimensions": [],
+  "expected_time": "2014-12-31",
+  "expected_sql": "SELECT COUNT(DISTINCT fh.SK_SecurityID) AS holding_security_count FROM atlas.dwd.fact_holdings fh JOIN atlas.dwd.dim_date dd ON fh.SK_DateID = dd.SK_DateID WHERE dd.DateValue = DATE '2014-12-31' LIMIT 100",
+  "result_hash": "d2f483672c0239f6d7dd3c9ecee6deacbcd59185855625902a8b1c1a3bd67440",
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "证券",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+      "role": "entity",
+      "note": "持仓证券 = 快照日被持有的去重证券数"
+    },
+    {
+      "term": "2014 年 12 月 31 日",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "持仓快照日"
+    }
+  ]
+}

@@ -12,6 +12,8 @@
 # 所有概念 IRI 已经 data/fibo/check_iris.py 实测验证存在。
 #
 # ⚠️ 0.2.0.dev0 为 DRAFT，schema 可能变化。锁定时需在 README 记录具体 commit sha。
+# 2026-09-02 修改：指标 6 → 15（P0 门槛），新增成交量/交易税/证券数/客户数/持仓量/
+#   持仓账户数/现金账户数/平均成交价，全部基于既有事实表可聚合列，同义词已做冲突预检。
 
 version: "0.2.0.dev0"
 
@@ -55,7 +57,7 @@ semantic_model:
             },
             "lineage": {
               "source_system": "TPC-DI v1.1.0 SF1",
-              "source_catalog": "iceberg_rest.atlas",
+              "source_catalog": "atlas",
               "source_tables": ["dim_account", "dim_broker", "dim_customer", "dim_security", "dim_date", "dim_trade", "fact_cash_balances", "fact_holdings"],
               "transform_jobs": ["sql/dwd/*", "sql/dws/*"],
               "downstream_consumers": []
@@ -209,7 +211,7 @@ semantic_model:
     # ===================================================================
     datasets:
       - name: fact_trades
-        source: iceberg_rest.atlas.dwd_fact_trades
+        source: atlas.dwd.fact_trades
         primary_key:
           - TradeID
         unique_keys:
@@ -389,7 +391,7 @@ semantic_model:
                 - "买卖方向"
 
       - name: fact_holdings
-        source: iceberg_rest.atlas.dwd_fact_holdings
+        source: atlas.dwd.fact_holdings
         primary_key:
           - HoldingID
         unique_keys:
@@ -485,7 +487,7 @@ semantic_model:
                 - "市值"
 
       - name: fact_cash_balances
-        source: iceberg_rest.atlas.dwd_fact_cash_balances
+        source: atlas.dwd.fact_cash_balances
         primary_key:
           - SK_AccountID
           - SK_DateID
@@ -549,7 +551,7 @@ semantic_model:
                 - "余额"
 
       - name: dim_account
-        source: iceberg_rest.atlas.dwd_dim_account
+        source: atlas.dwd.dim_account
         primary_key:
           - SK_AccountID
         unique_keys:
@@ -621,7 +623,7 @@ semantic_model:
                 - "税务状态"
 
       - name: dim_customer
-        source: iceberg_rest.atlas.dwd_dim_customer
+        source: atlas.dwd.dim_customer
         primary_key:
           - SK_CustomerID
         unique_keys:
@@ -693,7 +695,7 @@ semantic_model:
                 - "信用评级"
 
       - name: dim_security
-        source: iceberg_rest.atlas.dwd_dim_security
+        source: atlas.dwd.dim_security
         primary_key:
           - SK_SecurityID
         unique_keys:
@@ -777,7 +779,7 @@ semantic_model:
                 - "分红"
 
       - name: dim_broker
-        source: iceberg_rest.atlas.dwd_dim_broker
+        source: atlas.dwd.dim_broker
         primary_key:
           - SK_BrokerID
         unique_keys:
@@ -838,7 +840,7 @@ semantic_model:
                 - "办公室"
 
       - name: dim_date
-        source: iceberg_rest.atlas.dwd_dim_date
+        source: atlas.dwd.dim_date
         primary_key:
           - SK_DateID
         unique_keys:
@@ -1093,7 +1095,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-101"],
+                  "gold_test_cases": ["gold-102"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }
@@ -1125,7 +1127,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-102"],
+                  "gold_test_cases": ["gold-103"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }
@@ -1187,3 +1189,110 @@ semantic_model:
             - "活跃账户数"
             - "交易账户数"
             - "动账账户数"
+
+      - name: total_trade_quantity
+        description: 总成交量（成交数量合计，股/份）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_trades.Quantity)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "成交量"
+            - "总成交量"
+
+      - name: total_trade_tax
+        description: 交易税合计（证券交易税，美元）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_trades.Tax)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "交易税"
+            - "交易税费"
+
+      - name: traded_security_count
+        description: 成交证券数（期内有成交的去重证券数）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT fact_trades.SK_SecurityID)
+        datatype: Integer
+        ai_context:
+          synonyms:
+            - "成交证券数"
+            - "成交标的数"
+
+      - name: active_customer_count
+        description: 活跃客户数（期内有成交的去重客户数）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT fact_trades.SK_CustomerID)
+        datatype: Integer
+        ai_context:
+          synonyms:
+            - "活跃客户数"
+            - "动账客户数"
+
+      - name: holdings_quantity
+        description: 持仓总量（快照日全部持仓数量合计）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_holdings.CurrentQty)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "持仓量"
+            - "总持仓量"
+
+      - name: holding_account_count
+        description: 持仓账户数（快照日有持仓的去重账户数）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT fact_holdings.SK_AccountID)
+        datatype: Integer
+        ai_context:
+          synonyms:
+            - "持仓账户数"
+
+      - name: holding_security_count
+        description: 持仓证券数（快照日被持有的去重证券数）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT fact_holdings.SK_SecurityID)
+        datatype: Integer
+        ai_context:
+          synonyms:
+            - "持仓证券数"
+            - "持仓标的数"
+
+      - name: cash_account_count
+        description: 有余额账户数（快照日有现金余额记录的去重账户数）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT fact_cash_balances.SK_AccountID)
+        datatype: Integer
+        ai_context:
+          synonyms:
+            - "有余额账户数"
+            - "现金账户数"
+
+      - name: avg_trade_price
+        description: 平均成交价（成交单价的简单平均，美元）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: AVG(fact_trades.TradePrice)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "平均成交价"
+            - "成交均价"
