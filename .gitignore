@@ -46,3 +46,5 @@ query.plan.json
 .idea/
 .vscode/
 .DS_Store
+
+docs/outreach-*

@@ -45,8 +45,11 @@ jobs:
 
       - name: Resolve version from pyproject.toml
         id: version
+        # step output 必须写 $GITHUB_OUTPUT 文件（stdout 裸打印不解析——首次实测
+        # 踩坑：print 输出 TAG 为空，git tag '' 失败，2026-09-03 run 33729391255）
         run: |
           python3 - <<'EOF'
+          import os
           import re
           import tomllib
 
@@ -55,7 +58,8 @@ jobs:
           # git ref 规则：tag 名只允许 [0-9A-Za-z.-]；非法 version 直接失败可见
           if not re.fullmatch(r"[0-9A-Za-z.\-]+", version):
               raise SystemExit(f"pyproject version 含 git ref 非法字符：{version!r}")
-          print(f"tag=v{version}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"tag=v{version}\n")
           EOF
 
       - name: Check tag on remote
