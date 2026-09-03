@@ -8,6 +8,7 @@ YAML round-trip 合法；measure 名唯一；unmapped 逐条带理由。
 from __future__ import annotations
 
 import json
+import subprocess
 import unittest
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,19 @@ from semantic.export_dbt import export_document
 
 REPO = Path(__file__).resolve().parent.parent
 FINANCE = REPO / "semantic" / "ossie" / "atlas_finance.ossie.yaml"
+
+
+def _head_sha() -> str:
+    """当前 git HEAD 短 sha（export 产物绑定 HEAD，断言须随 HEAD 前进）。"""
+    out = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip()
+
 
 # 20 指标三态分布（2026-09-03 盘点，见模块 docstring）
 AGG_METRICS = (
@@ -114,7 +128,9 @@ class TestExportCli(unittest.TestCase):
             yaml.safe_load(out.read_text(encoding="utf-8"))
             data = json.loads(report.read_text(encoding="utf-8"))
             self.assertEqual(data["metric_total"], 20)
-            self.assertEqual(data["sha"], "7d48dcb")  # 与快照/评测绑定同一 HEAD
+            # 产物 sha 必须等于当前 HEAD（2026-09-03 CI 修复：硬编码 7d48dcb
+            # 在 HEAD 前进后失真；绑定语义是「与快照/评测同一 HEAD」）
+            self.assertEqual(data["sha"], _head_sha())
 
 
 if __name__ == "__main__":

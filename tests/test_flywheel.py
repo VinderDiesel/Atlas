@@ -6,12 +6,17 @@
 - export：仅 approved + 合法 answer_plan 的样本可导出；缺 answer_plan /
   未过 validate_plan_json 的样本被闸口拦下
 - 空转全链路：真实报告上 run → state 文件各阶段计数如实（train blocked 不假跑）
+
+测试隔离（2026-09-03 CI 修复）：写入 eval/failures/<category>/ 的临时样本由测试
+自建目录并清理（dry=False 的 scan 会经被测代码 mkdir，空目录同样清掉，
+防止残留目录混入 EVAL_REPORT §7 归集行）。
 """
 
 from __future__ import annotations
 
 import json
 import unittest
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +24,14 @@ from eval.failure_collect import FAILURES_DIR
 from lora import flywheel
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _cleanup(p: Path) -> None:
+    """删除测试产物文件；父目录若因本测试而空则一并移除（不留空目录垃圾）。"""
+    p.unlink(missing_ok=True)
+    with suppress(OSError):
+        # 目录非空（预存目录/其他内容）→ rmdir 抛错，保留即可
+        p.parent.rmdir()
 
 
 def _sample(fid: str, question: str, **overrides: Any) -> dict[str, Any]:
@@ -79,8 +92,8 @@ class TestFlywheelScan(unittest.TestCase):
             self.assertEqual(payload["status"], "pending_review")
             self.assertEqual(payload["category"], "generation")
         finally:
-            tmp.unlink(missing_ok=True)
-            target.unlink(missing_ok=True)
+            _cleanup(tmp)
+            _cleanup(target)
 
 
 class TestFlywheelExport(unittest.TestCase):
@@ -116,6 +129,7 @@ class TestFlywheelExport(unittest.TestCase):
         try:
             for tag, payload in (("g1", good), ("g2", no_answer), ("g3", pending)):
                 p = FAILURES_DIR / "understanding" / f"t3-{tag}.json"
+                p.parent.mkdir(parents=True, exist_ok=True)  # CI 干净 checkout 无此目录
                 p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
                 files.append(p)
             stats = flywheel.export_approved(dry=True)  # dry：不追加 approved_pairs.jsonl
@@ -123,7 +137,7 @@ class TestFlywheelExport(unittest.TestCase):
             self.assertEqual(stats["skipped_no_answer"], 1)
         finally:
             for p in files:
-                p.unlink(missing_ok=True)
+                _cleanup(p)
 
     def test_export_rejects_invalid_plan(self) -> None:
         """红线：answer_plan 未过 validate_plan_json（编造 metric）→ 拦下。"""
@@ -138,13 +152,14 @@ class TestFlywheelExport(unittest.TestCase):
             },
         }
         p = FAILURES_DIR / "understanding" / "t4-b1.json"
+        p.parent.mkdir(parents=True, exist_ok=True)  # CI 干净 checkout 无此目录
         p.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
         try:
             stats = flywheel.export_approved(dry=True)
             self.assertEqual(stats["exported"], 0)
             self.assertEqual(stats["skipped_invalid_plan"], 1)
         finally:
-            p.unlink(missing_ok=True)
+            _cleanup(p)
 
 
 class TestFlywheelRun(unittest.TestCase):
