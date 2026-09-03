@@ -61,7 +61,7 @@ def measure_row_counts() -> dict[str, dict[str, int]]:
     for (ns,) in sorted(catalog.list_namespaces()):
         counts: dict[str, int] = {}
         # list_tables 返回完整 identifier（(namespace, table) 二元组），取表名
-        for (_, table_name) in sorted(catalog.list_tables(ns)):
+        for _, table_name in sorted(catalog.list_tables(ns)):
             table = open_table(catalog, ns, table_name)
             counts[table_name] = table.scan().count()
         result[ns] = counts
@@ -75,7 +75,7 @@ def measure_snapshot_ids() -> dict[str, dict[str, int]]:
     for (ns,) in sorted(catalog.list_namespaces()):
         ids: dict[str, int] = {}
         # list_tables 返回完整 identifier（(namespace, table) 二元组），取表名
-        for (_, table_name) in sorted(catalog.list_tables(ns)):
+        for _, table_name in sorted(catalog.list_tables(ns)):
             table = open_table(catalog, ns, table_name)
             ids[table_name] = table.metadata.current_snapshot_id
         result[ns] = ids

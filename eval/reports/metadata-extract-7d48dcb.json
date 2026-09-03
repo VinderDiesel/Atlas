@@ -1,0 +1,841 @@
+{
+  "sha": "7d48dcb",
+  "tool": "spark/metadata_parser.py",
+  "corpus": {
+    "dwd_sql": 8,
+    "tpcdi_ods_ddl": 17,
+    "note": "明细加工层聚合罕见：25 脚本仅 1 处真聚合（fact_cash_balances 内层 daily_net），窗口/无别名聚合已剔除（规则由 tests/test_metadata_parser.py 覆盖）"
+  },
+  "counts": {
+    "files": 25,
+    "header_comments": 25,
+    "datasets": {
+      "total": 25,
+      "known": 9
+    },
+    "measures": {
+      "total": 42,
+      "known": 13
+    },
+    "metrics": {
+      "total": 1,
+      "known": 0
+    }
+  },
+  "files": [
+    {
+      "path": "sql/dwd/dim_account.sql",
+      "dialect": "doris",
+      "header_meta": {
+        "功能": "账户维度（账户底稿 NEW/ADDACCT + 全 action 流最新非空覆盖）",
+        "重跑": "INSERT OVERWRITE 整表覆盖，幂等。"
+      },
+      "header_lines": 19,
+      "datasets": [
+        {
+          "name": "atlas.dwd.dim_account",
+          "source_tables": [
+            "atlas.tpcdi.account_action"
+          ],
+          "header_purpose": "账户维度（账户底稿 NEW/ADDACCT + 全 action 流最新非空覆盖）",
+          "known": true
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.dwd.dim_account",
+          "column": "TaxStatus",
+          "type": "INT",
+          "hint": "tax",
+          "evidence": [],
+          "known": true
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "sql/dwd/dim_broker.sql",
+      "dialect": "doris",
+      "header_meta": {
+        "功能": "经纪人维度（HR 员工中 job_code='314' 的子集）",
+        "重跑": "INSERT OVERWRITE 整表覆盖，幂等。"
+      },
+      "header_lines": 15,
+      "datasets": [
+        {
+          "name": "atlas.dwd.dim_broker",
+          "source_tables": [
+            "atlas.tpcdi.hr_employee"
+          ],
+          "header_purpose": "经纪人维度（HR 员工中 job_code='314' 的子集）",
+          "known": true
+        }
+      ],
+      "measures": [],
+      "metrics": []
+    },
+    {
+      "path": "sql/dwd/dim_customer.sql",
+      "dialect": "doris",
+      "header_meta": {
+        "功能": "客户维度（CustomerMgmt NEW 底稿 + UPDCUST 字段级最新覆盖）",
+        "重跑": "INSERT OVERWRITE 整表覆盖，幂等。"
+      },
+      "header_lines": 21,
+      "datasets": [
+        {
+          "name": "atlas.dwd.dim_customer",
+          "source_tables": [
+            "atlas.tpcdi.customer_action",
+            "atlas.tpcdi.prospect"
+          ],
+          "header_purpose": "客户维度（CustomerMgmt NEW 底稿 + UPDCUST 字段级最新覆盖）",
+          "known": true
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.dwd.dim_customer",
+          "column": "Tier",
+          "type": "INT",
+          "hint": "tier",
+          "evidence": [],
+          "known": true
+        },
+        {
+          "table": "atlas.dwd.dim_customer",
+          "column": "NetWorth",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": true
+        },
+        {
+          "table": "atlas.dwd.dim_customer",
+          "column": "CreditRating",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": true
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "sql/dwd/dim_date.sql",
+      "dialect": "doris",
+      "header_meta": {
+        "功能": "日期维度（ODS dim_date 全量直通投影，列名转 PascalCase）",
+        "重跑": "INSERT OVERWRITE 整表覆盖，幂等。"
+      },
+      "header_lines": 17,
+      "datasets": [
+        {
+          "name": "atlas.dwd.dim_date",
+          "source_tables": [
+            "atlas.tpcdi.dim_date"
+          ],
+          "header_purpose": "日期维度（ODS dim_date 全量直通投影，列名转 PascalCase）",
+          "known": true
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.dwd.dim_date",
+          "column": "DayOfWeekNumeric",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "sql/dwd/dim_security.sql",
+      "dialect": "doris",
+      "header_meta": {
+        "功能": "证券维度（FINWIRE SEC 行按 symbol 取最近发布版本）",
+        "重跑": "INSERT OVERWRITE 整表覆盖，幂等。"
+      },
+      "header_lines": 16,
+      "datasets": [
+        {
+          "name": "atlas.dwd.dim_security",
+          "source_tables": [
+            "atlas.tpcdi.finwire_security"
+          ],
+          "header_purpose": "证券维度（FINWIRE SEC 行按 symbol 取最近发布版本）",
+          "known": true
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.dwd.dim_security",
+          "column": "Dividend",
+          "type": "DECIMAL",
+          "hint": "",
+          "evidence": [],
+          "known": true
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "sql/dwd/fact_cash_balances.sql",
+      "dialect": "doris",
+      "header_meta": {
+        "功能": "现金余额事实（账户每日余额 = 现金交易累计）",
+        "重跑": "INSERT OVERWRITE 整表覆盖，幂等。"
+      },
+      "header_lines": 15,
+      "datasets": [
+        {
+          "name": "atlas.dwd.fact_cash_balances",
+          "source_tables": [
+            "atlas.dwd.dim_account",
+            "atlas.dwd.dim_date",
+            "atlas.tpcdi.cash_transaction"
+          ],
+          "header_purpose": "现金余额事实（账户每日余额 = 现金交易累计）",
+          "known": true
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.dwd.fact_cash_balances",
+          "column": "Cash",
+          "type": "DECIMAL",
+          "hint": "",
+          "evidence": [],
+          "known": true
+        }
+      ],
+      "metrics": [
+        {
+          "name": "daily_net",
+          "expression": "SUM(ct_amt)",
+          "evidence": "SUM(ct_amt) AS daily_net",
+          "known": false
+        }
+      ]
+    },
+    {
+      "path": "sql/dwd/fact_holdings.sql",
+      "dialect": "doris",
+      "header_meta": {
+        "功能": "持仓事实（每次成交后的持仓变更快照，241661 行）",
+        "重跑": "INSERT OVERWRITE 整表覆盖，幂等。"
+      },
+      "header_lines": 18,
+      "datasets": [
+        {
+          "name": "atlas.dwd.fact_holdings",
+          "source_tables": [
+            "atlas.dwd.dim_account",
+            "atlas.dwd.dim_date",
+            "atlas.dwd.dim_security",
+            "atlas.tpcdi.holding_history",
+            "atlas.tpcdi.trade"
+          ],
+          "header_purpose": "持仓事实（每次成交后的持仓变更快照，241661 行）",
+          "known": true
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.dwd.fact_holdings",
+          "column": "CurrentQty",
+          "type": "DECIMAL",
+          "hint": "qty",
+          "evidence": [],
+          "known": true
+        },
+        {
+          "table": "atlas.dwd.fact_holdings",
+          "column": "CurrentPrice",
+          "type": "DECIMAL",
+          "hint": "price",
+          "evidence": [],
+          "known": true
+        },
+        {
+          "table": "atlas.dwd.fact_holdings",
+          "column": "CurrentValue",
+          "type": "DECIMAL",
+          "hint": "value",
+          "evidence": [],
+          "known": true
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "sql/dwd/fact_trades.sql",
+      "dialect": "doris",
+      "header_meta": {
+        "功能": "证券交易事实（只收已完成 CMPT 交易，241661 行）",
+        "重跑": "INSERT OVERWRITE 整表覆盖，幂等。"
+      },
+      "header_lines": 21,
+      "datasets": [
+        {
+          "name": "atlas.dwd.fact_trades",
+          "source_tables": [
+            "atlas.dwd.dim_account",
+            "atlas.dwd.dim_broker",
+            "atlas.dwd.dim_date",
+            "atlas.dwd.dim_security",
+            "atlas.tpcdi.status_type",
+            "atlas.tpcdi.trade",
+            "atlas.tpcdi.trade_type"
+          ],
+          "header_purpose": "证券交易事实（只收已完成 CMPT 交易，241661 行）",
+          "known": true
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.dwd.fact_trades",
+          "column": "Quantity",
+          "type": "DECIMAL",
+          "hint": "quantity",
+          "evidence": [],
+          "known": true
+        },
+        {
+          "table": "atlas.dwd.fact_trades",
+          "column": "TradePrice",
+          "type": "DECIMAL",
+          "hint": "price",
+          "evidence": [],
+          "known": true
+        },
+        {
+          "table": "atlas.dwd.fact_trades",
+          "column": "Commission",
+          "type": "DECIMAL",
+          "hint": "commission",
+          "evidence": [],
+          "known": true
+        },
+        {
+          "table": "atlas.dwd.fact_trades",
+          "column": "Tax",
+          "type": "DECIMAL",
+          "hint": "tax",
+          "evidence": [],
+          "known": true
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.dim_date",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.dim_date",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": true
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.dim_date",
+          "column": "day_of_week_numeric",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.dim_time",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.dim_time",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.industry",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.industry",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.status_type",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.status_type",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.tax_rate",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.tax_rate",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.tax_rate",
+          "column": "tx_rate",
+          "type": "DECIMAL",
+          "hint": "rate",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.trade_type",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.trade_type",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.trade_type",
+          "column": "tt_is_sell",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.trade_type",
+          "column": "tt_is_mrkt",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.trade",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.trade",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.trade",
+          "column": "t_qty",
+          "type": "BIGINT",
+          "hint": "qty",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.trade",
+          "column": "t_bid_price",
+          "type": "DECIMAL",
+          "hint": "price",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.trade",
+          "column": "t_trade_price",
+          "type": "DECIMAL",
+          "hint": "price",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.trade",
+          "column": "t_chrg",
+          "type": "DECIMAL",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.trade",
+          "column": "t_comm",
+          "type": "DECIMAL",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.trade",
+          "column": "t_tax",
+          "type": "DECIMAL",
+          "hint": "tax",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.trade_history",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.trade_history",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.cash_transaction",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.cash_transaction",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.cash_transaction",
+          "column": "ct_amt",
+          "type": "DECIMAL",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.watch_history",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.watch_history",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.holding_history",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.holding_history",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.holding_history",
+          "column": "hh_before_qty",
+          "type": "BIGINT",
+          "hint": "qty",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.holding_history",
+          "column": "hh_after_qty",
+          "type": "BIGINT",
+          "hint": "qty",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.daily_market",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.daily_market",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.daily_market",
+          "column": "dm_close",
+          "type": "DECIMAL",
+          "hint": "close",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.daily_market",
+          "column": "dm_high",
+          "type": "DECIMAL",
+          "hint": "high",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.daily_market",
+          "column": "dm_low",
+          "type": "DECIMAL",
+          "hint": "low",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.daily_market",
+          "column": "dm_vol",
+          "type": "BIGINT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.hr_employee",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.hr_employee",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.customer_action",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.customer_action",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.customer_action",
+          "column": "tier",
+          "type": "INT",
+          "hint": "tier",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.account_action",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.account_action",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.account_action",
+          "column": "tax_st",
+          "type": "INT",
+          "hint": "tax",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.finwire_security",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.finwire_security",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.finwire_security",
+          "column": "share_out",
+          "type": "BIGINT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.finwire_security",
+          "column": "dividend",
+          "type": "DECIMAL",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    },
+    {
+      "path": "data/loader.py --emit-ddl #atlas.tpcdi.prospect",
+      "dialect": "spark",
+      "header_meta": {},
+      "header_lines": 1,
+      "datasets": [
+        {
+          "name": "atlas.tpcdi.prospect",
+          "source_tables": [],
+          "header_purpose": "",
+          "known": false
+        }
+      ],
+      "measures": [
+        {
+          "table": "atlas.tpcdi.prospect",
+          "column": "income",
+          "type": "BIGINT",
+          "hint": "income",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.prospect",
+          "column": "number_cars",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.prospect",
+          "column": "number_children",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.prospect",
+          "column": "age",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.prospect",
+          "column": "credit_rating",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.prospect",
+          "column": "number_credit_cards",
+          "type": "INT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        },
+        {
+          "table": "atlas.tpcdi.prospect",
+          "column": "net_worth",
+          "type": "BIGINT",
+          "hint": "",
+          "evidence": [],
+          "known": false
+        }
+      ],
+      "metrics": []
+    }
+  ]
+}

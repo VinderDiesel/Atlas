@@ -1,0 +1,67 @@
+{
+  "sha": "7d48dcb",
+  "created_at": "2026-09-03T10:50:39+08:00",
+  "strategies": [
+    "compiler-only",
+    "rag-llm",
+    "lora",
+    "lora-sc"
+  ],
+  "table": [
+    {
+      "strategy": "compiler-only",
+      "status": "measured",
+      "ex": "44/44",
+      "plan_acc": "44/44",
+      "clarify": "4/4",
+      "token_total": 0,
+      "latency_mean_ms": 178.6,
+      "cost_usd_est": 0.0,
+      "refuse_rate_clear": "0/44",
+      "source": "eval/reports/7d48dcb.json"
+    },
+    {
+      "strategy": "rag-llm(openai)",
+      "status": "measured",
+      "ex": "44/44",
+      "plan_acc": "44/44",
+      "clarify": "4/4",
+      "token_total": 99597,
+      "latency_mean_ms": 2564.3,
+      "cost_usd_est": 0.017857,
+      "refuse_rate_clear": "0/44",
+      "source": "eval/reports/rag-llm-openai-7d48dcb.json"
+    },
+    {
+      "strategy": "lora",
+      "status": "blocked",
+      "ex": "n/a",
+      "plan_acc": "n/a",
+      "clarify": "n/a",
+      "token_total": "n/a",
+      "latency_mean_ms": "n/a",
+      "cost_usd_est": "n/a",
+      "refuse_rate_clear": "n/a",
+      "block_reason": "需 GPU 训练 sql_v1 adapter（Day 37-38；LLM 端点已就绪）",
+      "source": null
+    },
+    {
+      "strategy": "lora-sc",
+      "status": "blocked",
+      "ex": "n/a",
+      "plan_acc": "n/a",
+      "clarify": "n/a",
+      "token_total": "n/a",
+      "latency_mean_ms": "n/a",
+      "cost_usd_est": "n/a",
+      "refuse_rate_clear": "n/a",
+      "block_reason": "依赖 LoRA adapter（lora 行未解阻塞前不执行）",
+      "source": null
+    }
+  ],
+  "notes": [
+    "六维口径：EX/Plan Acc/歧义反问与 eval/runner.py 一致；token/latency/cost 来自各策略报告；refuse_rate_clear = 非歧义样本中拒绝数（歧义反问不算拒绝）。",
+    "compiler-only token=0/cost=0 是确定性链路的设计事实；latency 未埋点前为 n/a（OTel 全链路 Day 50；可用 --measure-compiler 现场补测）。",
+    "LoRA/LoRA+SC 登记 blocked 不编造数字（AGENTS.md N1）；解锁条件：GPU 训练 adapter（Day 37-38；LLM 端点已就绪）。"
+  ]
+}

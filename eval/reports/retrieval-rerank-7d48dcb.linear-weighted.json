@@ -1,0 +1,31 @@
+{
+  "task": "metric-retrieval-rrf+rerank-meta",
+  "engine": "rrf+rerank-meta",
+  "sha": "7d48dcb",
+  "corpus": {
+    "source": "atlas_finance.ossie.yaml",
+    "n_docs": 15
+  },
+  "queries": {
+    "source": "eval/gold gold-1xx ambiguous=false",
+    "n": 44
+  },
+  "params": {
+    "method": "rrf->meta-rerank",
+    "weights": {
+      "synonym": 0.5,
+      "popularity": 0.3,
+      "owner": 0.2
+    },
+    "popularity": "gold leave-one-out (exclude current query)",
+    "k": 60,
+    "depth_per_engine": 20,
+    "rerank_depth": 20
+  },
+  "metrics": {
+    "recall_at_1": "34/44",
+    "recall_at_5": "44/44",
+    "fail_cases": 0
+  },
+  "fail_cases": []
+}

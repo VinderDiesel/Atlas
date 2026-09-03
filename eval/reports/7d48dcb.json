@@ -1,0 +1,639 @@
+{
+  "sha": "7d48dcb",
+  "created_at": "2026-09-03T13:05:44+08:00",
+  "dry": false,
+  "summary": {
+    "finance_total": 48,
+    "retail_skipped": 2,
+    "plan_acc": "44/44",
+    "clarify": "4/4",
+    "ex": "44/44",
+    "ex_anchored": 0,
+    "exec_errors": 0
+  },
+  "samples": [
+    {
+      "id": "gold-101",
+      "question": "2013 年第二季度总交易额是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarQtrID = 20132 LIMIT 100",
+      "columns": [
+        "total_trade_value"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "7d43b81befdb0a920b1e53a856c697e71d19692914f35db90423325d6358913f"
+    },
+    {
+      "id": "gold-102",
+      "question": "按分支统计 2013 年佣金收入，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_broker.Branch AS Branch, SUM(fact_trades.Commission) AS commission_revenue FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2013 GROUP BY dim_broker.Branch ORDER BY commission_revenue DESC LIMIT 5",
+      "columns": [
+        "Branch",
+        "commission_revenue"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "557479f4a0f21051949ddb1725fd3eb440b97361f4b2f20c8e7f49072ebc53ce"
+    },
+    {
+      "id": "gold-103",
+      "question": "2017 年 7 月 7 日全账户持仓市值合计是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_holdings.CurrentValue) AS holdings_value FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2017-07-07' AS DATE) LIMIT 100",
+      "columns": [
+        "holdings_value"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "5ddc5735d45b2ce14c5c6e3d50f6491e1446180c4ccd358c2ad280f58155d6aa"
+    },
+    {
+      "id": "gold-104",
+      "question": "最近交易情况怎么样？",
+      "ambiguous": true,
+      "clarify_ok": true,
+      "clarify_reasons": [
+        "无法确定指标口径（问句未命中任何指标同义词）"
+      ]
+    },
+    {
+      "id": "gold-105",
+      "question": "2016 年总成交量是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_trades.Quantity) AS total_trade_quantity FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2016 LIMIT 100",
+      "columns": [
+        "total_trade_quantity"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "7e7efb704eb34a47dbcc40c86e396a9db77b2a56257cf1764d8f39519aa062e7"
+    },
+    {
+      "id": "gold-106",
+      "question": "2014 年第三季度交易税合计是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_trades.Tax) AS total_trade_tax FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarQtrID = 20143 LIMIT 100",
+      "columns": [
+        "total_trade_tax"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "d1760666567b64ebbb91e8414e18525d8a11bbeb15290b2d0ad126a7ec877080"
+    },
+    {
+      "id": "gold-107",
+      "question": "2013 年全年成交证券数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_trades.SK_SecurityID) AS traded_security_count FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2013 LIMIT 100",
+      "columns": [
+        "traded_security_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "b064bdba191139689139124101c1c39926326a9b221bd8dfcd603f065c3dc3b8"
+    },
+    {
+      "id": "gold-108",
+      "question": "2015 年活跃客户数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_trades.SK_CustomerID) AS active_customer_count FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2015 LIMIT 100",
+      "columns": [
+        "active_customer_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "3dd9c0995d54c0abd51a90f1d57b1ce77bc885fc8a7cea52dcad3c2540dda5ee"
+    },
+    {
+      "id": "gold-109",
+      "question": "2013 年 12 月 31 日全账户持仓量合计是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_holdings.CurrentQty) AS holdings_quantity FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2013-12-31' AS DATE) LIMIT 100",
+      "columns": [
+        "holdings_quantity"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "183d7a39a3060fb9487c838c8693bb94ed8f36821323530c140f0d40ea779f66"
+    },
+    {
+      "id": "gold-110",
+      "question": "2013 年 12 月 31 日持仓账户数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_holdings.SK_AccountID) AS holding_account_count FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2013-12-31' AS DATE) LIMIT 100",
+      "columns": [
+        "holding_account_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "38d66d9692ac590000a91b03a88da1c88d51fab2b78f63171f553ecc551a0c6f"
+    },
+    {
+      "id": "gold-111",
+      "question": "2014 年 12 月 31 日持仓证券数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_holdings.SK_SecurityID) AS holding_security_count FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2014-12-31' AS DATE) LIMIT 100",
+      "columns": [
+        "holding_security_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "d2f483672c0239f6d7dd3c9ecee6deacbcd59185855625902a8b1c1a3bd67440"
+    },
+    {
+      "id": "gold-112",
+      "question": "2015 年 6 月 30 日现金账户数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_cash_balances.SK_AccountID) AS cash_account_count FROM atlas.dwd.fact_cash_balances AS fact_cash_balances INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_cash_balances.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2015-06-30' AS DATE) LIMIT 100",
+      "columns": [
+        "cash_account_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "1253e9373e781b7500266caa55150e08e210bc8cd8cc70d89985e3600155e860"
+    },
+    {
+      "id": "gold-113",
+      "question": "2016 年平均成交价是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT AVG(fact_trades.TradePrice) AS avg_trade_price FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2016 LIMIT 100",
+      "columns": [
+        "avg_trade_price"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "8e6981d46b6018d4ebda9683371752c6d2073869b2ce6d88fe2b04d33d744902"
+    },
+    {
+      "id": "gold-114",
+      "question": "2014 年 3 月 31 日全账户现金余额合计是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_cash_balances.Cash) AS cash_balance FROM atlas.dwd.fact_cash_balances AS fact_cash_balances INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_cash_balances.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2014-03-31' AS DATE) LIMIT 100",
+      "columns": [
+        "cash_balance"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "9fd94197d3574cc4208ff2d2b1cb726c9c8fca2f3384f929ef30713918149c6a"
+    },
+    {
+      "id": "gold-115",
+      "question": "2014 年 5 月交易笔数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(fact_trades.TradeID) AS trade_count FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarMonthID = 20145 LIMIT 100",
+      "columns": [
+        "trade_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "ec8b19be39eb32ee923d4945f3d051320c8654747102aefc23da8d56cd4012d4"
+    },
+    {
+      "id": "gold-116",
+      "question": "按客户等级统计 2014 年交易额，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_customer.Tier AS Tier, SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID WHERE dim_date.CalendarYearID = 2014 GROUP BY dim_customer.Tier ORDER BY total_trade_value DESC LIMIT 5",
+      "columns": [
+        "Tier",
+        "total_trade_value"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "a9c06c05fbd7ad08fd4f8ad9557d81253249b05485fee9ee9109aff484dcb788"
+    },
+    {
+      "id": "gold-117",
+      "question": "按证券类型统计 2013 年成交量，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_security.Issue AS Issue, SUM(fact_trades.Quantity) AS total_trade_quantity FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_security AS dim_security ON fact_trades.SK_SecurityID = dim_security.SK_SecurityID WHERE dim_date.CalendarYearID = 2013 GROUP BY dim_security.Issue ORDER BY total_trade_quantity DESC LIMIT 5",
+      "columns": [
+        "Issue",
+        "total_trade_quantity"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "c617dc3986868c16873b4c04b33c6570d26d99cb20467173f279825c982ffbfc"
+    },
+    {
+      "id": "gold-118",
+      "question": "按交易所统计 2016 年交易税，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_security.ExchangeID AS ExchangeID, SUM(fact_trades.Tax) AS total_trade_tax FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_security AS dim_security ON fact_trades.SK_SecurityID = dim_security.SK_SecurityID WHERE dim_date.CalendarYearID = 2016 GROUP BY dim_security.ExchangeID ORDER BY total_trade_tax DESC LIMIT 5",
+      "columns": [
+        "ExchangeID",
+        "total_trade_tax"
+      ],
+      "row_count": 4,
+      "ex": "pass",
+      "hash": "35b847397b9ee0293466a2c7e16055979955ae72a8e4136f26aea0638627fdc4"
+    },
+    {
+      "id": "gold-119",
+      "question": "按性别统计 2015 年佣金收入，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_customer.Gender AS Gender, SUM(fact_trades.Commission) AS commission_revenue FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID WHERE dim_date.CalendarYearID = 2015 GROUP BY dim_customer.Gender ORDER BY commission_revenue DESC LIMIT 5",
+      "columns": [
+        "Gender",
+        "commission_revenue"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "62291611029ebf55f1673484826ee574dafdbd0bb74984c2302a8be7fda9a424"
+    },
+    {
+      "id": "gold-120",
+      "question": "2013 年活跃账户数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_trades.SK_AccountID) AS active_account_count FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2013 LIMIT 100",
+      "columns": [
+        "active_account_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "02f99d2002c703f1669e358989f1663e1e38e96297dcb3bb70fb67b0d74fb877"
+    },
+    {
+      "id": "gold-121",
+      "question": "上个月总成交量是多少？",
+      "ambiguous": true,
+      "clarify_ok": true,
+      "clarify_reasons": [
+        "不支持相对时间（固定快照评测下会漂移，请使用绝对日期）"
+      ]
+    },
+    {
+      "id": "gold-122",
+      "question": "2013 年成交量和交易额分别是多少？",
+      "ambiguous": true,
+      "clarify_ok": true,
+      "clarify_reasons": [
+        "指标口径歧义（命中多个指标）"
+      ]
+    },
+    {
+      "id": "gold-123",
+      "question": "2015 年全年交易额是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2015 LIMIT 100",
+      "columns": [
+        "total_trade_value"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "66663d77892fff6eed79274eaf83c20a2030747873e72d5a5a37ce450d63b67d"
+    },
+    {
+      "id": "gold-124",
+      "question": "2014 年 2 月成交额是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarMonthID = 20142 LIMIT 100",
+      "columns": [
+        "total_trade_value"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "b928fef229fd82d287471d256a616771ffb56a947dd5e869c5d2d39654fcee31"
+    },
+    {
+      "id": "gold-125",
+      "question": "2014 年总成交量是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_trades.Quantity) AS total_trade_quantity FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2014 LIMIT 100",
+      "columns": [
+        "total_trade_quantity"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "0fd3551c8a2a364acdfeb5696dc22d267c65edc2a188454dad6b82346152b4fc"
+    },
+    {
+      "id": "gold-126",
+      "question": "2017 年第一季度总成交量是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_trades.Quantity) AS total_trade_quantity FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarQtrID = 20171 LIMIT 100",
+      "columns": [
+        "total_trade_quantity"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "97cb48ad90078e7b115064b908553843dce5c7c60952de2ca9ff0d4459067b3d"
+    },
+    {
+      "id": "gold-127",
+      "question": "2016 年第四季度佣金收入合计是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_trades.Commission) AS commission_revenue FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarQtrID = 20164 LIMIT 100",
+      "columns": [
+        "commission_revenue"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "cc6d61ce22e348df8cefe4377cddc363cd621c9b85c407728e0b8a1fca5608ee"
+    },
+    {
+      "id": "gold-128",
+      "question": "2015 年交易税合计是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_trades.Tax) AS total_trade_tax FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2015 LIMIT 100",
+      "columns": [
+        "total_trade_tax"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "c5261ce7830c0b41ec7573e55282dcf8d36bf37b98f4b29a0eb6a04f5c2f7357"
+    },
+    {
+      "id": "gold-129",
+      "question": "2014 年第一季度平均成交价是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT AVG(fact_trades.TradePrice) AS avg_trade_price FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarQtrID = 20141 LIMIT 100",
+      "columns": [
+        "avg_trade_price"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "81613a1ac0853e4d182eb1758b7c355cbe9adbb7a88fc893169a001650efe27b"
+    },
+    {
+      "id": "gold-130",
+      "question": "2016 年成交证券数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_trades.SK_SecurityID) AS traded_security_count FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2016 LIMIT 100",
+      "columns": [
+        "traded_security_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "70d432707ec2478670d5b36a95d5b1000cb9c3ef6ea1fb7be14b060775723d03"
+    },
+    {
+      "id": "gold-131",
+      "question": "2014 年活跃客户数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_trades.SK_CustomerID) AS active_customer_count FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2014 LIMIT 100",
+      "columns": [
+        "active_customer_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "367461e6dd07bdb57342cb64b2a8d8e0fa13c53842a95ec20a90d35bdd6eb77f"
+    },
+    {
+      "id": "gold-132",
+      "question": "2017 年活跃账户数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_trades.SK_AccountID) AS active_account_count FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2017 LIMIT 100",
+      "columns": [
+        "active_account_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "ed946f65d2c785d90e827c5ffd879ce3b49c68d4c88013074176a7e73bc58bcf"
+    },
+    {
+      "id": "gold-133",
+      "question": "2013 年 1 月 7 日交易笔数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(fact_trades.TradeID) AS trade_count FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2013-01-07' AS DATE) LIMIT 100",
+      "columns": [
+        "trade_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "85daaf6f7055cd5736287faed9603d712920092c4f8fd0097ec3b650bf27530e"
+    },
+    {
+      "id": "gold-134",
+      "question": "2015 年 12 月 31 日全账户持仓市值合计是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_holdings.CurrentValue) AS holdings_value FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2015-12-31' AS DATE) LIMIT 100",
+      "columns": [
+        "holdings_value"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "79926ab5e7b371c3f220b43b3fd6659c6c249cb9bcdb73f4e26e442c7733665d"
+    },
+    {
+      "id": "gold-135",
+      "question": "2015 年 6 月 30 日全账户持仓量合计是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_holdings.CurrentQty) AS holdings_quantity FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2015-06-30' AS DATE) LIMIT 100",
+      "columns": [
+        "holdings_quantity"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "deda55ad8c39a1dd7ab64fcdae64bbf4e3fb42011fbad494cd5c4298f252f4f2"
+    },
+    {
+      "id": "gold-136",
+      "question": "2016 年 6 月 30 日持仓账户数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_holdings.SK_AccountID) AS holding_account_count FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2016-06-30' AS DATE) LIMIT 100",
+      "columns": [
+        "holding_account_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "3038bfb575bee6a0e61945eff8784835bb2c720634e42734678c083994b7f018"
+    },
+    {
+      "id": "gold-137",
+      "question": "2015 年 12 月 31 日持仓证券数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_holdings.SK_SecurityID) AS holding_security_count FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2015-12-31' AS DATE) LIMIT 100",
+      "columns": [
+        "holding_security_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "3038bfb575bee6a0e61945eff8784835bb2c720634e42734678c083994b7f018"
+    },
+    {
+      "id": "gold-138",
+      "question": "2016 年 12 月 31 日现金账户数是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT COUNT(DISTINCT fact_cash_balances.SK_AccountID) AS cash_account_count FROM atlas.dwd.fact_cash_balances AS fact_cash_balances INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_cash_balances.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2016-12-31' AS DATE) LIMIT 100",
+      "columns": [
+        "cash_account_count"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "d2f483672c0239f6d7dd3c9ecee6deacbcd59185855625902a8b1c1a3bd67440"
+    },
+    {
+      "id": "gold-139",
+      "question": "2016 年 12 月 31 日全账户现金余额合计是多少？",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT SUM(fact_cash_balances.Cash) AS cash_balance FROM atlas.dwd.fact_cash_balances AS fact_cash_balances INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_cash_balances.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2016-12-31' AS DATE) LIMIT 100",
+      "columns": [
+        "cash_balance"
+      ],
+      "row_count": 1,
+      "ex": "pass",
+      "hash": "4e5bae516e9ff79e97ddb27b468fed0b754f9c1b6e764e2b2627d4e9514d5436"
+    },
+    {
+      "id": "gold-140",
+      "question": "按办公室统计 2015 年佣金收入，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_broker.Office AS Office, SUM(fact_trades.Commission) AS commission_revenue FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2015 GROUP BY dim_broker.Office ORDER BY commission_revenue DESC LIMIT 5",
+      "columns": [
+        "Office",
+        "commission_revenue"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "ab92a999cb1303a89a889eda67b3965753cb06a4be2768b9b44a79047ea773f9"
+    },
+    {
+      "id": "gold-141",
+      "question": "按税务状态统计 2016 年交易额，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_account.TaxStatus AS TaxStatus, SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_account AS dim_account ON fact_trades.SK_AccountID = dim_account.SK_AccountID WHERE dim_date.CalendarYearID = 2016 GROUP BY dim_account.TaxStatus ORDER BY total_trade_value DESC LIMIT 5",
+      "columns": [
+        "TaxStatus",
+        "total_trade_value"
+      ],
+      "row_count": 3,
+      "ex": "pass",
+      "hash": "fb4919f9da2acc765a3ac9727258305c67e4f650a6d2aba9fce3d699097dcae0"
+    },
+    {
+      "id": "gold-142",
+      "question": "按分支统计 2014 年 12 月 31 日持仓市值，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_broker.Branch AS Branch, SUM(fact_holdings.CurrentValue) AS holdings_value FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_account AS dim_account ON fact_holdings.SK_AccountID = dim_account.SK_AccountID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON dim_account.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.DateValue = CAST('2014-12-31' AS DATE) GROUP BY dim_broker.Branch ORDER BY holdings_value DESC LIMIT 5",
+      "columns": [
+        "Branch",
+        "holdings_value"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "593a56b616df4c1ed67683c1588af695d76ca4e8d3d390e66631d467919b54da"
+    },
+    {
+      "id": "gold-143",
+      "question": "按分支统计 2015 年 12 月 31 日现金余额，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_broker.Branch AS Branch, SUM(fact_cash_balances.Cash) AS cash_balance FROM atlas.dwd.fact_cash_balances AS fact_cash_balances INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_cash_balances.SK_DateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_account AS dim_account ON fact_cash_balances.SK_AccountID = dim_account.SK_AccountID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON dim_account.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.DateValue = CAST('2015-12-31' AS DATE) GROUP BY dim_broker.Branch ORDER BY cash_balance DESC LIMIT 5",
+      "columns": [
+        "Branch",
+        "cash_balance"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "f9496d343d8f2657acb92a12797a0f05be3efdb2cbe99f6ea3b952c8076722e4"
+    },
+    {
+      "id": "gold-144",
+      "question": "按客户等级统计 2015 年成交量，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_customer.Tier AS Tier, SUM(fact_trades.Quantity) AS total_trade_quantity FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID WHERE dim_date.CalendarYearID = 2015 GROUP BY dim_customer.Tier ORDER BY total_trade_quantity DESC LIMIT 5",
+      "columns": [
+        "Tier",
+        "total_trade_quantity"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "6fec7d1056990b0d842628354e375577633e15a091bb6b71a2ee3ef525a7d0d7"
+    },
+    {
+      "id": "gold-145",
+      "question": "按证券类型统计 2015 年成交笔数，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_security.Issue AS Issue, COUNT(fact_trades.TradeID) AS trade_count FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_security AS dim_security ON fact_trades.SK_SecurityID = dim_security.SK_SecurityID WHERE dim_date.CalendarYearID = 2015 GROUP BY dim_security.Issue ORDER BY trade_count DESC LIMIT 5",
+      "columns": [
+        "Issue",
+        "trade_count"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "292e91c8a8d722b9e4d6ef951b738262d6980928f219d4e94b78a132ceb6967b"
+    },
+    {
+      "id": "gold-146",
+      "question": "按分支和客户等级统计 2015 年交易额，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_customer.Tier AS Tier, dim_broker.Branch AS Branch, SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2015 GROUP BY dim_customer.Tier, dim_broker.Branch ORDER BY total_trade_value DESC LIMIT 5",
+      "columns": [
+        "Tier",
+        "Branch",
+        "total_trade_value"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "ef4f389454e575bf7316fbd8f89c5719ef70bcd435409ca61fea6da8ce6003d6"
+    },
+    {
+      "id": "gold-147",
+      "question": "按性别统计 2014 年交易税，列出前 5 名",
+      "ambiguous": false,
+      "plan_ok": true,
+      "sql": "SELECT dim_customer.Gender AS Gender, SUM(fact_trades.Tax) AS total_trade_tax FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID WHERE dim_date.CalendarYearID = 2014 GROUP BY dim_customer.Gender ORDER BY total_trade_tax DESC LIMIT 5",
+      "columns": [
+        "Gender",
+        "total_trade_tax"
+      ],
+      "row_count": 5,
+      "ex": "pass",
+      "hash": "40d5d831ea89443e1f1de7d7dcf84dfcbf19bbeac49594ecdfdbbf716a069e11"
+    },
+    {
+      "id": "gold-148",
+      "question": "2014 年成交笔数和成交证券数分别是多少？",
+      "ambiguous": true,
+      "clarify_ok": true,
+      "clarify_reasons": [
+        "指标口径歧义（命中多个指标）"
+      ]
+    }
+  ],
+  "notes": "口径：Plan Acc=metric/dimensions/time 与标注一致；EX=编译 SQL（过 Guard）执行结果 sha256 与锚定 result_hash 一致；歧义样本反问=pass；result_hash 锚定回填 gold JSON 后需 git commit（换快照须重锚定，见 data/snapshots/README.md）。"
+}

@@ -1,0 +1,24 @@
+{
+  "task": "metric-retrieval-milvus-sparse-lexical",
+  "engine": "milvus-sparse-lexical",
+  "sha": "7d48dcb",
+  "corpus": {
+    "source": "atlas_finance.ossie.yaml",
+    "n_docs": 20
+  },
+  "queries": {
+    "source": "eval/gold gold-1xx ambiguous=false",
+    "n": 44
+  },
+  "params": {
+    "index": "SPARSE_INVERTED_INDEX",
+    "metric": "IP",
+    "weights": "tf"
+  },
+  "metrics": {
+    "recall_at_1": "35/44",
+    "recall_at_5": "44/44",
+    "fail_cases": 0
+  },
+  "fail_cases": []
+}

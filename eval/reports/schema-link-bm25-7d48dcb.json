@@ -1,0 +1,1337 @@
+{
+  "task": "schema-link-day29-bm25",
+  "engine": "bm25",
+  "sha": "7d48dcb",
+  "corpus": {
+    "source": "atlas_finance.ossie.yaml",
+    "n_docs": 20
+  },
+  "queries": {
+    "source": "eval/gold gold-1xx ambiguous=false + expected_sql",
+    "n": 44
+  },
+  "base_bm25_day24": {
+    "engine": "bm25 (full-corpus, no rerank, retrieval_eval)",
+    "recall_at_1": "41/44",
+    "recall_at_5": "44/44",
+    "report": "retrieval-bm25-7d48dcb.json"
+  },
+  "metrics": {
+    "metric_recall_at_1": "44/44",
+    "metric_recall_at_3": "44/44",
+    "metric_recall_at_5": "44/44",
+    "fail_cases": 0,
+    "table_coverage_top1": "44/44",
+    "table_coverage_top3": "44/44"
+  },
+  "note": "指标 Recall@K 是主指标；Table Coverage 为下界验证（库域 6 表 dim 全连通，无区分度，如实声明）。基线 = 同批 44 条上 Day 24 BM25 单路引擎。",
+  "fail_cases": [],
+  "details": [
+    {
+      "id": "gold-101",
+      "question": "2013 年第二季度总交易额是多少？",
+      "expected_metric": "total_trade_value",
+      "top5": [
+        "total_trade_value",
+        "total_trade_tax",
+        "trade_count",
+        "active_account_count",
+        "average_trade_value"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-102",
+      "question": "按分支统计 2013 年佣金收入，列出前 5 名",
+      "expected_metric": "commission_revenue",
+      "top5": [
+        "commission_revenue",
+        "commission_rate",
+        "average_commission_per_trade"
+      ],
+      "dims": [
+        "Branch"
+      ],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_broker"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-103",
+      "question": "2017 年 7 月 7 日全账户持仓市值合计是多少？",
+      "expected_metric": "holdings_value",
+      "top5": [
+        "holdings_value",
+        "total_trade_value",
+        "total_trade_quantity",
+        "total_trade_tax",
+        "commission_revenue"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_holdings",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_holdings"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-105",
+      "question": "2016 年总成交量是多少？",
+      "expected_metric": "total_trade_quantity",
+      "top5": [
+        "total_trade_quantity",
+        "total_trade_value",
+        "trade_count",
+        "avg_trade_price",
+        "traded_security_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-106",
+      "question": "2014 年第三季度交易税合计是多少？",
+      "expected_metric": "total_trade_tax",
+      "top5": [
+        "total_trade_tax",
+        "total_trade_value",
+        "total_trade_quantity",
+        "commission_revenue",
+        "trade_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-107",
+      "question": "2013 年全年成交证券数是多少？",
+      "expected_metric": "traded_security_count",
+      "top5": [
+        "traded_security_count",
+        "total_trade_value",
+        "total_trade_quantity",
+        "total_trade_tax",
+        "trade_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-108",
+      "question": "2015 年活跃客户数是多少？",
+      "expected_metric": "active_customer_count",
+      "top5": [
+        "active_customer_count",
+        "active_account_count",
+        "cash_account_count",
+        "holding_account_count",
+        "average_holding_value"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-109",
+      "question": "2013 年 12 月 31 日全账户持仓量合计是多少？",
+      "expected_metric": "holdings_quantity",
+      "top5": [
+        "holdings_quantity",
+        "total_trade_value",
+        "total_trade_quantity",
+        "total_trade_tax",
+        "commission_revenue"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_holdings",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_holdings"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-110",
+      "question": "2013 年 12 月 31 日持仓账户数是多少？",
+      "expected_metric": "holding_account_count",
+      "top5": [
+        "holding_account_count",
+        "holdings_value",
+        "cash_balance",
+        "active_account_count",
+        "cash_account_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_holdings",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_holdings"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-111",
+      "question": "2014 年 12 月 31 日持仓证券数是多少？",
+      "expected_metric": "holding_security_count",
+      "top5": [
+        "holding_security_count",
+        "total_trade_tax",
+        "holdings_value",
+        "traded_security_count",
+        "holdings_quantity"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_holdings",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_holdings"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-112",
+      "question": "2015 年 6 月 30 日现金账户数是多少？",
+      "expected_metric": "cash_account_count",
+      "top5": [
+        "cash_account_count",
+        "cash_balance",
+        "active_account_count",
+        "holding_account_count",
+        "active_customer_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_cash_balances",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "fact_cash_balances"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-113",
+      "question": "2016 年平均成交价是多少？",
+      "expected_metric": "avg_trade_price",
+      "top5": [
+        "avg_trade_price",
+        "total_trade_value",
+        "total_trade_quantity",
+        "trade_count",
+        "traded_security_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-114",
+      "question": "2014 年 3 月 31 日全账户现金余额合计是多少？",
+      "expected_metric": "cash_balance",
+      "top5": [
+        "cash_balance",
+        "total_trade_value",
+        "total_trade_quantity",
+        "total_trade_tax",
+        "commission_revenue"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_cash_balances",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "fact_cash_balances"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-115",
+      "question": "2014 年 5 月交易笔数是多少？",
+      "expected_metric": "trade_count",
+      "top5": [
+        "trade_count",
+        "total_trade_value",
+        "total_trade_tax",
+        "active_account_count",
+        "average_trade_value"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-116",
+      "question": "按客户等级统计 2014 年交易额，列出前 5 名",
+      "expected_metric": "total_trade_value",
+      "top5": [
+        "total_trade_value",
+        "total_trade_tax",
+        "trade_count",
+        "active_customer_count",
+        "active_account_count"
+      ],
+      "dims": [
+        "Tier"
+      ],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_customer"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-117",
+      "question": "按证券类型统计 2013 年成交量，列出前 5 名",
+      "expected_metric": "total_trade_quantity",
+      "top5": [
+        "total_trade_quantity",
+        "total_trade_value",
+        "total_trade_tax",
+        "trade_count",
+        "traded_security_count"
+      ],
+      "dims": [
+        "Issue"
+      ],
+      "rank": 1,
+      "kept": 17,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_security"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-118",
+      "question": "按交易所统计 2016 年交易税，列出前 5 名",
+      "expected_metric": "total_trade_tax",
+      "top5": [
+        "total_trade_tax",
+        "total_trade_value",
+        "trade_count",
+        "active_account_count",
+        "average_trade_value"
+      ],
+      "dims": [
+        "ExchangeID"
+      ],
+      "rank": 1,
+      "kept": 17,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_security"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-119",
+      "question": "按性别统计 2015 年佣金收入，列出前 5 名",
+      "expected_metric": "commission_revenue",
+      "top5": [
+        "commission_revenue",
+        "commission_rate",
+        "average_commission_per_trade"
+      ],
+      "dims": [
+        "Gender"
+      ],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_customer"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-120",
+      "question": "2013 年活跃账户数是多少？",
+      "expected_metric": "active_account_count",
+      "top5": [
+        "active_account_count",
+        "cash_balance",
+        "active_customer_count",
+        "cash_account_count",
+        "holding_account_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-123",
+      "question": "2015 年全年交易额是多少？",
+      "expected_metric": "total_trade_value",
+      "top5": [
+        "total_trade_value",
+        "total_trade_tax",
+        "trade_count",
+        "active_account_count",
+        "average_trade_value"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-124",
+      "question": "2014 年 2 月成交额是多少？",
+      "expected_metric": "total_trade_value",
+      "top5": [
+        "total_trade_value",
+        "total_trade_quantity",
+        "trade_count",
+        "avg_trade_price",
+        "traded_security_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-125",
+      "question": "2014 年总成交量是多少？",
+      "expected_metric": "total_trade_quantity",
+      "top5": [
+        "total_trade_quantity",
+        "total_trade_value",
+        "trade_count",
+        "avg_trade_price",
+        "traded_security_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-126",
+      "question": "2017 年第一季度总成交量是多少？",
+      "expected_metric": "total_trade_quantity",
+      "top5": [
+        "total_trade_quantity",
+        "total_trade_value",
+        "trade_count",
+        "avg_trade_price",
+        "traded_security_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-127",
+      "question": "2016 年第四季度佣金收入合计是多少？",
+      "expected_metric": "commission_revenue",
+      "top5": [
+        "commission_revenue",
+        "total_trade_value",
+        "total_trade_quantity",
+        "total_trade_tax",
+        "cash_balance"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-128",
+      "question": "2015 年交易税合计是多少？",
+      "expected_metric": "total_trade_tax",
+      "top5": [
+        "total_trade_tax",
+        "total_trade_value",
+        "total_trade_quantity",
+        "commission_revenue",
+        "trade_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-129",
+      "question": "2014 年第一季度平均成交价是多少？",
+      "expected_metric": "avg_trade_price",
+      "top5": [
+        "avg_trade_price",
+        "total_trade_value",
+        "total_trade_quantity",
+        "trade_count",
+        "traded_security_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-130",
+      "question": "2016 年成交证券数是多少？",
+      "expected_metric": "traded_security_count",
+      "top5": [
+        "traded_security_count",
+        "total_trade_value",
+        "total_trade_quantity",
+        "total_trade_tax",
+        "trade_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-131",
+      "question": "2014 年活跃客户数是多少？",
+      "expected_metric": "active_customer_count",
+      "top5": [
+        "active_customer_count",
+        "active_account_count",
+        "cash_account_count",
+        "holding_account_count",
+        "average_holding_value"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-132",
+      "question": "2017 年活跃账户数是多少？",
+      "expected_metric": "active_account_count",
+      "top5": [
+        "active_account_count",
+        "cash_balance",
+        "active_customer_count",
+        "cash_account_count",
+        "holding_account_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-133",
+      "question": "2013 年 1 月 7 日交易笔数是多少？",
+      "expected_metric": "trade_count",
+      "top5": [
+        "trade_count",
+        "total_trade_value",
+        "total_trade_tax",
+        "active_account_count",
+        "average_trade_value"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-134",
+      "question": "2015 年 12 月 31 日全账户持仓市值合计是多少？",
+      "expected_metric": "holdings_value",
+      "top5": [
+        "holdings_value",
+        "total_trade_value",
+        "total_trade_quantity",
+        "total_trade_tax",
+        "commission_revenue"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_holdings",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_holdings"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-135",
+      "question": "2015 年 6 月 30 日全账户持仓量合计是多少？",
+      "expected_metric": "holdings_quantity",
+      "top5": [
+        "holdings_quantity",
+        "total_trade_value",
+        "total_trade_quantity",
+        "total_trade_tax",
+        "commission_revenue"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_holdings",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_holdings"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-136",
+      "question": "2016 年 6 月 30 日持仓账户数是多少？",
+      "expected_metric": "holding_account_count",
+      "top5": [
+        "holding_account_count",
+        "holdings_value",
+        "cash_balance",
+        "active_account_count",
+        "cash_account_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_holdings",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_holdings"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-137",
+      "question": "2015 年 12 月 31 日持仓证券数是多少？",
+      "expected_metric": "holding_security_count",
+      "top5": [
+        "holding_security_count",
+        "total_trade_tax",
+        "holdings_value",
+        "traded_security_count",
+        "holdings_quantity"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_holdings",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_holdings"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-138",
+      "question": "2016 年 12 月 31 日现金账户数是多少？",
+      "expected_metric": "cash_account_count",
+      "top5": [
+        "cash_account_count",
+        "cash_balance",
+        "active_account_count",
+        "holding_account_count",
+        "active_customer_count"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_cash_balances",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "fact_cash_balances"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-139",
+      "question": "2016 年 12 月 31 日全账户现金余额合计是多少？",
+      "expected_metric": "cash_balance",
+      "top5": [
+        "cash_balance",
+        "total_trade_value",
+        "total_trade_quantity",
+        "total_trade_tax",
+        "commission_revenue"
+      ],
+      "dims": [],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_cash_balances",
+        "dim_date"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "fact_cash_balances"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-140",
+      "question": "按办公室统计 2015 年佣金收入，列出前 5 名",
+      "expected_metric": "commission_revenue",
+      "top5": [
+        "commission_revenue",
+        "commission_rate",
+        "average_commission_per_trade"
+      ],
+      "dims": [
+        "Office"
+      ],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_broker"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-141",
+      "question": "按税务状态统计 2016 年交易额，列出前 5 名",
+      "expected_metric": "total_trade_value",
+      "top5": [
+        "total_trade_value",
+        "total_trade_tax",
+        "trade_count",
+        "active_account_count",
+        "average_trade_value"
+      ],
+      "dims": [
+        "TaxStatus"
+      ],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_account"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-142",
+      "question": "按分支统计 2014 年 12 月 31 日持仓市值，列出前 5 名",
+      "expected_metric": "holdings_value",
+      "top5": [
+        "holdings_value",
+        "holdings_quantity",
+        "holding_account_count",
+        "holding_security_count",
+        "average_holding_value"
+      ],
+      "dims": [
+        "Branch"
+      ],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_holdings",
+        "dim_date",
+        "dim_account",
+        "dim_broker"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_holdings"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-143",
+      "question": "按分支统计 2015 年 12 月 31 日现金余额，列出前 5 名",
+      "expected_metric": "cash_balance",
+      "top5": [
+        "cash_balance",
+        "cash_account_count",
+        "average_cash_balance"
+      ],
+      "dims": [
+        "Branch"
+      ],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_cash_balances",
+        "dim_date",
+        "dim_account",
+        "dim_broker"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "fact_cash_balances"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-144",
+      "question": "按客户等级统计 2015 年成交量，列出前 5 名",
+      "expected_metric": "total_trade_quantity",
+      "top5": [
+        "total_trade_quantity",
+        "total_trade_value",
+        "trade_count",
+        "active_customer_count",
+        "avg_trade_price"
+      ],
+      "dims": [
+        "Tier"
+      ],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_customer"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-145",
+      "question": "按证券类型统计 2015 年成交笔数，列出前 5 名",
+      "expected_metric": "trade_count",
+      "top5": [
+        "trade_count",
+        "total_trade_value",
+        "total_trade_quantity",
+        "total_trade_tax",
+        "traded_security_count"
+      ],
+      "dims": [
+        "Issue"
+      ],
+      "rank": 1,
+      "kept": 17,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_security"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-146",
+      "question": "按分支和客户等级统计 2015 年交易额，列出前 5 名",
+      "expected_metric": "total_trade_value",
+      "top5": [
+        "total_trade_value",
+        "total_trade_tax",
+        "trade_count",
+        "active_customer_count",
+        "active_account_count"
+      ],
+      "dims": [
+        "Tier",
+        "Branch"
+      ],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_customer",
+        "dim_broker"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    },
+    {
+      "id": "gold-147",
+      "question": "按性别统计 2014 年交易税，列出前 5 名",
+      "expected_metric": "total_trade_tax",
+      "top5": [
+        "total_trade_tax",
+        "total_trade_value",
+        "trade_count",
+        "active_account_count",
+        "average_trade_value"
+      ],
+      "dims": [
+        "Gender"
+      ],
+      "rank": 1,
+      "kept": 20,
+      "truth_tables": [
+        "fact_trades",
+        "dim_date",
+        "dim_customer"
+      ],
+      "tables_top1": [
+        "dim_account",
+        "dim_broker",
+        "dim_customer",
+        "dim_date",
+        "dim_security",
+        "fact_trades"
+      ],
+      "covered_top1": true,
+      "covered_top3": true
+    }
+  ]
+}

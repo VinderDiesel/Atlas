@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-09-03",
+  "categories": {
+    "understanding": {
+      "label": "理解错",
+      "desc": "Plan 与标注不符（指标/维度/时间路由误判或歧义猜答）"
+    },
+    "generation": {
+      "label": "生成错",
+      "desc": "Plan 正确但编译/生成阶段出错（CompileError 等）"
+    },
+    "guard_rejected": {
+      "label": "安全拒",
+      "desc": "Guard 拒绝（只读红线/表白名单/LIMIT/策略注入失败）"
+    },
+    "permission": {
+      "label": "权限拒",
+      "desc": "执行期权限不足（行级策略/对象级 RBAC 下推后仍被拒）"
+    },
+    "timeout": {
+      "label": "超时",
+      "desc": "执行超时或超出预算（COST_BUDGET/MAX_QUERY_*）"
+    },
+    "execution_error": {
+      "label": "执行错误",
+      "desc": "Doris 执行期错误（语法方言/资源/连接）"
+    },
+    "invalid_result": {
+      "label": "结果异常",
+      "desc": "执行成功但结果形态异常（空/全 NULL/非分组多行，ExecutionValidator）"
+    }
+  },
+  "flow": [
+    "评测失败样本由 eval/failure_collect.py 自动归入 eval/failures/<category>/，status=pending_review",
+    "人工确认归因（可改 category），确认可修复口径 → 修语义层/提示词/实现",
+    "确认可作训练对（question → 正确 SQL/Plan）→ 追加 lora/data/approved_pairs.jsonl（SFT）",
+    "不可用样本 → 移入 eval/failures/_rejected/ 归档（不删，留审计轨迹）"
+  ]
+}
