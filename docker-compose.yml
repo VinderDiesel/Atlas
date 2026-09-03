@@ -121,6 +121,10 @@ services:
     volumes:
       - doris-fe-meta:/opt/apache-doris/fe/doris-meta
       - doris-fe-log:/opt/apache-doris/fe/log
+      # 挂载自定义 fe.conf：官方默认 JVM 堆 8G，在个人机 Docker VM（内存 <8G）
+      # 上会吃满宿主机内存导致 BE 查询 MEM_LIMIT_EXCEEDED（实测 2026-09-02）；
+      # 调低为 Xmx2g/Xms1g 后可支持全表聚合类验证查询（infra/docker/doris/fe.conf）
+      - ./infra/docker/doris/fe.conf:/opt/apache-doris/fe/conf/fe.conf
     networks:
       doris_net:
         ipv4_address: 172.20.80.10
@@ -152,7 +156,7 @@ services:
       retries: 15
 
   # ============================================================
-  # Milvus：向量检索（保留，已有工程经验，是简历资产）
+  # Milvus：向量检索（语义召回的候选通道）
   # 注：Doris 4.1 也有原生向量检索（IVF/IVF_ON_DISK，900 QPS @ 97% recall），
   #     但 MVP 不引入，避免技术栈过度分散（ADR-0004）
   # ============================================================
@@ -198,6 +202,36 @@ services:
     volumes:
       - grafanadata:/var/lib/grafana
       - ./observability/dashboards:/var/lib/grafana/dashboards:ro
+      # Day 51：provisioning（数据源 / 面板 provider / 告警规则）——
+      # 面板 JSON 只有被 provisioning 扫描才会加载进 Grafana
+      - ./observability/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observability/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./observability/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
+
+  # ============================================================
+  # 可观测数据链路（可选 profile：起 Collector + Prometheus 才把面板数据源点亮；
+  # 不起则 Grafana 面板与告警保持配置态——不对任何数字作伪，见 observability/README.md）
+  #   docker compose --profile obs up -d otel-collector prometheus
+  # ============================================================
+  otel-collector:
+    image: otel/opentelemetry-collector:0.109.0
+    container_name: atlas-otel-collector
+    profiles: ["obs"]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    ports:
+      - "4318:4318" # OTLP HTTP（Atlas SDK 导出端）
+      - "8889:8889" # Prometheus exporter（metrics）
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: atlas-prometheus
+    profiles: ["obs"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
 volumes:
   miniodata:

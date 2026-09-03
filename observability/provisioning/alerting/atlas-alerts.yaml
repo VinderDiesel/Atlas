@@ -1,0 +1,156 @@
+# Atlas 告警规则（Grafana unified alerting provisioning，Day 51）
+#
+# 阈值口径注记（诚实）：
+# - 本系统为 MVP + 人工问数负载，尚无真实生产流量，以下阈值是**配置占位**，
+#   不是实测分布得出的统计边界（AGENTS.md 9.1：无脚本数字不写报告）。
+# - 指标名与 label 来自 observability/otel.py（Day 50），改动需同步两处；
+#   防漂移断言见 tests/test_dashboards.py。
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: atlas-guard
+    folder: Atlas
+    interval: 1m
+    rules:
+      - uid: atlas-blocked-ratio-high
+        title: Guard 拒绝率过高（>20% / 5m）
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: |
+                sum(rate(atlas_turn_blocked_total[5m]))
+                / clamp_min(sum(rate(atlas_turn_count_total[5m])), 0.001)
+              instant: true
+            relativeTimeRange:
+              from: 300
+              to: 0
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              expression: A
+              type: threshold
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.2]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+
+  - orgId: 1
+    name: atlas-latency
+    folder: Atlas
+    interval: 1m
+    rules:
+      - uid: atlas-latency-p95-high
+        title: 回合 p95 时延过高（>5s / 5m）
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: |
+                histogram_quantile(
+                  0.95,
+                  sum(rate(atlas_turn_latency_milliseconds_bucket[5m])) by (le)
+                )
+              instant: true
+            relativeTimeRange:
+              from: 300
+              to: 0
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              expression: A
+              type: threshold
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [5000]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+
+  - orgId: 1
+    name: atlas-reliability
+    folder: Atlas
+    interval: 1m
+    rules:
+      - uid: atlas-error-rate-high
+        title: 故障率过高（执行期故障回合占比 >10% / 5m）
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: |
+                sum(rate(atlas_turn_count_total{atlas_turn_kind="error"}[5m]))
+                / clamp_min(sum(rate(atlas_turn_count_total[5m])), 0.001)
+              instant: true
+            relativeTimeRange:
+              from: 300
+              to: 0
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              expression: A
+              type: threshold
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.1]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+
+      - uid: atlas-otel-down
+        title: 可观测数据链路中断（otel-collector 无上报）
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: up{job="otel-collector"}
+              instant: true
+            relativeTimeRange:
+              from: 300
+              to: 0
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              expression: A
+              type: threshold
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+                  operator:
+                    type: and
+                  query:
+                    params: [A]

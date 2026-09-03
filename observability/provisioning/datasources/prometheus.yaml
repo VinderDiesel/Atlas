@@ -1,0 +1,14 @@
+# Prometheus 数据源 provisioning（Grafana 11，Day 51）
+# 引用方式：uid: prometheus（dashboard / alert rules 都按 uid 引用，改名不漂移）
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s

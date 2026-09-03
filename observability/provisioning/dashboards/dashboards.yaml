@@ -1,0 +1,15 @@
+# Dashboard provider provisioning（Grafana 11，Day 51）
+# 扫描 observability/dashboards/*.json（compose 挂载到 /var/lib/grafana/dashboards:ro）
+apiVersion: 1
+
+providers:
+  - name: atlas
+    orgId: 1
+    folder: Atlas
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

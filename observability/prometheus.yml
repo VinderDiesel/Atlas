@@ -1,0 +1,10 @@
+# Prometheus 抓取配置（Atlas 可观测，Day 51）
+# 只抓 collector 的 prometheus exporter（8889）——metrics 由 SDK→Collector 链路供给
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
