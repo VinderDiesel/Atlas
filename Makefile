@@ -1,4 +1,4 @@
-.PHONY: help install up down seed dwd lint lint-ossie lint-governance export plan compile ask eval e2e retrieve extract-meta train report test adr rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token
+.PHONY: help install up down seed dwd lint lint-ossie lint-governance export plan compile ask eval e2e retrieve extract-meta train report test adr rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify
 
 PYTHON       ?= .venv/bin/python
 
@@ -38,6 +38,7 @@ help:
 	@echo "    make test            单元 + 契约测试"
 	@echo "    make serve           启动 HTTP API（uvicorn 127.0.0.1:8000，单进程）"
 	@echo "    make token           签发本地测试 JWT（ROLE 变量，如 ROLE=branch_manager）"
+	@echo "    make api-verify      HTTP API 真链验收（/plan→/compile→/ask + 认证）"
 	@echo "    make adr             新建 ADR（用法: make adr TITLE=\"标题\"）"
 
 install:
@@ -108,6 +109,13 @@ serve:
 
 token:
 	uv run --env-file .env python -c "import json, sys; from serving.auth import sign_token; print(sign_token(sys.argv[1], json.loads(sys.argv[2])))" "$(or $(ROLE),hq_admin)" "$(or $(CONTEXT),{})"
+
+# HTTP API 真链验收（eval/api_acceptance.py，ADR-0012）：全 HTTP 栈 + 真 Doris
+# + 锁定快照（7d48dcb meta，同 e2e_acceptance 数据口径）：/plan→/compile→/ask
+# 只读形态与 EX 一致性、歧义反问、401×2、/health；断言失败退出码 1
+# 产出 eval/reports/api-acceptance-<sha>.json；需 .env（ATLAS_JWT_SECRET）
+api-verify:
+	uv run --env-file .env python -m eval.api_acceptance
 
 # Data Agent 端到端验收门禁（eval/e2e_acceptance.py，Day 48）
 # 5 场景 + handoff：真实 Doris 逐场景断言，任一失败退出码 1
