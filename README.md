@@ -444,6 +444,7 @@ parse(AST) → 禁 DDL/DML → 函数黑名单 → apply LIMIT → apply 时间�
 
 ```text
 atlas-data-platform/
+├── .github/workflows/   # GitHub Actions（lint / eval 回归 / tag 自动版本锚点）
 ├── semantic/
 │   ├── ossie/           # ⭐ Apache Ossie 语义模型（主规范）
 │   ├── governance/      # ⭐ Atlas 治理扩展 Schema（补 Ossie 缺口）
@@ -459,7 +460,7 @@ atlas-data-platform/
 ├── observability/       # otel / dashboards
 ├── eval/                # gold / spider / bird / runner / reports
 ├── lora/                # SQL 适配器训练与数据飞轮
-├── infra/               # docker / ci / adr
+├── infra/               # docker / adr；ci 为历史遗留草案（活动 CI 在 .github/workflows/）
 ├── docs/                # 验收记录、发布文案、术语表、素材图
 └── data/snapshots/      # 固定数据快照（记录 sha，保证评测可复现）
 ```

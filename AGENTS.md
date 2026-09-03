@@ -73,6 +73,7 @@
 
 ```text
 atlas-data-platform/
+├── .github/workflows/   # GitHub Actions（lint / eval 回归 / tag 自动版本锚点）
 ├── semantic/            # 语义层定义（Git 唯一事实源）
 │   ├── schema/          # JSON Schema，CI 强制校验
 │   ├── models/          # SemanticModel：base_table / measures / joins
@@ -113,7 +114,6 @@ atlas-data-platform/
 ├── lora/                # SQL 适配器训练 + 数据飞轮
 ├── infra/
 │   ├── docker/          # 镜像与 compose 片段
-│   ├── ci/              # GitLab CI / GitHub Actions
 │   └── adr/             # ✅ 架构决策记录（重要决策必须写 ADR）
 ├── docs/                # 设计文档、逐日任务清单、术语表
 └── data/snapshots/      # 固定数据快照，记录 sha
