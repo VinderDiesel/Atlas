@@ -107,7 +107,7 @@ atlas-data-platform/
 ├── observability/       # otel 埋点 / grafana dashboards
 ├── eval/
 │   ├── gold/            # 自建黄金集（主评测）
-│   ├── spider/ bird/    # 公开集对照（仅参照，不混报）
+│   ├── spider/ bird/    # 公开集对照（判定不再新增接入，仅历史参照，ADR-0014）
 │   ├── runner.py        # 评测执行器
 │   ├── failures/        # 失败样本（人工确认后进 SFT）
 │   └── reports/         # 每次 commit 产物，文件名 = commit sha

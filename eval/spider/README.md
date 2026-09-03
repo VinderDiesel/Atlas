@@ -11,4 +11,5 @@
   本次执行中消解：不下载数据、不建 harness、不产生对照分数。
 - 自建 gold 集（eval/gold/，50 条人工标注）仍是主评测，不受影响。
 
-公开集对照取向（如需要）：BIRD finance 段（见 ../bird/README.md）。
+公开集对照取向扩展判定（2026-09-03，ADR-0014）：BIRD finance 段亦不再新增
+接入——同判依据与恢复路径见 ../bird/README.md 判定记录。

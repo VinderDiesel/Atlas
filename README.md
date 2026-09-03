@@ -345,8 +345,8 @@ make export            # 导出 dbt MetricFlow YAML
 ```text
 eval/
 ├── gold/        # 自建黄金集：50 例目标，金融段为主（FIBO 概念标注），人工标注
-├── spider/      # 历史对照（通用领域，与金融场景不匹配，不再新增）
-├── bird/        # 公开集对照（BIRD finance 段，仅作参照，不与 gold 混报）
+├── spider/      # 历史对照判定：通用领域与金融场景不匹配，不再新增接入
+├── bird/        # 历史对照判定：BIRD finance 不再新增（2026-09-03，见 eval/bird/README.md）
 ├── runner.py    # 固定快照 + expected result hash + CI
 └── reports/     # 每次 commit 自动生成
 ```
