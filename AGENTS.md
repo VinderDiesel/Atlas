@@ -86,9 +86,8 @@ atlas-data-platform/
 │   ├── dwd/             # 明细层
 │   ├── dws/             # 汇总层
 │   └── views/           # 消费视图
-├── spark/
-│   ├── extractors/      # DDL/ETL 注释 → 语义对象候选
-│   └── metadata_parser.py
+├── metadata/
+│   └── parser.py        # SQL/DDL/ETL 注释 → 语义对象候选（2026-09 自 spark/ 归位）
 ├── airflow/
 │   ├── yaml_jobs/       # ✅ 可编辑：YAML 任务编排源
 │   └── dags/generated/  # ❌ 禁止手改：由 yaml_jobs 生成

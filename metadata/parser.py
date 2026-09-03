@@ -1,4 +1,4 @@
-"""spark/metadata_parser.py：从 SQL/DDL 注释中抽取语义对象候选（Day 26）。
+"""metadata/parser.py：从 SQL/DDL 注释中抽取语义对象候选（Day 26）。
 
 口径与边界（诚实声明）
 ------------------------
@@ -17,10 +17,10 @@
   共 25 个 SQL 脚本（≥10 达标），口径调整见 README §3.3 Day 26 勾选。
 
 用法：
-    uv run python spark/metadata_parser.py                        # 默认语料
-    uv run python spark/metadata_parser.py --paths a.sql b.sql    # 指定文件
-    uv run python spark/metadata_parser.py --no-loader-ddl        # 不用 loader DDL
-    uv run python spark/metadata_parser.py --no-report            # 只打印摘要
+    uv run python metadata/parser.py                        # 默认语料
+    uv run python metadata/parser.py --paths a.sql b.sql    # 指定文件
+    uv run python metadata/parser.py --no-loader-ddl        # 不用 loader DDL
+    uv run python metadata/parser.py --no-report            # 只打印摘要
 
 产出：eval/reports/metadata-extract-<git sha>.json（每次运行绑定 HEAD）
 """
@@ -362,7 +362,7 @@ def run(files: list[tuple[str, str]]) -> dict[str, Any]:
     }
     return {
         "sha": git_short_sha(),
-        "tool": "spark/metadata_parser.py",
+        "tool": "metadata/parser.py",
         "corpus": {
             "dwd_sql": 8,
             "tpcdi_ods_ddl": 17,

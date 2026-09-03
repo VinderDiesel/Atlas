@@ -134,11 +134,11 @@ rag-eval:
 compare:
 	$(PYTHON) -m eval.compare_4way --rag-engine $(or $(RAG_ENGINE),stub) $(if $(MEASURE),--measure-compiler)
 
-# 元数据抽取（spark/metadata_parser.py，Day 26）：SQL/DDL 注释 → 语义对象候选
+# 元数据抽取（metadata/parser.py，Day 26）：SQL/DDL 注释 → 语义对象候选
 # - 语料 = sql/dwd 8 张 + loader --emit-ddl 的 17 张 tpcdi ODS DDL（共 25 个脚本）
 # - 产出 eval/reports/metadata-extract-<sha>.json；候选≠发布（审核是 Day 27 流程）
 extract-meta:
-	uv run python spark/metadata_parser.py
+	uv run python metadata/parser.py
 
 # LoRA 训练（Day 37-38，ADR-0008）：先 build_pairs 构造合规语料（空语料/泄漏会被拦），
 # 再 lora.train（前置检查不过 exit 2；GPU 机上先 uv sync --extra ml）

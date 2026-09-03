@@ -1,4 +1,4 @@
-"""spark/metadata_parser.py 契约测试：注释/结构抽取与 known 对照。
+"""metadata/parser.py 契约测试：注释/结构抽取与 known 对照。
 
 纯本地单测（不连 Doris / Polaris）：断言集中在抽取规则的确定性行为上。
 """
@@ -9,7 +9,7 @@ import json
 import unittest
 from pathlib import Path
 
-from spark.metadata_parser import (
+from metadata.parser import (
     analyze_text,
     known_registry,
     loader_ddl_files,

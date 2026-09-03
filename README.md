@@ -172,7 +172,7 @@ make export
 - [x] `make retrieve ENGINE=rerank` 元数据 Rerank 实测：双路 RRF top-20 后按词典序（同义词置信度 → 留一热度 → owner）重排，Recall@1 = 44/44、@5 = 44/44，报告 `eval/reports/retrieval-rerank-7d48dcb.json`；加权线性混合版曾实测 34/44@1（热度分系统性推高恒在热门指标），存档 `retrieval-rerank-7d48dcb.linear-weighted.json`，词典序修正设计理由见 retrieval/rerank.py；15 指标治理补齐（11 个新指标补 ATLAS 扩展），gold_test_cases 与评测集双向一致性由 governance_validate 强制
 - [x] Day 25 三角色行级权限验证：同一问句（gold-146「按分支和客户等级统计 2015 年交易额 Top5」）走同一 Planner/Compiler/Guard 链，仅 JWT 角色不同 → 注入不同谓词 → Doris 实测：hq_admin 5 行 / branch_manager 2 行（仅本人分支）/ compliance_auditor 5 行（tier≤3，排除 tier8 与 NULL 档），结果差异集 3；权限生效在 SQL 谓词层（Guard 别名对齐 + 二次只读校验），非应用层过滤，报告 `eval/reports/rls-verify-7d48dcb.json`，截图 `docs/screenshots/rls-verify.png`
 - [x] Day 25 Polaris 层 RBAC（纵深第二层验证）：同一 catalog（atlas，25 表）两个 principal——root 全可见；atlas_analyst（受限只读，仅授 dwd.dim_broker/dim_customer 表级权限）list_namespaces/list_tables Forbidden（防枚举）、load 授权表 OK、load fact_trades Forbidden，报告 `eval/reports/polaris-rbac-7d48dcb.json`，截图 `docs/screenshots/polaris-rbac.png`
-- [x] Day 26 元数据抽取器：`spark/metadata_parser.py` 确定性抽取（sqlglot Tokenizer 提注释规避字符串内 `--` 误判 + AST 提结构），25 个 SQL 脚本（sql/dwd 8 + loader 生成的 tpcdi ODS DDL 17）实测：dataset 候选 25（9 已注册）、measure 候选 42（13 已注册）、聚合 metric 候选 1（`daily_net` 账户日净额，未注册=新候选池）；主键/代理键/旗标/建库语句与窗口函数正确排除，候选不产已注册对象（known 标记防 N8），报告 `eval/reports/metadata-extract-7d48dcb.json`；候选≠发布（Day 27 人工审核）；TPC-DS 脚本随 ADR-0006 已退场，语料口径见 ADR-0006
+- [x] Day 26 元数据抽取器：`metadata/parser.py` 确定性抽取（sqlglot Tokenizer 提注释规避字符串内 `--` 误判 + AST 提结构），25 个 SQL 脚本（sql/dwd 8 + loader 生成的 tpcdi ODS DDL 17）实测：dataset 候选 25（9 已注册）、measure 候选 42（13 已注册）、聚合 metric 候选 1（`daily_net` 账户日净额，未注册=新候选池）；主键/代理键/旗标/建库语句与窗口函数正确排除，候选不产已注册对象（known 标记防 N8），报告 `eval/reports/metadata-extract-7d48dcb.json`；候选≠发布（Day 27 人工审核）；TPC-DS 脚本随 ADR-0006 已退场，语料口径见 ADR-0006
 - [x] Day 27 审核与发布：人工审核 Day 26 抽取候选——ODS 原始层 measure 候选拒绝入分析语义层（无权威口径锚点，理由记录于发布单）、`daily_net` 未物化登记待物化；**发布 5 个可计算派生指标**到 `atlas_finance.ossie.yaml`（15→20 metrics，governance v1 active + lineage，FIBO 概念映射 +5 键 MonetaryAmount/Fee/Balance）；`make lint` 全绿；新工具 `serving/metrics_verify.py` 走真实链路（YAML 权威表达式 → Compiler → Guard → Doris）实测：平均每笔成交金额 27578.61 / 平均每笔佣金 89.57 / 佣金率 0.3247% / 户均持仓市值 1136660.85 / 户均现金余额 -32465124.70（负值系数据特性，见 Known Limitations #17），报告 `eval/reports/metrics-verify-7d48dcb.json`；发布审核判定记录 `semantic/migrations/2026-09-02-release-day27.md`
 - [x] Day 27 指标版本机制：`governance_validate.py` 新增 supersedes 链跨文件校验——取代目标存在、非自身、新版本号严格大于被取代版本（递增天然防环）、被取代者不得仍为 active、治理记录不得重名；演进规范＝新名 + supersedes 旧名（同名全局唯一由 ossie_validate 强制，N8）；契约测试 10 例 `tests/test_governance_validate.py`，CI 经 `make lint` 自动执行
 - [x] Day 27 语料扩展回归（15→20 指标文档）：bm25 Recall@1 44/44→41/44、Milvus 42/44→35/44、fuse 44/44→40/44（三路 @5 均保持 44/44；15 语料旧值 44/42/44 记录于上两行）；rerank 主链路 44/44 无损；归因与后续见 Known Limitations #18；配套修复：Doris FE 官方默认 JVM 堆 8G 吃满单机内存致全表聚合查询 OOM → compose 挂载自定义 fe.conf（`infra/docker/doris/fe.conf`，Xmx2g），FE 内存 5.5G→1.0G 实测（docker stats）
@@ -450,7 +450,7 @@ atlas-data-platform/
 │   ├── policies/        # 行级权限策略
 │   └── schema/          # ⚠️ 已废弃：早期自研 DSL，仅作演进对照
 ├── sql/                 # tpcds_ddl（零售历史，只读）/ dwd / dws / views（金融表待建）
-├── spark/               # 元数据抽取器（SQL/DDL/ETL 注释解析）
+├── metadata/            # SQL 元数据抽取器（候选提取，非计算层）
 ├── airflow/             # yaml_jobs（源）+ dags/generated（自动生成，勿手改）
 ├── agent/               # graph（LangGraph 状态机）/ planner / compiler / security / feedback /
 │                        #   tools（registry 四件套 · mcp_server · chart）/ cli / prompts
