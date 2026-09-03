@@ -51,6 +51,7 @@ ml = [
     "torch>=2.4",
     "transformers>=4.44",
     "peft>=0.12",
+    "bitsandbytes>=0.43",  # QLoRA 4bit 量化（ADR-0008）；MIT 许可
     "vllm>=0.6",
 ]
 # Apache Calcite 不作为 MVP 依赖（ADR-0005）
