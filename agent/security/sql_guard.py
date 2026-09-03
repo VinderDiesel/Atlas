@@ -9,9 +9,12 @@
 
 状态
 ----
-骨架实现，用于 Day 19-20 启动。**未经过测试，不可直接用于生产。**
-必须覆盖的边界（见 ADR-0003）：CTE、子查询、视图展开、动态 SQL、
-函数黑名单、权限表达式注入。
+Day 19-20 骨架 → 契约测试覆盖（tests/test_sql_guard.py）与行级权限实测
+（serving/rls_verify.py）后持续演进：AST 校验链（禁 DDL/DML → 函数黑名单
+→ LIMIT → 行级策略注入 → 二次只读校验）已落地；跨表策略谓词沿语义模型
+join 图补 LEFT JOIN（Phase 2，ADR-0014 ⑤ 相关），无合法路径仍拒绝。
+已知边界（见 README Known Limitations）：视图展开递归校验、真实成本估算
+仍待实现。
 
 参考 ADR：infra/adr/0003-readonly-sql-gateway.md
 """
@@ -20,6 +23,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 import sqlglot
 from sqlglot import exp
@@ -124,19 +128,35 @@ class Policy:
             raise UnsafeQuery(f"策略中存在未渲染的占位符：{rendered}")
         return rendered
 
-    def rewrite(self, tree: exp.Expr) -> exp.Expr:
+    def rewrite(self, tree: exp.Expr, model: object | None = None) -> exp.Expr:
         """把谓词注入到 WHERE 子句（AND 连接，不覆盖已有条件）。
 
-        注入前做**表引用对齐**（Day 25）：谓词按物理表名书写
-        （如 dim_broker.branch），编译 SQL 可能给表起了别名
-        （如 ``FROM atlas.dwd.dim_broker AS db``，别名遮蔽后原表名不可用），
-        因此把谓词列引用改写为 SQL 中的实际别名；谓词引用的表不在
-        SQL 中则拒绝（跨表注入需要 join 补充，属 Phase 2）。
+        注入前做两件事：
+        1. **跨表补 join（Phase 2，KL #14 收窄）**：谓词按物理表名书写（如
+           dim_broker.branch），其引用表不在查询中时，沿语义模型 relationships
+           join 图补 LEFT JOIN（与编译器同形态：catalog.db.table AS base 名 + 关系
+           列 EQ）；无模型或无合法路径 → 拒绝（安全底线不放开）。
+        2. **表引用对齐（Day 25）**：谓词列改写为 SQL 实际别名（编译 SQL 可能给
+           表起了别名，如 FROM atlas.dwd.dim_broker AS db，别名遮蔽后原表名不可用）。
+
+        model 只要求鸭子接口：datasets[name].source（catalog.db.table）与
+        relationships（from_ds/to_ds/from_columns/to_columns/reversed()），
+        agent.compiler.SemanticModel 天然满足。
         """
         predicate_sql = self.condition
         predicate = sqlglot.parse_one(predicate_sql, read="clickhouse")
-        predicate = _qualify_predicate_to_sql(predicate, tree)
         tree = tree.copy()
+        # Phase 2：谓词引用表不在查询中 → join 图补表；无模型/无路径即拒绝
+        existing = {table.name for table in tree.find_all(exp.Table)}
+        missing = _predicate_table_bases(predicate) - existing
+        if missing:
+            if model is None:
+                raise UnsafeQuery(
+                    f"策略引用表不在查询中且未提供语义模型（跨表谓词需 join 注入）："
+                    f"{sorted(missing)}"
+                )
+            tree = _inject_policy_joins(tree, model, missing)
+        predicate = _qualify_predicate_to_sql(predicate, tree)
         where = tree.find(exp.Where)
         if where is None:
             # 没有 WHERE 就补一个
@@ -177,13 +197,107 @@ def _escape_literal(value: object) -> str:
     return text.replace("'", "''")
 
 
+def _predicate_table_bases(predicate: exp.Expr) -> set[str]:
+    """谓词中限定列引用的表（base 名集合）。"""
+    bases: set[str] = set()
+    for column in predicate.find_all(exp.Column):
+        if column.table:
+            bases.add(str(column.table).split(".")[-1])
+    return bases
+
+
+def _physical_table(source: str) -> exp.Table:
+    """catalog.db.table → exp.Table（AS base 名，与编译器产物同形态）。"""
+    parts = source.split(".")
+    if len(parts) != 3:
+        raise UnsafeQuery(f"语义模型 dataset source 非 catalog.db.table：{source!r}")
+    # this 必须为 Identifier：Guard 注入后仍会 find_all(exp.Table) 并访问 .name
+    # （实测 this=str 时 table.name property 崩溃，sqlglot 期望 Identifier）
+    table = exp.Table(
+        this=exp.to_identifier(parts[2]), db=parts[1], catalog=parts[0]
+    )
+    table.set("alias", exp.TableAlias(this=exp.to_identifier(parts[2])))
+    return table
+
+
+def _policy_join_ast(edge: Any, sources: dict[str, str]) -> exp.Join:
+    """语义边 → LEFT JOIN AST：ON 由关系列 EQ 连接（与编译器 _join_ast 同构）。"""
+    source = sources.get(edge.to_ds)
+    if source is None:
+        raise UnsafeQuery(f"语义模型缺少 dataset：{edge.to_ds}")
+    on: exp.Expr | None = None
+    for fc, tc in zip(edge.from_columns, edge.to_columns, strict=True):
+        cond = exp.EQ(
+            this=exp.column(fc, table=edge.from_ds),
+            expression=exp.column(tc, table=edge.to_ds),
+        )
+        on = cond if on is None else exp.and_(on, cond)
+    return exp.Join(this=_physical_table(source), on=on, kind="LEFT")
+
+
+def _join_path_to(
+    model: object, starts: set[str], goal: str
+) -> list[Any] | None:
+    """BFS：从 starts（查询中已存在的表）沿 relationships 到 goal 的最短边链。
+
+    返回边列表（已按行进方向排列，反向边已 reversed）；不可达返回 None。
+    """
+    visited = set(starts)
+    queue: list[tuple[str, list[Any]]] = [(s, []) for s in sorted(starts)]
+    while queue:
+        current, chain = queue.pop(0)
+        for rel in model.relationships:  # type: ignore[attr-defined]
+            edge = (
+                rel
+                if rel.from_ds == current
+                else (rel.reversed() if rel.to_ds == current else None)
+            )
+            if edge is None or edge.to_ds in visited:
+                continue
+            new_chain = chain + [edge]
+            if edge.to_ds == goal:
+                return new_chain
+            visited.add(edge.to_ds)
+            queue.append((edge.to_ds, new_chain))
+    return None
+
+
+def _inject_policy_joins(tree: exp.Expr, model: object, missing: set[str]) -> exp.Expr:
+    """补 LEFT JOIN 使谓词引用表可达；无路径 → UnsafeQuery（安全底线不放开）。
+
+    逐目标 BFS：路径上每个新表补一条 join（已在查询中的表跳过——已可达）；
+    注入表与查询中同名表冲突时不重复注入。
+    """
+    try:
+        sources = {ds.name: ds.source for ds in model.datasets.values()}  # type: ignore[attr-defined]
+    except AttributeError as exc:
+        raise UnsafeQuery(f"语义模型接口不符（需 datasets[name].source）：{exc}") from exc
+    existing = {table.name for table in tree.find_all(exp.Table)}
+    joins = list(tree.args.get("joins") or [])
+    for goal in sorted(missing):
+        chain = _join_path_to(model, existing, goal)
+        if chain is None:
+            raise UnsafeQuery(
+                f"策略引用表 {goal} 与查询表 {sorted(existing)} 之间无合法 join 路径"
+                "（语义模型 relationships 不可达）"
+            )
+        for edge in chain:
+            if edge.to_ds in existing:
+                continue
+            joins.append(_policy_join_ast(edge, sources))
+            existing.add(edge.to_ds)
+    if joins:
+        tree.set("joins", joins)
+    return tree
+
+
 def _qualify_predicate_to_sql(predicate: exp.Expr, tree: exp.Expr) -> exp.Expr:
     """谓词的表限定列引用 → SQL 实际别名（无别名则保持原名）。
 
-    只处理形如 `dim_broker.branch = ...` 的限定列：列所在物理表在查询中
-    存在时（无论是否起别名）都合法；**不在查询中的表直接拒绝**——此时
-    需要沿语义模型 join 图补表（Phase 2），静默放行会产生引用不存在表
-    的坏 SQL。未限定的列（如 `branch = ...`）不做处理，保持兼容。
+    只处理形如 `dim_broker.branch = ...` 的限定列：谓词引用表不在查询中的
+    情况已在 Policy.rewrite 先经语义模型 join 图补表（Phase 2）；此处未命中
+    的限定表（无模型路径或模型缺表）作兜底拒绝——静默放行会产生引用不存在
+    表的坏 SQL。未限定的列（如 `branch = ...`）不做处理，保持兼容。
     """
     aliases: dict[str, str] = {}
     for table in tree.find_all(exp.Table):
@@ -197,8 +311,8 @@ def _qualify_predicate_to_sql(predicate: exp.Expr, tree: exp.Expr) -> exp.Expr:
         base = str(table_name).split(".")[-1]
         if base not in aliases:
             raise UnsafeQuery(
-                f"策略引用表 {base} 不在查询中（MVP 仅支持查询域内表，"
-                "跨表谓词需 join 注入，见 Known Limitations）"
+                f"策略引用表 {base} 不在查询中且语义模型无可达 join 路径"
+                "（跨表谓词注入失败，拒绝放行）"
             )
         if aliases[base] != base:
             column.set("table", exp.to_identifier(aliases[base]))
@@ -296,10 +410,12 @@ def enforce(
     policy: Policy | None = None,
     budget: Budget | None = None,
     user_context: dict[str, object] | None = None,
+    model: object | None = None,
 ) -> tuple[str, float]:
     """执行完整校验链，返回（安全的 SQL，成本估算）。
 
-    顺序不可调换 —— 见 ADR-0003。
+    顺序不可调换 —— 见 ADR-0003。model 供行级策略跨表谓词补 join 注入
+    （Policy.rewrite，语义模型鸭子接口）；查询域内策略无需 model。
     """
     budget = budget or Budget()
     tree = parse(sql, budget.dialect)
@@ -318,11 +434,12 @@ def enforce(
                 condition=policy.render(user_context),
                 columns=policy.columns,
             )
-        tree = policy.rewrite(tree)
+        tree = policy.rewrite(tree, model=model)
 
-    # 策略注入后**再次**校验，防止策略本身引入危险语句
+    # 策略注入后**再次**校验，防止策略本身引入危险语句（含补表后的表白名单复核）
     check_readonly(tree)
     check_functions(tree)
+    check_tables(tree, budget)
 
     cost = estimate_cost(tree)
     if budget.exceeded(cost):

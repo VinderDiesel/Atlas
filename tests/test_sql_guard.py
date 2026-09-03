@@ -1,15 +1,18 @@
 """只读 SQL 网关契约测试（安全红线，AGENTS.md N3）。
 
 覆盖 ADR-0003 的校验链：解析 → 禁 DDL/DML → 函数黑名单 → LIMIT
-→ 行级策略注入。这些用例必须全部通过才能改 sql_guard.py。
+→ 行级策略注入（含 Phase 2 跨表谓词沿语义模型 join 图补 LEFT JOIN）。
+这些用例必须全部通过才能改 sql_guard.py。
 """
 
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from sqlglot import exp
 
+from agent.compiler import Dataset, Relationship, SemanticModel
 from agent.security.sql_guard import (
     Budget,
     Policy,
@@ -19,6 +22,27 @@ from agent.security.sql_guard import (
     check_readonly,
     enforce,
     parse,
+)
+
+# 真实语义模型（atlas_finance.ossie.yaml）：Guard 跨表 join 注入的鸭子接口输入。
+# 若 semantic YAML 的表/关系改名，以下用例会失败——这是有意的回归锁。
+MODEL = SemanticModel()
+
+# 迷你 join 图：仅 fact_trades → dim_account 一条边，其余表不可达（无路径拒绝用例）。
+FAKE_MODEL = SimpleNamespace(
+    datasets={
+        "fact_trades": Dataset(name="fact_trades", source="atlas.dwd.fact_trades", fields={}),
+        "dim_account": Dataset(name="dim_account", source="atlas.dwd.dim_account", fields={}),
+    },
+    relationships=[
+        Relationship(
+            name="trades_to_account",
+            from_ds="fact_trades",
+            to_ds="dim_account",
+            from_columns=("SK_AccountID",),
+            to_columns=("SK_AccountID",),
+        )
+    ],
 )
 
 
@@ -137,7 +161,11 @@ class TestRowPolicy(unittest.TestCase):
         self.assertIn("region = 1", sql)  # 原有 WHERE 不丢
 
     def test_policy_table_not_in_query_rejected(self) -> None:
-        """谓词引用的表不在查询中直接拒绝（跨表 join 注入属 Phase 2，不静默放行）。"""
+        """无模型时谓词跨表引用仍拒绝（Phase 2 后：无模型无法补 join 图，安全底线不放开）。
+
+        跨表注入需要语义模型（model）提供 join 图——缺模型时即使谓词表真实存在
+        也拒绝，不静默放行；提供 model 的形态见 TestCrossTableJoinInjection。
+        """
         policy = Policy(
             name="rp_branch",
             condition="dim_broker.branch = '{{ user.branch }}'",
@@ -163,6 +191,140 @@ class TestRowPolicy(unittest.TestCase):
             user_context={"max_tier": 3},
         )
         self.assertIn("dim_customer.tier <= 3", sql)
+
+
+class TestCrossTableJoinInjection(unittest.TestCase):
+    """Phase 2（KL #14 收窄）：策略谓词引用表不在查询中时沿语义模型 join 图补表。
+
+    查询形态与编译器产物一致（FROM atlas.dwd.<表> AS <表名>）；行级策略经
+    serving/rls_verify.py 三角色链路调 enforce(model=...) 获得跨表能力。
+    """
+
+    def test_one_hop_broker_injected(self) -> None:
+        """查询只含 fact_trades，策略引用 dim_broker.branch → 补单跳 LEFT JOIN。"""
+        policy = Policy(
+            name="rp_broker",
+            condition="dim_broker.branch = '{{ user.branch }}'",
+            columns=("*",),
+        )
+        sql, _ = enforce(
+            "SELECT * FROM atlas.dwd.fact_trades AS fact_trades",
+            policy=policy,
+            user_context={"branch": "east"},
+            model=MODEL,
+        )
+        self.assertIn("LEFT JOIN atlas.dwd.dim_broker AS dim_broker", sql)
+        self.assertIn("ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID", sql)
+        self.assertIn("dim_broker.branch = 'east'", sql)
+
+    def test_two_hop_customer_injected(self) -> None:
+        """查询只含 fact_cash_balances，策略引用 dim_customer.tier → 补双跳 LEFT JOIN。
+
+        真实图最短路径：fact_cash_balances → dim_account → dim_customer
+        （cash 无直达 customer 的边）。
+        """
+        policy = Policy(
+            name="rp_tier",
+            condition="dim_customer.tier <= {{ user.max_tier }}",
+            columns=("*",),
+        )
+        sql, _ = enforce(
+            "SELECT * FROM atlas.dwd.fact_cash_balances AS fact_cash_balances",
+            policy=policy,
+            user_context={"max_tier": 3},
+            model=MODEL,
+        )
+        self.assertIn("LEFT JOIN atlas.dwd.dim_account AS dim_account", sql)
+        self.assertIn("ON fact_cash_balances.SK_AccountID = dim_account.SK_AccountID", sql)
+        self.assertIn("LEFT JOIN atlas.dwd.dim_customer AS dim_customer", sql)
+        self.assertIn("ON dim_account.SK_CustomerID = dim_customer.SK_CustomerID", sql)
+        self.assertIn("dim_customer.tier <= 3", sql)
+
+    def test_combined_two_policy_tables_injected(self) -> None:
+        """策略同时引用两维表（AND）→ 各补一条 LEFT JOIN，两条件并入 WHERE。"""
+        policy = Policy(
+            name="rp_combined",
+            condition=(
+                "dim_broker.branch = '{{ user.branch }}' "
+                "AND dim_customer.tier <= {{ user.max_tier }}"
+            ),
+            columns=("*",),
+        )
+        sql, _ = enforce(
+            "SELECT * FROM atlas.dwd.fact_trades AS fact_trades",
+            policy=policy,
+            user_context={"branch": "east", "max_tier": 3},
+            model=MODEL,
+        )
+        self.assertIn("LEFT JOIN atlas.dwd.dim_broker AS dim_broker", sql)
+        self.assertIn("LEFT JOIN atlas.dwd.dim_customer AS dim_customer", sql)
+        self.assertIn("dim_broker.branch = 'east'", sql)
+        self.assertIn("dim_customer.tier <= 3", sql)
+        # join 注入不改动原有 SELECT/FROM 目标表
+        self.assertIn("FROM atlas.dwd.fact_trades AS fact_trades", sql)
+
+    def test_original_where_kept_and_anded(self) -> None:
+        """查询原有 WHERE 保留，策略谓词以 AND 并入（不覆盖）。"""
+        policy = Policy(name="rp_broker", condition="dim_broker.branch = 'east'", columns=("*",))
+        sql, _ = enforce(
+            "SELECT * FROM atlas.dwd.fact_trades AS fact_trades"
+            " WHERE fact_trades.Quantity > 0",
+            policy=policy,
+            user_context={},
+            model=MODEL,
+        )
+        self.assertIn("fact_trades.Quantity > 0", sql)
+        self.assertIn("dim_broker.branch = 'east'", sql)
+
+    def test_unreachable_policy_table_rejected(self) -> None:
+        """迷你 join 图（无 customer 关系）中引用 dim_customer → 无路径拒绝。
+
+        真实模型所有维表经 dim_account 枢纽互达，不可达场景只能以受控图构造；
+        这正是 Guard 鸭子接口（datasets/relationships）的设计用途。
+        """
+        policy = Policy(name="rp_tier", condition="dim_customer.tier <= 3", columns=("*",))
+        with self.assertRaises(UnsafeQuery) as ctx:
+            enforce(
+                "SELECT * FROM atlas.dwd.fact_trades AS fact_trades",
+                policy=policy,
+                user_context={},
+                model=FAKE_MODEL,
+            )
+        self.assertIn("无合法 join 路径", str(ctx.exception))
+
+    def test_malicious_policy_rejected_after_join(self) -> None:
+        """注入后二次校验：跨表策略自身含黑名单函数（sleep）→ 拒绝放行。"""
+        policy = Policy(
+            name="rp_malicious",
+            condition="dim_broker.branch = 'x' OR sleep(1) = 0",
+            columns=("*",),
+        )
+        with self.assertRaises(UnsafeQuery) as ctx:
+            enforce(
+                "SELECT * FROM atlas.dwd.fact_trades AS fact_trades",
+                policy=policy,
+                user_context={},
+                model=MODEL,
+            )
+        self.assertIn("禁止的函数：sleep", str(ctx.exception))
+
+    def test_injected_join_table_rechecked_against_whitelist(self) -> None:
+        """补表后的表白名单复核：注入表不在白名单 → 拒绝。
+
+        白名单只放行 fact_trades 时，LEFT JOIN 补入的 dim_broker 必须被
+        注入后 check_tables 拦下（防策略借注入绕过表白名单）。
+        """
+        budget = Budget(allowed_tables=frozenset({"atlas.dwd.fact_trades"}))
+        policy = Policy(name="rp_broker", condition="dim_broker.branch = 'x'", columns=("*",))
+        with self.assertRaises(UnsafeQuery) as ctx:
+            enforce(
+                "SELECT * FROM atlas.dwd.fact_trades AS fact_trades",
+                policy=policy,
+                user_context={},
+                model=MODEL,
+                budget=budget,
+            )
+        self.assertIn("表不在白名单内：atlas.dwd.dim_broker", str(ctx.exception))
 
 
 class TestBudget(unittest.TestCase):
