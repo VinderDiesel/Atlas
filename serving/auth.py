@@ -7,9 +7,9 @@
   branch_manager / compliance_auditor 三角色注入不同谓词 → 结果不同。
 - 零售域（rp_dept_visible：region / product_category）角色同构已注册，
   但 TPC-DI 快照无零售数据，待零售数据落地后换绑策略即可，机制不变。
-- 清单原文的「华东区 / 华东区只读某品类」对应零售角色；金融 dwd 的
+- 规划原文的「华东区 / 华东区只读某品类」对应零售角色；金融 dwd 的
   dim_broker.Branch 是 TPC-DI 随机变造值（实测无地理语义），故本地
-  角色取金融域真实口径，见 docs/逐日任务清单.md Day 25 备注。
+  角色取金融域真实口径（详见 README §3.3 Day 25 勾选与 KL #15）。
 - JWT 用 HS256 自实现（仅标准库），是**本地实现**：生产应换受管 IdP
   签发（本模块只负责验证声明并把角色编译成策略），密钥必须走环境变量。
 

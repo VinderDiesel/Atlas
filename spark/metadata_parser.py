@@ -3,7 +3,7 @@
 口径与边界（诚实声明）
 ------------------------
 - 本工具产出的是**候选**（candidate），不是已发布定义：候选不得当作
-  semantic/ 下的权威指标，人工审核与发布是 Day 27 的独立流程（清单原文）。
+  semantic/ 下的权威指标，人工审核与发布是 Day 27 的独立流程（见 README §3.3 Day 27 勾选）。
 - 抽取规则全部确定性实现（无 LLM），候选一律带 evidence（引用注释/语句原文），
   可复现、可绑定 git sha。宁多勿漏：启发式噪声（如把维度数值列 tier 也列为
   measure 候选）由人工审核过滤，抽取器不做强判断。
@@ -12,9 +12,9 @@
 - metric（聚合）候选只在 SELECT 出现聚合投影（SUM/COUNT/AVG/MIN/MAX + AS 别名）
   且非窗口函数时生成；明细加工层聚合罕见（25 脚本实测仅 1 处真聚合），零命中不
   代表能力缺失（聚合规则由 tests/test_metadata_parser.py 覆盖）。
-- 项目主场景已切金融（ADR-0006），清单原文的"TPC-DS 脚本"在本仓库不存在；
+- 项目主场景已切金融（ADR-0006），规划中的"TPC-DS 脚本"在本仓库不存在；
   试跑语料 = sql/dwd 8 张 DWD SQL + data/loader.py 生成的 tpcdi ODS DDL 17 张，
-  共 25 个 SQL 脚本（≥10 达标），口径调整记录在 docs/逐日任务清单.md Day 26。
+  共 25 个 SQL 脚本（≥10 达标），口径调整见 README §3.3 Day 26 勾选。
 
 用法：
     uv run python spark/metadata_parser.py                        # 默认语料

@@ -172,11 +172,11 @@ make export
 - [x] `make retrieve ENGINE=rerank` 元数据 Rerank 实测：双路 RRF top-20 后按词典序（同义词置信度 → 留一热度 → owner）重排，Recall@1 = 44/44、@5 = 44/44，报告 `eval/reports/retrieval-rerank-7d48dcb.json`；加权线性混合版曾实测 34/44@1（热度分系统性推高恒在热门指标），存档 `retrieval-rerank-7d48dcb.linear-weighted.json`，词典序修正设计理由见 retrieval/rerank.py；15 指标治理补齐（11 个新指标补 ATLAS 扩展），gold_test_cases 与评测集双向一致性由 governance_validate 强制
 - [x] Day 25 三角色行级权限验证：同一问句（gold-146「按分支和客户等级统计 2015 年交易额 Top5」）走同一 Planner/Compiler/Guard 链，仅 JWT 角色不同 → 注入不同谓词 → Doris 实测：hq_admin 5 行 / branch_manager 2 行（仅本人分支）/ compliance_auditor 5 行（tier≤3，排除 tier8 与 NULL 档），结果差异集 3；权限生效在 SQL 谓词层（Guard 别名对齐 + 二次只读校验），非应用层过滤，报告 `eval/reports/rls-verify-7d48dcb.json`，截图 `docs/screenshots/rls-verify.png`
 - [x] Day 25 Polaris 层 RBAC（纵深第二层验证）：同一 catalog（atlas，25 表）两个 principal——root 全可见；atlas_analyst（受限只读，仅授 dwd.dim_broker/dim_customer 表级权限）list_namespaces/list_tables Forbidden（防枚举）、load 授权表 OK、load fact_trades Forbidden，报告 `eval/reports/polaris-rbac-7d48dcb.json`，截图 `docs/screenshots/polaris-rbac.png`
-- [x] Day 26 元数据抽取器：`spark/metadata_parser.py` 确定性抽取（sqlglot Tokenizer 提注释规避字符串内 `--` 误判 + AST 提结构），25 个 SQL 脚本（sql/dwd 8 + loader 生成的 tpcdi ODS DDL 17）实测：dataset 候选 25（9 已注册）、measure 候选 42（13 已注册）、聚合 metric 候选 1（`daily_net` 账户日净额，未注册=新候选池）；主键/代理键/旗标/建库语句与窗口函数正确排除，候选不产已注册对象（known 标记防 N8），报告 `eval/reports/metadata-extract-7d48dcb.json`；候选≠发布（Day 27 人工审核）；TPC-DS 脚本随 ADR-0006 已退场，语料口径记录于任务清单 Day 26
+- [x] Day 26 元数据抽取器：`spark/metadata_parser.py` 确定性抽取（sqlglot Tokenizer 提注释规避字符串内 `--` 误判 + AST 提结构），25 个 SQL 脚本（sql/dwd 8 + loader 生成的 tpcdi ODS DDL 17）实测：dataset 候选 25（9 已注册）、measure 候选 42（13 已注册）、聚合 metric 候选 1（`daily_net` 账户日净额，未注册=新候选池）；主键/代理键/旗标/建库语句与窗口函数正确排除，候选不产已注册对象（known 标记防 N8），报告 `eval/reports/metadata-extract-7d48dcb.json`；候选≠发布（Day 27 人工审核）；TPC-DS 脚本随 ADR-0006 已退场，语料口径见 ADR-0006
 - [x] Day 27 审核与发布：人工审核 Day 26 抽取候选——ODS 原始层 measure 候选拒绝入分析语义层（无权威口径锚点，理由记录于发布单）、`daily_net` 未物化登记待物化；**发布 5 个可计算派生指标**到 `atlas_finance.ossie.yaml`（15→20 metrics，governance v1 active + lineage，FIBO 概念映射 +5 键 MonetaryAmount/Fee/Balance）；`make lint` 全绿；新工具 `serving/metrics_verify.py` 走真实链路（YAML 权威表达式 → Compiler → Guard → Doris）实测：平均每笔成交金额 27578.61 / 平均每笔佣金 89.57 / 佣金率 0.3247% / 户均持仓市值 1136660.85 / 户均现金余额 -32465124.70（负值系数据特性，见 Known Limitations #17），报告 `eval/reports/metrics-verify-7d48dcb.json`；发布审核判定记录 `semantic/migrations/2026-09-02-release-day27.md`
 - [x] Day 27 指标版本机制：`governance_validate.py` 新增 supersedes 链跨文件校验——取代目标存在、非自身、新版本号严格大于被取代版本（递增天然防环）、被取代者不得仍为 active、治理记录不得重名；演进规范＝新名 + supersedes 旧名（同名全局唯一由 ossie_validate 强制，N8）；契约测试 10 例 `tests/test_governance_validate.py`，CI 经 `make lint` 自动执行
 - [x] Day 27 语料扩展回归（15→20 指标文档）：bm25 Recall@1 44/44→41/44、Milvus 42/44→35/44、fuse 44/44→40/44（三路 @5 均保持 44/44；15 语料旧值 44/42/44 记录于上两行）；rerank 主链路 44/44 无损；归因与后续见 Known Limitations #18；配套修复：Doris FE 官方默认 JVM 堆 8G 吃满单机内存致全表聚合查询 OOM → compose 挂载自定义 fe.conf（`infra/docker/doris/fe.conf`，Xmx2g），FE 内存 5.5G→1.0G 实测（docker stats）
-- [x] Day 28 P1 端到端验收（`make p1-verify`，serving/p1_acceptance.py）：gold-102「按分支统计 2013 年佣金收入 Top5」全链路 = 唯一路由 → commission_revenue@v1（governance active）→ 编译断言 → Guard 注入行级策略 → Doris 实测；5 道 gates 全过：唯一路由 / @v1 / LIMIT+谓词 / **恶意 SQL 10 条全拒**（INSERT/UPDATE/DELETE/DROP/ALTER/GRANT/CREATE/sleep/pg_sleep/benchmark）/ **EX 匹配**（hq_admin 结果 sha256 = gold-102 锚定 hash）；branch_manager 只见注入分支 1 行；报告 `eval/reports/p1-chain-7d48dcb.json`、截图 `docs/screenshots/p1-chain.png`、验收记录 `docs/p1-acceptance.md`、复盘 `docs/retro-p1.md`
+- [x] Day 28 P1 端到端验收（`make p1-verify`，serving/p1_acceptance.py）：gold-102「按分支统计 2013 年佣金收入 Top5」全链路 = 唯一路由 → commission_revenue@v1（governance active）→ 编译断言 → Guard 注入行级策略 → Doris 实测；5 道 gates 全过：唯一路由 / @v1 / LIMIT+谓词 / **恶意 SQL 10 条全拒**（INSERT/UPDATE/DELETE/DROP/ALTER/GRANT/CREATE/sleep/pg_sleep/benchmark）/ **EX 匹配**（hq_admin 结果 sha256 = gold-102 锚定 hash）；branch_manager 只见注入分支 1 行；报告 `eval/reports/p1-chain-7d48dcb.json`、截图 `docs/screenshots/p1-chain.png`、验收记录 `docs/p1-acceptance.md`
 - [x] Day 29 schema linking（`make schema-link`，agent/tools/schema_linker.py）：两阶段 = 图域约束粗筛（SemanticGraph 可达性预检，跨实体错配打分前剔除）→ 受限候选域打分（子域 BM25，可选双路 RRF）→ 元数据重排（同义词置信度主键）；44 条 gold 上 **指标 Recall@1 = 44/44**（同日 BM25 全量域单路基线 41/44——KL#18 主链路修复）、@3/@5 = 44/44、表覆盖 44/44（下界验证口径，6 表域无区分度如实声明）；报告 `eval/reports/schema-link-bm25-7d48dcb.json`，契约测试 7 例 `tests/test_schema_linker.py`（含 KL#18 市值问句回归、现金×证券错配剔除）
 - [x] Day 30 compiler-only 基线（`make eval` + `make baseline`）：50 条 gold 盘存分离报告——金融段 48 条（44 可解析 + 4 歧义）全量实测 Plan Acc **44/44**、歧义反问 **4/4**、EX **44/44**（与 b47a6c1 时代锚定 hash 一致，0 失败 0 错误）、零售段 2 条如实跳过不混报；基线分析：**注册语义域内确定性链零 LLM 覆盖 48/48**（0 样本需要生成式猜测），域外边界不推断；报告 `eval/reports/7d48dcb.json` + `eval/reports/baseline-compiler-7d48dcb.json`，分析 `docs/baseline-compiler.md`；新快照 `data/snapshots/7d48dcb.meta.json`（数据指纹与 b47a6c1 一致）
 - [x] Day 31-32 LLM 策略（`make rag-eval ENGINE=openai|stub`，agent/generator.py）：Generator = 问句 → **Plan 候选**（metric/dimensions/time/top_n，SQL 一律由确定性 Compiler 生成，Guard 只兜底 Compiler 产物——最小攻击面）；Prompt 资产 `agent/prompts/generator_plan.yaml`（version/owner/changelog 契约）；stub 引擎链路自检 44/44+4/4+44/44 与基线同口径（报告 `rag-llm-stub-7d48dcb.json`，显式声明 stub 不代表 LLM 能力）；**openai 实测（2026-09-03 端点就绪）：44/44 Plan Acc + 4/4 歧义反问 + 44/44 EX + 0 拒绝**，与 compiler-only 持平（deepseek-v4-flash，99597 tokens、2564.3ms/条、$0.0179 估算——报告 `rag-llm-openai-7d48dcb.json`）；实测驱动两处修复：max_tokens 300→800（截断拒答）与维度顺序注册序规范化（gold-146 hash 口径）；公开集重新评估：Spider 判定历史对照不再新增，BIRD finance 对照待 text2sql 生成器可用（`eval/spider|bird/README.md` 阻塞与恢复登记）
@@ -188,7 +188,7 @@ make export
 - [x] Day 39 评测闭环（`make report`，eval/report.py）：**机械转述** eval/reports 八类报告 → EVAL_REPORT.md（§1 主评测…§8 来源清单），每格数字带 source 列可核对、0 个「待填写」、只聚合当前 sha（防新旧混报）；契约测试 6 例 `tests/test_report.py`；旧版占位模板 EVAL_REPORT 被真实产物替换
 - [x] Day 40 CI 回归评测（.github/workflows/eval.yml，部署目标 GitHub Actions）：push/PR 触发 plan-regression = lint + 契约测试 + **Plan Acc dry 回归**（eval.runner --dry 自洽断言，公共 runner 无数据库依赖）+ eval-data 手动 job（完整 EX，前置 compose+seed+快照）；诚实边界登记：EX 不可 CI 化（公共 runner 无 TPC-DI 数据/Doris）、prompts 变更对 dry 回归不敏感（仅被 LLM 引擎消费，待端点由 rag-eval 承接）；本地等价验证 dry 门槛通过（44/44+4/4+0 errors）；**真实执行待 push**（本地无法模拟 GitHub runner）；修复 lint.yml 最小依赖清单（mysql-connector-python/python-dotenv）
 - [x] Day 41 数据飞轮（lora/flywheel.py）：五阶段状态机 scan（复用 failure_collect 归类）→ review（人工闸口，红线）→ export（approved + answer_plan 过 validate_plan_json 双闸）→ build（子进程防泄漏过滤）→ train（子进程，blocked exit 2 如实记录）；**空转实测**（0 失败样本下 scan {} → export 0 → build exit 0 → train exit 2，state 绑定 sha 落盘 `lora/data/flywheel-state.json`——设计结论不是缺陷）；6 例契约测试 `tests/test_flywheel.py`；完整轮转截图 blocked（需失败样本 + GPU）
-- [x] Day 42 P2 验收与复盘（docs/retro-p2.md）：验收记录三件套（eval dashboard = EVAL_REPORT.md + Guard 恶意 SQL 10/10 逐条 kind 表 + 四歧义 gold 反问 4/4 结构化表）；P2 门槛复核：EVAL_REPORT 自动生成 ✓ / CI 回归（本地等价验证）✓ / 无泄漏 ✓ / 四策略数据齐全 [~]（compiler-only + RAG+LLM(openai) 实测；LoRA/LoRA+SC 两行 blocked 如实登记，2026-09-03 端点就绪后 RAG+LLM 行已解锁，见 retro-p2.md §9）
+- [x] Day 42 P2 验收：验收记录三件套（eval dashboard = EVAL_REPORT.md + Guard 恶意 SQL 10/10 逐条 kind 表 + 四歧义 gold 反问 4/4 结构化表）；P2 门槛复核：EVAL_REPORT 自动生成 ✓ / CI 回归（本地等价验证）✓ / 无泄漏 ✓ / 四策略数据齐全 [~]（compiler-only + RAG+LLM(openai) 实测；LoRA/LoRA+SC 两行 blocked 如实登记，2026-09-03 端点就绪后 RAG+LLM 行已解锁，见 Day 31-32 行）
 - [x] Day 43-49 Data Agent 端到端落地（批次 D）：LangGraph 8 节点状态机（确定性主链 plan→execute→explain + clarify/候选链/handoff 条件分支，MemorySaver 多轮会话）+ 确定性工具四件套 + MCP 风格暴露（参数校验/作用域）+ 歧义反问 4/4（gold 歧义样本）+ 确定性图表（schema 必须来自已执行结果）+ 纠错反馈入口；**5 场景端到端验收**（含恶意 SQL 拒绝与 handoff）回归记录 `docs/e2e-acceptance.md`，报告 `eval/reports/e2e-acceptance.json`，演示入口 `make ask`（多轮）与 `make e2e`（门禁）
 - [x] Day 50 OTel 全链路埋点（`observability/otel.py`，测试 7 例）：每回合一个 `atlas.turn` span——question_id（`session#tN` 可回放）/ metric_id / SQL / rows / latency / snapshot sha 全属性可追；`gen_ai.token_cost` 单位 token、仅 LLM 真消耗时产出；默认 no-op 零 I/O、埋点故障隔离、atexit flush（CLI 短进程不丢埋点，2026-09-03 实测修正）；启用：`.env` 设 `OTEL_EXPORTER_OTLP_ENDPOINT` 即自动导出
 - [x] Day 51-53 可观测栈冒烟实测（Grafana 11 + Prometheus + otel-collector，`docker compose --profile obs up -d`）：provisioning（prometheus 数据源 / 6 面板 / 4 告警）加载实测 200；**真实回合 7 条（Doris 执行 answer + clarify）→ OTLP → collector → Prometheus → Grafana datasource proxy 全链路通**，6/6 面板表达式查询 success，p95 实测 242.5ms（回合 165-376ms 分布，冒烟数据非流量基线）；修复两处实测缺陷：面板/告警 latency 指标名缺 exporter 规范化后缀 `_milliseconds`（测试改为精确形态契约锁定，`tests/test_dashboards.py` 9 例）、CLI 短进程随机 instance 致序列碎片（固定 `service.instance.id`）；token_cost 面板无序列 = 确定性链路 0 token 设计事实（KL #24），QPS rate 形态注记 KL #23
@@ -377,7 +377,7 @@ eval/
 - 评测只认当前 HEAD：启动时复核 `data/snapshots/<sha>.meta.json` 数据指纹，漂移即拒绝出报告
 - 首轮执行自动锚定：gold JSON 的 `result_hash` 占位符回填为实测 sha256（`snapshot_sha` 同步绑定），此后比对即 EX
 - 歧义样本（`ambiguous: true`）要求返回澄清反问；反问命中 = pass，不猜
-- 产出：`eval/reports/<git sha>.json`（当前 `7d48dcb`：金融段 48 例，Plan Acc 44/44、反问 4/4、EX 44/44，跨 sha 锚定 hash 未漂移；基线分析 `eval/reports/baseline-compiler-7d48dcb.json` 与 `docs/baseline-compiler.md`——注册语义域内确定性链零 LLM 覆盖 48/48；域外问题由 RAG+LLM（已实测 44/44 持平，`rag-llm-openai-7d48dcb.json`）/LoRA（blocked）策略对照承接，见 `docs/retro-p2.md`）
+- 产出：`eval/reports/<git sha>.json`（当前 `7d48dcb`：金融段 48 例，Plan Acc 44/44、反问 4/4、EX 44/44，跨 sha 锚定 hash 未漂移；基线分析 `eval/reports/baseline-compiler-7d48dcb.json` 与 `docs/baseline-compiler.md`——注册语义域内确定性链零 LLM 覆盖 48/48；域外问题由 RAG+LLM（已实测 44/44 持平，`rag-llm-openai-7d48dcb.json`）/LoRA（blocked）策略对照承接）
 - 闭环（Day 39-42 后）：`make report` → `eval/report.py` 机械转述生成 `EVAL_REPORT.md`（八节，无手写数字，每格带 source 列）；CI 回归 `.github/workflows/eval.yml`（dry Plan Acc 自洽断言；完整 EX 需数据环境，手动触发）；失败样本 `eval/failure_collect.py` 自动归类 → 人工确认 → `lora.flywheel` 五阶段进 SFT（answer 形态 = 合法 Plan JSON，ADR-0008）；LLM 实测后仍 0 失败（缺陷在评测侧修复归零），飞轮空转与 LoRA 训练（无 GPU）如实登记
 
 ### 5.4 准确率提升手段（按优先级）
@@ -460,7 +460,7 @@ atlas-data-platform/
 ├── eval/                # gold / spider / bird / runner / reports
 ├── lora/                # SQL 适配器训练与数据飞轮
 ├── infra/               # docker / ci / adr
-├── docs/                # 设计文档、逐日任务清单、术语表
+├── docs/                # 验收记录、发布文案、术语表、素材图
 └── data/snapshots/      # 固定数据快照（记录 sha，保证评测可复现）
 ```
 
@@ -528,9 +528,9 @@ atlas-data-platform/
     （跨表 join 注入未实现，属 Phase 2）
 15. **行级权限实现的两个诚实边界**：① Polaris 层为对象级（表粒度）授权，行级过滤在
     SQL 谓词层（Guard）完成，未下推给 Polaris；② TPC-DI 无地理/品类维度
-    （实测 dim_broker.Branch 为随机变造串），任务清单原文「华东区 / 某品类」零售
+    （实测 dim_broker.Branch 为随机变造串），规划原文「华东区 / 某品类」零售
     角色仅注册未实测（机制与 branch/tier 相同，零售数据装载后 rp_dept_visible
-    才可实测，见 docs/逐日任务清单.md Day 25）
+    才可实测）
 16. **Day 27 新发布指标尚无黄金用例背书**：5 个派生指标 gold_test_cases 为空、
     expected_value_snapshot_sha 未填（YAML 如实声明）；metrics-verify 的实测值只证明
     「可编译、过 Guard、可执行、值非空」，EX 与口径正确性待补黄金用例与快照绑定后
@@ -555,8 +555,7 @@ atlas-data-platform/
     （99597 tokens / 2564ms 每批均值 vs 0 token / 178.6ms），域内无增量的实证；LoRA /
     LoRA+SC 仍 blocked = macOS arm64 无 CUDA + ml 依赖未装（Day 37-38 前置检查 exit 2
     实测，LLM 端点已就绪）。所有 LoRA 相关数字 = blocked 登记（不编数字，AGENTS.md
-    N1）；解锁后 `make train`（vLLM serve + `make compare RAG_ENGINE=openai`）一键出数，
-    恢复指引见 `docs/retro-p2.md` §6/§9
+    N1）；解锁后 `make train`（vLLM serve + `make compare RAG_ENGINE=openai`）一键出数
 20. **Data Agent MVP 多轮边界（第 7 周落地，如实声明）**：同一会话仅支持连续提问 +
     每轮事实留痕与结果冲刷，不做指代消解（“它/上轮那个”）；explain 的 filters 恒空
     （Planner 无 filter 解析，见第 11 条）；handoff 仅在候选链检索 0 素材时触发，

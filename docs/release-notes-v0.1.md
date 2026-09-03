@@ -102,7 +102,7 @@ observability/   # otel.py + grafana provisioning（6 面板 / 4 告警）
 eval/            # gold 50 例 + runner + 八类报告（commit sha 绑定）
 data/fibo/       # FIBO 子集锁定 + 校验脚本（ADR-0007）
 infra/adr/       # 11 篇架构决策记录
-docs/            # 逐日任务清单 / 验收记录 / 复盘
+docs/            # 验收记录 / 发布文案 / screenshots 素材
 ```
 
 ## 6. 复现（五条命令）
@@ -114,5 +114,5 @@ make lint                      # 语义层五类校验
 make eval && make report       # 评测 + 自动报告（绑定 git sha）
 ```
 
-发布自检清单（交付门槛 17 项）见 `docs/逐日任务清单.md` 末尾；本文件不替代 README，
-README 是唯一事实源（§3.3 勾选记录为逐日实测证据）。
+发布交付门槛（17 项自检）已并入 README §3.3 勾选记录（逐日实测证据链，非新声明）；
+本文件不替代 README，README 是唯一事实源。

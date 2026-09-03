@@ -4,7 +4,7 @@
 ----
     uv run python eval/e2e_acceptance.py [--report eval/reports/e2e-<ts>.json]
 
-场景与验收口径（docs/逐日任务清单.md Day 48）
+场景与验收口径（README §3.3 Day 43-49 勾选）
     S1 正常提问  ：注册域问句 → kind=answer；Guard 出口 SQL 的表全部在锁定
                    快照白名单内；真实执行行数 ≤ SQL LIMIT
     S2 反问      ：歧义问句（eval/gold/gold-104.json 同源）→ kind=clarify，
@@ -276,7 +276,7 @@ def _main() -> int:
     ]
     report = {
         "schema_version": 1,
-        "purpose": "Day 48 端到端验收：docs/逐日任务清单.md Day 48",
+        "purpose": "Day 43-49 批次端到端验收（README §3.3）",
         "snapshot_sha": meta["sha"],
         "created_at": ts,
         "engine": "真实 Doris（eval/runner.execute_sql）+ 确定性链路（无 LLM）",

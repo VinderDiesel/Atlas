@@ -3,7 +3,7 @@
 - 日期：2026-09-03
 - 状态：accepted（落地：eval/runner.py、eval/gold/ 51 例、data/snapshots/）
 - 相关：ADR-0001（为什么用公开数据）、ADR-0006（金融场景切换）、AGENTS.md
-  第 9 节（数字与声明规范）、README 第 7/9/10 节、`docs/逐日任务清单.md`
+  第 9 节（数字与声明规范）、README 第 7/9/10 节
 
 ---
 
