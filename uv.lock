@@ -348,6 +348,7 @@ name = "atlas"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "fastapi" },
     { name = "jsonschema" },
     { name = "langchain-core" },
     { name = "langgraph" },
@@ -365,10 +366,12 @@ dependencies = [
     { name = "pymilvus" },
     { name = "pyyaml" },
     { name = "sqlglot" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -386,6 +389,8 @@ ml = [
 [package.metadata]
 requires-dist = [
     { name = "bitsandbytes", marker = "extra == 'ml'", specifier = ">=0.43" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "langchain-core", specifier = ">=0.3" },
     { name = "langgraph", specifier = ">=0.2" },
@@ -411,6 +416,7 @@ requires-dist = [
     { name = "sqlglot", specifier = ">=25.0" },
     { name = "torch", marker = "extra == 'ml'", specifier = ">=2.4" },
     { name = "transformers", marker = "extra == 'ml'", specifier = ">=4.44" },
+    { name = "uvicorn", specifier = ">=0.30" },
     { name = "vllm", marker = "extra == 'ml'", specifier = ">=0.6" },
 ]
 provides-extras = ["dev", "ml"]

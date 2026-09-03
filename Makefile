@@ -1,4 +1,4 @@
-.PHONY: help install up down seed dwd lint lint-ossie lint-governance export plan compile ask eval e2e retrieve extract-meta train report test adr rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify
+.PHONY: help install up down seed dwd lint lint-ossie lint-governance export plan compile ask eval e2e retrieve extract-meta train report test adr rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token
 
 PYTHON       ?= .venv/bin/python
 
@@ -36,6 +36,8 @@ help:
 	@echo "    make p1-verify       P1 端到端验收：gold-102 全链路 + Guard×10（Day 28）"
 	@echo "    make schema-link      schema linking 评测：指标 Recall@K + 表覆盖（Day 29）"
 	@echo "    make test            单元 + 契约测试"
+	@echo "    make serve           启动 HTTP API（uvicorn 127.0.0.1:8000，单进程）"
+	@echo "    make token           签发本地测试 JWT（ROLE 变量，如 ROLE=branch_manager）"
 	@echo "    make adr             新建 ADR（用法: make adr TITLE=\"标题\"）"
 
 install:
@@ -94,6 +96,18 @@ compile:
 # - 快照绑定当前 git HEAD meta；缺 meta 直接报错（AGENTS.md N6）
 ask:
 	uv run --env-file .env python -m agent.cli ask
+
+# ---- HTTP API 服务面（ADR-0012，serving/api.py）----
+# serve：uvicorn 单进程（默认 workers=1——checkpointer MemorySaver 与 _session_turns
+#   是进程内状态，多 worker = 会话分裂，README KL #28）；工作目录必须为仓库根
+#   （SemanticModel 加载语义层 YAML 依赖 cwd）；Ctrl-C 停止
+# token：签发本地测试 JWT（serving/auth.sign_token，需 .env ATLAS_JWT_SECRET）
+#   默认 ROLE=hq_admin；如 ROLE=branch_manager CONTEXT='{"branch": "east"}' 可覆盖
+serve:
+	uv run --env-file .env uvicorn serving.api:app --host 127.0.0.1 --port 8000
+
+token:
+	uv run --env-file .env python -c "import json, sys; from serving.auth import sign_token; print(sign_token(sys.argv[1], json.loads(sys.argv[2])))" "$(or $(ROLE),hq_admin)" "$(or $(CONTEXT),{})"
 
 # Data Agent 端到端验收门禁（eval/e2e_acceptance.py，Day 48）
 # 5 场景 + handoff：真实 Doris 逐场景断言，任一失败退出码 1

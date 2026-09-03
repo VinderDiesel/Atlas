@@ -30,25 +30,9 @@ from typing import Any
 from uuid import uuid4
 
 from agent.compiler import Compiler, Filter, OrderSpec, Plan, SemanticModel, TimeSpec
-from agent.graph import DataAgent
+from agent.factory import SnapshotUnavailable, create_live_agent
 from agent.planner import ClarificationRequest, Planner
 from agent.state import TurnResult
-
-
-def _live_agent() -> DataAgent:
-    """真实会话 Agent：只读执行器与快照绑定走 eval/runner 同源（延迟 import，
-    plan/compile 不触碰数据库）。快照 = 当前 git HEAD 的已锁 meta，缺则拒绝。"""
-    from eval.runner import SNAPSHOT_DIR, build_budget, execute_sql, git_short_sha
-
-    sha = git_short_sha()
-    meta_path = SNAPSHOT_DIR / f"{sha}.meta.json"
-    if not meta_path.is_file():
-        raise SystemExit(
-            f"[ask] 当前 HEAD {sha} 无锁定快照 meta（{meta_path}）——无法绑定评测数据；"
-            "请先 make seed 锁定快照（AGENTS.md N6）"
-        )
-    meta: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
-    return DataAgent(executor=execute_sql, budget=build_budget(meta), snapshot_meta=meta)
 
 
 def _print_turn(result: TurnResult) -> None:
@@ -81,7 +65,11 @@ def _print_turn(result: TurnResult) -> None:
 
 def cmd_ask(args: argparse.Namespace) -> int:
     """多轮问数：给定问句单轮；省略则进入交互会话（同一 session 连续多轮）。"""
-    agent = _live_agent()
+    try:
+        agent = create_live_agent()
+    except SnapshotUnavailable as exc:
+        print(f"[ask] {exc}", file=sys.stderr)
+        return 1
     if args.question is not None:
         _print_turn(agent.ask(args.question))
         return 0
