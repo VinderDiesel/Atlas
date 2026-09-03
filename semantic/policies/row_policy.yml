@@ -1,6 +1,9 @@
 # 行级权限策略：必须能编译为可解释的 SQL 谓词
 # 纵深防御：应用层过滤不算，谓词必须下推到 SQL
 # 策略名通过语义模型 custom_extensions.policy.default_row_policy 引用
+# 变更：2026-09-02 Day 25——谓词列名对齐真实 DDL（Doris 列小写：
+#   branch / brokerid / tier），compliance_auditor 条件方向改为
+#   tier <= max_tier（与描述“仅能看低敏感层”一致，原 >= min_tier 矛盾）
 
 policies:
   - name: rp_dept_visible
@@ -18,7 +21,7 @@ policies:
     default_deny: true
 
   - name: rp_branch_visible
-    description: 金融模型（TPC-DI）：用户只能看到自己分支/客户名下的数据（经 dim_broker.Branch / dim_broker.BrokerID 下推）
+    description: 金融模型（TPC-DI）：用户只能看到自己分支/客户名下的数据（谓词经 dim_broker / dim_customer 下推，注入时按编译 SQL 别名对齐）
     roles:
       - name: hq_admin
         condition: "1=1"
@@ -27,10 +30,10 @@ policies:
         condition: "dim_broker.branch = '{{ user.branch }}'"
         columns: "*"
       - name: broker
-        condition: "dim_broker.broker_id = {{ user.broker_id }}"
+        condition: "dim_broker.brokerid = {{ user.brokerid }}"
         columns: "*"
       - name: compliance_auditor
-        condition: "dim_customer.tier >= {{ user.min_tier }}"
+        condition: "dim_customer.tier <= {{ user.max_tier }}"
         columns: "*"
-        description: 合规审查按客户分层降级可见（仅能看低敏感层）
+        description: 合规审查按客户分层降级可见（仅能看 tier 不超过上限的低敏感档）
     default_deny: true

@@ -19,7 +19,7 @@
 data/fibo/
 ├── README.md          # 本文件（入库）
 ├── smoke_fibo.py      # 冒烟验证脚本（入库，可复现，AllFND 闭包）
-├── check_iris.py      # 候选概念 IRI 存在性验证（26 条权威清单）
+├── check_iris.py      # 候选概念 IRI 存在性验证（29 条权威清单）
 ├── probe_namespaces.py # 命名空间探查（找真实类名，不猜测）
 ├── validate_alignments.py # fibo_alignment 校验（ADR-0007 CI 校验点）
 ├── fibo-src/          # FIBO 仓库 sparse checkout（gitignore）
@@ -57,10 +57,28 @@ data/fibo/
    FBC 域）；AllFND 基础闭包为 55 个文件、22,730 条三元组、0.3s（rdflib 7.6.0, Python 3.11）
 4. **TBox 规模**：MVP 阶段完全可内存加载，无需推理引擎（符合 ADR-0007 L2 决策）
 
+## 覆盖审计（2026-09-03 Day 54）
+
+**方法**：以 validate_alignments.py 同口径（model 级 custom_extensions
+fibo_alignment.mappings）对 8 datasets / 20 metrics 全量比对；新增概念先经
+check_iris.py 实测存在后才入映射（诚实红线：不引用未经验证的 IRI）。
+
+| 项 | 结果 |
+|---|---|
+| 映射总数 | 22 → **31**（8 datasets/11 字段/关系 + 20 metrics 中 19 条锚定） |
+| 权威清单 | 26 → **29**（+UnitPrice / Holding / ScalarQuantity，本文件上方更新） |
+| dataset 覆盖 | 8/8（本轮补 fact_holdings → Holding，FND/OwnershipAndControl） |
+| metric 覆盖 | 19/20，唯一待办：**total_trade_tax** |
+
+**total_trade_tax 待办理由**：锁定闭包（FND+FBC+BE 子集 + Commons 20250801）中
+无贴切「交易税金额」类——候选仅 TaxIdentifier/TaxLot（税务治理概念，非金额）、
+Fee（经纪服务费，政府税语义不贴切）。补映射需先扩展闭包域（如 FBC 税务模块）
+并重跑冒烟验证，故登记待办、不硬补（2026-09-03 实测确认）。
+
 ## 语义模型映射校验（ADR-0007 CI 校验点）
 
 ```bash
-# 概念 IRI 存在性回归保护（26 条权威清单，应输出 26/26）
+# 概念 IRI 存在性回归保护（29 条权威清单，应输出 29/29）
 .venv/bin/python check_iris.py
 # 语义模型映射校验：governance schema + FIBO 闭包 IRI 存在性
 .venv/bin/python validate_alignments.py semantic/ossie/atlas_finance.ossie.yaml

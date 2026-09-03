@@ -139,17 +139,23 @@ def main() -> None:
     for name, uri in checks.items():
         present = uri in class_set
         sub = subclasses_of(g, uri)
-        print(f"    {'✅' if present else '❌'} {name}: label='{label_of(g, uri)}' "
-              f"| 直接子类 {len(sub)} 个 | definition: {definition_of(g, uri)}")
+        print(
+            f"    {'✅' if present else '❌'} {name}: label='{label_of(g, uri)}' "
+            f"| 直接子类 {len(sub)} 个 | definition: {definition_of(g, uri)}"
+        )
         for s in sub[:5]:
             print(f"        ↳ {label_of(g, s)}  ({s.split('/')[-1]})")
 
     # 派生类传递闭包示例：Organization → FormalOrganization → ...
-    fo = URIRef("https://spec.edmcouncil.org/fibo/ontology/FND/Organizations/FormalOrganizations/FormalOrganization")
+    fo = URIRef(
+        "https://spec.edmcouncil.org/fibo/ontology/FND/Organizations/FormalOrganizations/FormalOrganization"
+    )
     if fo in class_set:
         chain = subclasses_of(g, fo)
-        print(f"    ✅ FormalOrganization 直接子类 {len(chain)} 个："
-              + ", ".join(label_of(g, s) for s in chain[:8]))
+        print(
+            f"    ✅ FormalOrganization 直接子类 {len(chain)} 个："
+            + ", ".join(label_of(g, s) for s in chain[:8])
+        )
 
     print(f"\n总计耗时 {time.time() - t0:.1f}s")
 

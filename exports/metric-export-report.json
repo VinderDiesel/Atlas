@@ -1,0 +1,46 @@
+{
+  "ossie_file": "semantic/ossie/atlas_finance.ossie.yaml",
+  "sha": "7d48dcb",
+  "model_name": "atlas_finance_analytics",
+  "metric_total": 20,
+  "mapped": {
+    "agg": [
+      "commission_revenue",
+      "holdings_value",
+      "cash_balance",
+      "trade_count",
+      "active_account_count",
+      "total_trade_quantity",
+      "total_trade_tax",
+      "traded_security_count",
+      "active_customer_count",
+      "holdings_quantity",
+      "holding_account_count",
+      "holding_security_count",
+      "cash_account_count",
+      "avg_trade_price"
+    ],
+    "ratio": [
+      "average_commission_per_trade",
+      "average_holding_value",
+      "average_cash_balance"
+    ]
+  },
+  "unmapped": [
+    {
+      "name": "total_trade_value",
+      "sql": "SUM(fact_trades.Quantity * fact_trades.TradePrice)",
+      "reason": "聚合内为运算/表达式，非单列（需 dbt 模型层物化列）"
+    },
+    {
+      "name": "average_trade_value",
+      "sql": "SUM(fact_trades.Quantity * fact_trades.TradePrice) / COUNT(fact_trades.TradeID)",
+      "reason": "含非单列聚合的组合表达式（先乘后加等），MetricFlow measure 无法表达，需 dbt 模型层物化"
+    },
+    {
+      "name": "commission_rate",
+      "sql": "SUM(fact_trades.Commission) / SUM(fact_trades.Quantity * fact_trades.TradePrice)",
+      "reason": "含非单列聚合的组合表达式（先乘后加等），MetricFlow measure 无法表达，需 dbt 模型层物化"
+    }
+  ]
+}

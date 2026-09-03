@@ -56,6 +56,7 @@ def load_graph() -> Graph:
                 queue.append(resolved)
     return g
 
+
 CANDIDATES = {
     # 基础概念（Commons / FND，FIBO 2.0 已下沉至 OMG Commons）
     "cmns-pts:Party": "https://www.omg.org/spec/Commons/PartiesAndSituations/Party",
@@ -69,6 +70,7 @@ CANDIDATES = {
     "fibo-fnd-pty-pty:Person": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/Person",
     "fibo-fnd-agr-ctr:Contract": "https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Contracts/Contract",
     "fibo-fnd-acc-cur:MonetaryAmount": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+    "fibo-fnd-acc-cur:UnitPrice": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/UnitPrice",
     # 交易 / 账户 / 证券 / 机构（FBC / FND 域，需扩展种子引入）
     "fibo-fnd-txn-mkt:MarketTransaction": "https://spec.edmcouncil.org/fibo/ontology/FND/TransactionsExt/MarketTransactions/MarketTransaction",
     "fibo-fnd-txn-mkt:TransactionCounterparty": "https://spec.edmcouncil.org/fibo/ontology/FND/TransactionsExt/MarketTransactions/TransactionCounterparty",
@@ -85,6 +87,11 @@ CANDIDATES = {
     "fibo-fbc-fse:BrokerageFirm": "https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/FinancialServicesEntities/BrokerageFirm",
     "fibo-be-fe:FunctionalEntity": "https://spec.edmcouncil.org/fibo/ontology/BE/FunctionalEntities/FunctionalEntities/FunctionalEntity",
     "fibo-fnd-plc-adr:Address": "https://spec.edmcouncil.org/fibo/ontology/FND/Places/Addresses/Address",
+    # 2026-09-03 Day 54 FIBO 覆盖审计补充（此前 9 缺口指标/dataset 的概念锚点）：
+    #   avg_trade_price → UnitPrice（单位价格）；fact_holdings → Holding（FND 所有权）
+    #   total_trade_quantity / holdings_quantity → ScalarQuantity（Commons 标量数量）
+    "fibo-fnd-oac-own:Holding": "https://spec.edmcouncil.org/fibo/ontology/FND/OwnershipAndControl/Ownership/Holding",
+    "cmns-qtu:ScalarQuantity": "https://www.omg.org/spec/Commons/QuantitiesAndUnits/ScalarQuantity",
 }
 
 

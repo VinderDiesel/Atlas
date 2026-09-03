@@ -14,6 +14,13 @@
 # ⚠️ 0.2.0.dev0 为 DRAFT，schema 可能变化。锁定时需在 README 记录具体 commit sha。
 # 2026-09-02 修改：指标 6 → 15（P0 门槛），新增成交量/交易税/证券数/客户数/持仓量/
 #   持仓账户数/现金账户数/平均成交价，全部基于既有事实表可聚合列，同义词已做冲突预检。
+# 2026-09-02 修改：15 指标治理补齐（11 个新指标补 ATLAS custom_extensions），
+#   quality.gold_test_cases 与 eval/gold 引用集双向对齐（governance_validate 强制），
+#   修正 cash_balance 错位引用（gold-102 实为 commission_revenue 用例）。
+
+# 2026-09-03 修改：指标 15 → 20（第二批 P0 扩展），FIBO 覆盖审计补齐 9 条映射
+#   （22 → 31；概念清单 26 → 29，见 data/fibo/README.md 审计节）。
+#   total_trade_tax 因锁定闭包无贴切税务金额类，登记为待办（不硬补）。
 
 version: "0.2.0.dev0"
 
@@ -200,6 +207,104 @@ semantic_model:
                   "confidence": "high",
                   "verified_at": "2026-09-02",
                   "note": "活跃账户数是对经纪账户的计数"
+                },
+                "metric:average_trade_value": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "每笔成交金额的量纲是货币金额（Day 27 审核发布）"
+                },
+                "metric:average_commission_per_trade": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "每笔佣金属于经纪服务 Fee（Day 27 审核发布）"
+                },
+                "metric:commission_rate": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+                  "match_type": "related",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "佣金率是 Fee 相对成交金额的占比，量纲为比率（Day 27 审核发布）"
+                },
+                "metric:average_holding_value": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+                  "match_type": "related",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "户均持仓市值按货币金额度量（Day 27 审核发布）"
+                },
+                "metric:average_cash_balance": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Balance",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-02",
+                  "note": "户均现金余额即账户 Balance（Day 27 审核发布）"
+                },
+                "fact_holdings": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/OwnershipAndControl/Ownership/Holding",
+                  "match_type": "broad_match",
+                  "confidence": "medium",
+                  "verified_at": "2026-09-03",
+                  "note": "持仓快照行=账户对证券的权益（Holding=owned financial interest）；MD 域细粒度持仓本体仍未纳入子集"
+                },
+                "metric:total_trade_quantity": {
+                  "concept": "https://www.omg.org/spec/Commons/QuantitiesAndUnits/ScalarQuantity",
+                  "match_type": "related",
+                  "confidence": "medium",
+                  "verified_at": "2026-09-03",
+                  "note": "成交量=带单位（股）的标量数量；闭包扩展 QUDT QuantityValue 后可升级"
+                },
+                "metric:holdings_quantity": {
+                  "concept": "https://www.omg.org/spec/Commons/QuantitiesAndUnits/ScalarQuantity",
+                  "match_type": "related",
+                  "confidence": "medium",
+                  "verified_at": "2026-09-03",
+                  "note": "持仓量=带单位（股）的标量数量（口径同上）"
+                },
+                "metric:traded_security_count": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+                  "match_type": "related",
+                  "confidence": "high",
+                  "verified_at": "2026-09-03",
+                  "note": "成交证券数=对证券的去重计数"
+                },
+                "metric:holding_security_count": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+                  "match_type": "related",
+                  "confidence": "high",
+                  "verified_at": "2026-09-03",
+                  "note": "持仓证券数=对证券的去重计数"
+                },
+                "metric:active_customer_count": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/Person",
+                  "match_type": "related",
+                  "confidence": "high",
+                  "verified_at": "2026-09-03",
+                  "note": "活跃客户数=对客户（自然人）的去重计数"
+                },
+                "metric:holding_account_count": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+                  "match_type": "related",
+                  "confidence": "high",
+                  "verified_at": "2026-09-03",
+                  "note": "持仓账户数=持有证券的经纪账户去重计数"
+                },
+                "metric:cash_account_count": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+                  "match_type": "related",
+                  "confidence": "high",
+                  "verified_at": "2026-09-03",
+                  "note": "现金账户=有现金余额的经纪账户（锁定闭包无 CashAccount 类）"
+                },
+                "metric:avg_trade_price": {
+                  "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/UnitPrice",
+                  "match_type": "broad_match",
+                  "confidence": "high",
+                  "verified_at": "2026-09-03",
+                  "note": "平均成交价=每股成交单价（UnitPrice=相对计量单位的货币价格）"
                 }
               }
             }
@@ -1063,7 +1168,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-101"],
+                  "gold_test_cases": ["gold-101", "gold-116", "gold-123", "gold-124", "gold-141", "gold-146"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }
@@ -1095,7 +1200,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-102"],
+                  "gold_test_cases": ["gold-102", "gold-119", "gold-127", "gold-140"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }
@@ -1127,7 +1232,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-103"],
+                  "gold_test_cases": ["gold-103", "gold-134", "gold-142"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }
@@ -1159,7 +1264,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-102"],
+                  "gold_test_cases": ["gold-114", "gold-139", "gold-143"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }
@@ -1176,6 +1281,25 @@ semantic_model:
             - "交易笔数"
             - "交易数量"
             - "成交笔数"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.TradeID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-115", "gold-133", "gold-145"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
 
       - name: active_account_count
         description: 活跃账户数（当期有成交的账户去重）
@@ -1189,6 +1313,25 @@ semantic_model:
             - "活跃账户数"
             - "交易账户数"
             - "动账账户数"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.SK_AccountID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-120", "gold-132"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
 
       - name: total_trade_quantity
         description: 总成交量（成交数量合计，股/份）
@@ -1201,6 +1344,25 @@ semantic_model:
           synonyms:
             - "成交量"
             - "总成交量"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.Quantity"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-105", "gold-117", "gold-125", "gold-126", "gold-144"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
 
       - name: total_trade_tax
         description: 交易税合计（证券交易税，美元）
@@ -1213,6 +1375,25 @@ semantic_model:
           synonyms:
             - "交易税"
             - "交易税费"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.Tax"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-106", "gold-118", "gold-128", "gold-147"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
 
       - name: traded_security_count
         description: 成交证券数（期内有成交的去重证券数）
@@ -1225,6 +1406,25 @@ semantic_model:
           synonyms:
             - "成交证券数"
             - "成交标的数"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.SK_SecurityID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-107", "gold-130"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
 
       - name: active_customer_count
         description: 活跃客户数（期内有成交的去重客户数）
@@ -1237,6 +1437,25 @@ semantic_model:
           synonyms:
             - "活跃客户数"
             - "动账客户数"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.SK_CustomerID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-108", "gold-131"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
 
       - name: holdings_quantity
         description: 持仓总量（快照日全部持仓数量合计）
@@ -1249,6 +1468,25 @@ semantic_model:
           synonyms:
             - "持仓量"
             - "总持仓量"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_holdings.CurrentQty"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-109", "gold-135"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
 
       - name: holding_account_count
         description: 持仓账户数（快照日有持仓的去重账户数）
@@ -1260,6 +1498,25 @@ semantic_model:
         ai_context:
           synonyms:
             - "持仓账户数"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_holdings.SK_AccountID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-110", "gold-136"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
 
       - name: holding_security_count
         description: 持仓证券数（快照日被持有的去重证券数）
@@ -1272,6 +1529,25 @@ semantic_model:
           synonyms:
             - "持仓证券数"
             - "持仓标的数"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_holdings.SK_SecurityID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-111", "gold-137"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
 
       - name: cash_account_count
         description: 有余额账户数（快照日有现金余额记录的去重账户数）
@@ -1284,6 +1560,25 @@ semantic_model:
           synonyms:
             - "有余额账户数"
             - "现金账户数"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_cash_balances.SK_AccountID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-112", "gold-138"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
 
       - name: avg_trade_price
         description: 平均成交价（成交单价的简单平均，美元）
@@ -1296,3 +1591,178 @@ semantic_model:
           synonyms:
             - "平均成交价"
             - "成交均价"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.TradePrice"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": ["gold-113", "gold-129"],
+                  "expected_value_snapshot_sha": "<待填写>"
+                }
+              }
+
+      - name: average_trade_value
+        description: 平均每笔成交金额（总成交额 / 成交笔数，美元）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_trades.Quantity * fact_trades.TradePrice) / COUNT(fact_trades.TradeID)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "平均每笔成交金额"
+            - "笔均成交金额"
+            - "平均单笔交易额"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.Quantity", "fact_trades.TradePrice", "fact_trades.TradeID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": [],
+                  "expected_value_snapshot_sha": null
+                }
+              }
+
+      - name: average_commission_per_trade
+        description: 平均每笔佣金（佣金收入合计 / 成交笔数，美元）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_trades.Commission) / COUNT(fact_trades.TradeID)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "平均每笔佣金"
+            - "笔均佣金"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.Commission", "fact_trades.TradeID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": [],
+                  "expected_value_snapshot_sha": null
+                }
+              }
+
+      - name: commission_rate
+        description: 佣金率（佣金收入 / 成交金额，无单位比率）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_trades.Commission) / SUM(fact_trades.Quantity * fact_trades.TradePrice)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "佣金率"
+            - "佣金费率"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_trades.Commission", "fact_trades.Quantity", "fact_trades.TradePrice"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": [],
+                  "expected_value_snapshot_sha": null
+                }
+              }
+
+      - name: average_holding_value
+        description: 平均每账户持仓市值（持仓总市值 / 有持仓的去重账户数，美元）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_holdings.CurrentValue) / COUNT(DISTINCT fact_holdings.SK_AccountID)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "平均持仓市值"
+            - "户均持仓市值"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_holdings.CurrentValue", "fact_holdings.SK_AccountID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": [],
+                  "expected_value_snapshot_sha": null
+                }
+              }
+
+      - name: average_cash_balance
+        description: 平均每账户现金余额（现金余额合计 / 有余额的去重账户数，美元）
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(fact_cash_balances.Cash) / COUNT(DISTINCT fact_cash_balances.SK_AccountID)
+        datatype: Decimal
+        ai_context:
+          synonyms:
+            - "平均账户余额"
+            - "户均现金余额"
+        custom_extensions:
+          - vendor_name: ATLAS
+            data: |
+              {
+                "governance": {
+                  "owner": "finance@atlas.local",
+                  "version": 1,
+                  "status": "active",
+                  "supersedes": null
+                },
+                "lineage": {
+                  "source_columns": ["fact_cash_balances.Cash", "fact_cash_balances.SK_AccountID"],
+                  "dependencies": []
+                },
+                "quality": {
+                  "gold_test_cases": [],
+                  "expected_value_snapshot_sha": null
+                }
+              }

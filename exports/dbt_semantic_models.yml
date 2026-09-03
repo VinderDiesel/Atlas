@@ -1,0 +1,229 @@
+# 由 semantic/export_dbt.py 生成的 dbt MetricFlow YAML（自动产物，勿手改）
+# 源：semantic/ossie/atlas_finance.ossie.yaml（git sha 7d48dcb）
+# 映射口径（诚实注记）：Ossie 为 expression-carrying，MetricFlow 为
+# measure-centric——agg/ratio 态为原生表达；unmapped 态（含 SUM(a*b)
+# 先乘后加）MetricFlow measure 无法表达，需 dbt 模型层物化乘积列，
+# 逐条理由见 exports/metric-export-report.json。
+# 时间维度粒度：Ossie 未声明 granularity，本导出不伪造时间维度；
+# dbt 侧需按目标模型声明（见导出报告注记）。
+# 源指标合计 20：mapped 17（agg 14 + ratio 3），unmapped 3。
+semantic_models:
+- name: fact_trades
+  description: 证券交易事实（TPC-DI dim_trade 中的成交记录），每行一笔已执行交易
+  model: ref('fact_trades')
+  dimensions: []
+  measures:
+  - name: fact_trades_Commission_sum
+    agg: sum
+    expr: Commission
+  - name: fact_trades_TradeID_count
+    agg: count
+    expr: TradeID
+  - name: fact_trades_SK_AccountID_count_distinct
+    agg: count_distinct
+    expr: SK_AccountID
+  - name: fact_trades_Quantity_sum
+    agg: sum
+    expr: Quantity
+  - name: fact_trades_Tax_sum
+    agg: sum
+    expr: Tax
+  - name: fact_trades_SK_SecurityID_count_distinct
+    agg: count_distinct
+    expr: SK_SecurityID
+  - name: fact_trades_SK_CustomerID_count_distinct
+    agg: count_distinct
+    expr: SK_CustomerID
+  - name: fact_trades_TradePrice_average
+    agg: average
+    expr: TradePrice
+- name: fact_holdings
+  description: 持仓事实（账户在某日的持仓快照）
+  model: ref('fact_holdings')
+  dimensions: []
+  measures:
+  - name: fact_holdings_CurrentValue_sum
+    agg: sum
+    expr: CurrentValue
+  - name: fact_holdings_CurrentQty_sum
+    agg: sum
+    expr: CurrentQty
+  - name: fact_holdings_SK_AccountID_count_distinct
+    agg: count_distinct
+    expr: SK_AccountID
+  - name: fact_holdings_SK_SecurityID_count_distinct
+    agg: count_distinct
+    expr: SK_SecurityID
+- name: fact_cash_balances
+  description: 现金余额事实（账户每日余额）
+  model: ref('fact_cash_balances')
+  dimensions: []
+  measures:
+  - name: fact_cash_balances_Cash_sum
+    agg: sum
+    expr: Cash
+  - name: fact_cash_balances_SK_AccountID_count_distinct
+    agg: count_distinct
+    expr: SK_AccountID
+- name: dim_account
+  description: 账户维度（含状态与税务类型）
+  model: ref('dim_account')
+  dimensions:
+  - name: SK_AccountID
+    type: categorical
+  - name: SK_BrokerID
+    type: categorical
+  - name: SK_CustomerID
+    type: categorical
+  - name: Status
+    type: categorical
+  - name: TaxStatus
+    type: categorical
+  measures: []
+- name: dim_customer
+  description: 客户维度（含分层与财富属性）
+  model: ref('dim_customer')
+  dimensions:
+  - name: SK_CustomerID
+    type: categorical
+  - name: Tier
+    type: categorical
+  - name: Gender
+    type: categorical
+  - name: NetWorth
+    type: categorical
+  - name: CreditRating
+    type: categorical
+  measures: []
+- name: dim_security
+  description: 证券维度（股票/基金等）
+  model: ref('dim_security')
+  dimensions:
+  - name: SK_SecurityID
+    type: categorical
+  - name: Symbol
+    type: categorical
+  - name: Issue
+    type: categorical
+  - name: ExchangeID
+    type: categorical
+  - name: Name
+    type: categorical
+  - name: Dividend
+    type: categorical
+  measures: []
+- name: dim_broker
+  description: 经纪人维度（含所属分支）
+  model: ref('dim_broker')
+  dimensions:
+  - name: SK_BrokerID
+    type: categorical
+  - name: BrokerID
+    type: categorical
+  - name: Branch
+    type: categorical
+  - name: Office
+    type: categorical
+  measures: []
+- name: dim_date
+  description: 日期维度表
+  model: ref('dim_date')
+  dimensions:
+  - name: SK_DateID
+    type: categorical
+  - name: CalendarYearID
+    type: categorical
+  - name: CalendarMonthID
+    type: categorical
+  - name: CalendarQtrID
+    type: categorical
+  measures: []
+metrics:
+- name: commission_revenue
+  description: 佣金收入合计（经纪服务费）
+  type: agg
+  type_params:
+    measure: fact_trades_Commission_sum
+- name: holdings_value
+  description: 持仓市值合计（持仓快照的当前市值）
+  type: agg
+  type_params:
+    measure: fact_holdings_CurrentValue_sum
+- name: cash_balance
+  description: 现金余额合计（账户当日现金余额）
+  type: agg
+  type_params:
+    measure: fact_cash_balances_Cash_sum
+- name: trade_count
+  description: 交易笔数
+  type: agg
+  type_params:
+    measure: fact_trades_TradeID_count
+- name: active_account_count
+  description: 活跃账户数（当期有成交的账户去重）
+  type: agg
+  type_params:
+    measure: fact_trades_SK_AccountID_count_distinct
+- name: total_trade_quantity
+  description: 总成交量（成交数量合计，股/份）
+  type: agg
+  type_params:
+    measure: fact_trades_Quantity_sum
+- name: total_trade_tax
+  description: 交易税合计（证券交易税，美元）
+  type: agg
+  type_params:
+    measure: fact_trades_Tax_sum
+- name: traded_security_count
+  description: 成交证券数（期内有成交的去重证券数）
+  type: agg
+  type_params:
+    measure: fact_trades_SK_SecurityID_count_distinct
+- name: active_customer_count
+  description: 活跃客户数（期内有成交的去重客户数）
+  type: agg
+  type_params:
+    measure: fact_trades_SK_CustomerID_count_distinct
+- name: holdings_quantity
+  description: 持仓总量（快照日全部持仓数量合计）
+  type: agg
+  type_params:
+    measure: fact_holdings_CurrentQty_sum
+- name: holding_account_count
+  description: 持仓账户数（快照日有持仓的去重账户数）
+  type: agg
+  type_params:
+    measure: fact_holdings_SK_AccountID_count_distinct
+- name: holding_security_count
+  description: 持仓证券数（快照日被持有的去重证券数）
+  type: agg
+  type_params:
+    measure: fact_holdings_SK_SecurityID_count_distinct
+- name: cash_account_count
+  description: 有余额账户数（快照日有现金余额记录的去重账户数）
+  type: agg
+  type_params:
+    measure: fact_cash_balances_SK_AccountID_count_distinct
+- name: avg_trade_price
+  description: 平均成交价（成交单价的简单平均，美元）
+  type: agg
+  type_params:
+    measure: fact_trades_TradePrice_average
+- name: average_commission_per_trade
+  description: 平均每笔佣金（佣金收入合计 / 成交笔数，美元）
+  type: ratio
+  type_params:
+    numerator: fact_trades_Commission_sum
+    denominator: fact_trades_TradeID_count
+- name: average_holding_value
+  description: 平均每账户持仓市值（持仓总市值 / 有持仓的去重账户数，美元）
+  type: ratio
+  type_params:
+    numerator: fact_holdings_CurrentValue_sum
+    denominator: fact_holdings_SK_AccountID_count_distinct
+- name: average_cash_balance
+  description: 平均每账户现金余额（现金余额合计 / 有余额的去重账户数，美元）
+  type: ratio
+  type_params:
+    numerator: fact_cash_balances_Cash_sum
+    denominator: fact_cash_balances_SK_AccountID_count_distinct
