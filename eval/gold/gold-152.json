@@ -1,0 +1,50 @@
+{
+  "id": "gold-152",
+  "question": "2015 年按分支和客户等级统计交易额，交易额超过 1 亿的取前 5 名",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [
+    "Tier",
+    "Branch"
+  ],
+  "expected_time": "2015",
+  "expected_sql": "SELECT dc.Tier AS tier, db.Branch AS branch, SUM(ft.Quantity * ft.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_customer dc ON ft.SK_CustomerID = dc.SK_CustomerID JOIN atlas.dwd.dim_broker db ON ft.SK_BrokerID = db.SK_BrokerID WHERE dd.CalendarYearID = 2015 GROUP BY dc.Tier, db.Branch HAVING SUM(ft.Quantity * ft.TradePrice) > 100000000 ORDER BY total_trade_value DESC LIMIT 5",
+  "expected_filters": [
+    {
+      "column": "total_trade_value",
+      "op": ">",
+      "value": 100000000
+    }
+  ],
+  "result_hash": null,
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "filter",
+    "metric_threshold",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "度量阈值载体（HAVING 语义）"
+    },
+    {
+      "term": "客户等级",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/Person",
+      "role": "dimension",
+      "note": "客户等级是客户的分类属性"
+    },
+    {
+      "term": "分支",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "营业部/分支是组织的子单元（OMG Commons）"
+    }
+  ]
+}

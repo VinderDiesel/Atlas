@@ -110,12 +110,24 @@ def time_key(time: TimeSpec | None) -> str | None:
 
 
 def plan_acc(plan: Plan, gold: dict[str, Any]) -> bool:
-    """Plan Acc：metric/dimensions/time 三键与人工标注一致。"""
+    """Plan Acc：metric/dimensions/time/filters 与人工标注一致。
+
+    expected_filters 缺省（null）时跳过 filters 比对（兼容 KL #11 时代无 filter
+    语义的旧样本）；提供后要求与解析出的 filters 完全一致（ADR-0014 ① 载体）。
+    """
     expected_time = gold.get("expected_time")
+    expected_filters = gold.get("expected_filters")
+    filters_match = True
+    if expected_filters is not None:
+        actual = [
+            {"column": f.column, "op": f.op, "value": f.value} for f in plan.filters
+        ]
+        filters_match = actual == expected_filters
     return (
         plan.metric == gold.get("expected_metric")
         and plan.dimensions == tuple(gold.get("expected_dimensions", []))
         and time_key(plan.time) == expected_time
+        and filters_match
     )
 
 

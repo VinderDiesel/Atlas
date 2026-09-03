@@ -1,0 +1,39 @@
+{
+  "id": "gold-149",
+  "question": "只看分支 IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD 的 2013 年佣金收入是多少？",
+  "expected_metric": "commission_revenue",
+  "expected_dimensions": [],
+  "expected_time": "2013",
+  "expected_sql": "SELECT SUM(ft.Commission) AS commission_revenue FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_broker db ON ft.SK_BrokerID = db.SK_BrokerID WHERE dd.CalendarYearID = 2013 AND db.Branch = 'IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD' LIMIT 100",
+  "expected_filters": [
+    {
+      "column": "Branch",
+      "op": "=",
+      "value": "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"
+    }
+  ],
+  "result_hash": null,
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "filter",
+    "equality_filter",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "佣金收入",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+      "role": "measure",
+      "note": "佣金是经纪服务收取的费用"
+    },
+    {
+      "term": "分支",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "过滤载体：分支名取 TPC-DI 变造实测值"
+    }
+  ]
+}

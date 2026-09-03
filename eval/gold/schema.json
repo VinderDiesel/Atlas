@@ -11,6 +11,19 @@
     "expected_dimensions": { "type": "array", "items": { "type": "string" } },
     "expected_time": { "type": ["string", "null"], "description": "如 last_month / last_7_days / yoy / 2013Q2" },
     "expected_sql": { "type": ["string", "null"], "description": "人工标注的参考 SQL，必须带 LIMIT 与时间范围约束" },
+    "expected_filters": {
+      "type": ["array", "null"],
+      "description": "人工标注的期望过滤条件（filter 解析评测载体，ADR-0014）：column 为语义层字段名（维度语义名或 metric 名），op ∈ = != < <= > >=，value 为字面值（字符串/数值）；缺省 null 表示无 filter（兼容 KL #11 时代旧样本），提供后要求与解析结果完全一致",
+      "items": {
+        "type": "object",
+        "required": ["column", "op", "value"],
+        "properties": {
+          "column": { "type": "string" },
+          "op": { "type": "string", "enum": ["=", "!=", "<", "<=", ">", ">="] },
+          "value": { "description": "过滤字面值（字符串或数值）" }
+        }
+      }
+    },
     "result_hash": { "type": ["string", "null"], "description": "固定快照下执行结果的哈希" },
     "snapshot_sha": { "type": "string", "description": "数据快照 git sha，保证可复现" },
     "tags": { "type": "array", "items": { "type": "string" } },

@@ -1,0 +1,43 @@
+{
+  "id": "gold-154",
+  "question": "2014 年佣金收入低于 50 万的分支，列出前 5 名",
+  "expected_metric": "commission_revenue",
+  "expected_dimensions": [
+    "Branch"
+  ],
+  "expected_time": "2014",
+  "expected_sql": "SELECT db.Branch AS branch, SUM(ft.Commission) AS commission_revenue FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_broker db ON ft.SK_BrokerID = db.SK_BrokerID WHERE dd.CalendarYearID = 2014 GROUP BY db.Branch HAVING SUM(ft.Commission) < 500000 ORDER BY commission_revenue DESC LIMIT 5",
+  "expected_filters": [
+    {
+      "column": "commission_revenue",
+      "op": "<",
+      "value": 500000
+    }
+  ],
+  "result_hash": null,
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "filter",
+    "metric_threshold",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "佣金收入",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+      "role": "measure",
+      "note": "度量阈值下界载体（HAVING 语义，< 方向）"
+    },
+    {
+      "term": "分支",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "营业部/分支是组织的子单元（OMG Commons）"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "id": "gold-150",
+  "question": "排除分支 IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD 后，2013 年总成交量是多少？",
+  "expected_metric": "total_trade_quantity",
+  "expected_dimensions": [],
+  "expected_time": "2013",
+  "expected_sql": "SELECT SUM(ft.Quantity) AS total_trade_quantity FROM atlas.dwd.fact_trades ft JOIN atlas.dwd.dim_date dd ON ft.SK_CreateDateID = dd.SK_DateID JOIN atlas.dwd.dim_broker db ON ft.SK_BrokerID = db.SK_BrokerID WHERE dd.CalendarYearID = 2013 AND db.Branch != 'IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD' LIMIT 100",
+  "expected_filters": [
+    {
+      "column": "Branch",
+      "op": "!=",
+      "value": "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"
+    }
+  ],
+  "result_hash": null,
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "aggregation",
+    "filter",
+    "exclusion_filter",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "总成交量",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "成交量 = 成交证券数量合计（SUM(Quantity)）"
+    },
+    {
+      "term": "证券",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+      "role": "entity",
+      "note": "成交对象为证券"
+    },
+    {
+      "term": "分支",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "排除过滤载体：分支名取 TPC-DI 变造实测值"
+    }
+  ]
+}

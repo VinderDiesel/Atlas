@@ -1,0 +1,33 @@
+{
+  "id": "gold-155",
+  "question": "只看核心分支的 2013 年佣金收入是多少？",
+  "expected_metric": null,
+  "expected_dimensions": [],
+  "expected_time": null,
+  "expected_sql": null,
+  "expected_filters": null,
+  "result_hash": null,
+  "snapshot_sha": "b47a6c1",
+  "tags": [
+    "ambiguous",
+    "clarification",
+    "filter",
+    "fibo_alignment"
+  ],
+  "ambiguous": true,
+  "clarification": "需要澄清：「核心分支」无法对应到已注册的分支名称或同义词——请给出具体分支名后再统计。",
+  "fibo_concepts": [
+    {
+      "term": "佣金收入",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+      "role": "measure",
+      "note": "歧义用例：指标已明确，过滤值模糊触发反问（filter 值无法命中同义词）"
+    },
+    {
+      "term": "核心分支",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "「核心」无注册同义词映射，过滤值无法唯一确定"
+    }
+  ]
+}
