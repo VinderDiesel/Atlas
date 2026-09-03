@@ -85,7 +85,7 @@ Atlas 是一个**以真实可落地为目标构建的金融语义数据系统**�
 ├──────────────────────────────────────────────────────────────┤
 │  Apache Doris 4.1（OLAP，原生 Iceberg catalog）               │
 │  Apache Iceberg V2 on MinIO（湖仓表格式，Time Travel）        │
-│  Apache Polaris（REST Catalog + RBAC，行级权限下推）          │
+│  Apache Polaris（REST Catalog + 对象级 RBAC；行级在 Guard 谓词层）│
 │  PostgreSQL（元数据/策略）+ Milvus（向量）+ NetworkX（图）    │
 ├──────────────────────────────────────────────────────────────┤
 │  Spark / Trino；对象存储；Docker Compose；CI/CD               │
@@ -194,6 +194,9 @@ make export
 - [x] Day 51-53 可观测栈冒烟实测（Grafana 11 + Prometheus + otel-collector，`docker compose --profile obs up -d`）：provisioning（prometheus 数据源 / 6 面板 / 4 告警）加载实测 200；**真实回合 7 条（Doris 执行 answer + clarify）→ OTLP → collector → Prometheus → Grafana datasource proxy 全链路通**，6/6 面板表达式查询 success，p95 实测 242.5ms（回合 165-376ms 分布，冒烟数据非流量基线）；修复两处实测缺陷：面板/告警 latency 指标名缺 exporter 规范化后缀 `_milliseconds`（测试改为精确形态契约锁定，`tests/test_dashboards.py` 9 例）、CLI 短进程随机 instance 致序列碎片（固定 `service.instance.id`）；token_cost 面板无序列 = 确定性链路 0 token 设计事实（KL #24），QPS rate 形态注记 KL #23
 - [x] Day 52 ADR 补全三篇（0009 LangGraph 框架取舍 / 0010 评测方法论 / 0011 安全三层纵深），0005 增补推翻条件，累计 11 篇；rbac-verify 实测通过（Polaris analyst 对 fact_trades/列表目录均 Forbidden，报告 `polaris-rbac-7d48dcb.json`）——ADR-0011 按实测修正口径
 - [x] Day 53 `make export` 实测（`semantic/export_dbt.py` + 契约测试 7 例）：Ossie 20 指标 → dbt MetricFlow YAML 三态如实映射——**agg 14**（单列聚合→measure）/ **ratio 3**（分子/分母 measure）/ **unmapped 3**（`SUM(a*b)` 先乘后加，MetricFlow measure 无法表达，逐条登记理由不伪造等价物）；产物 `exports/dbt_semantic_models.yml` + `exports/metric-export-report.json`（绑定 git sha 7d48dcb）
+- [x] 2026-09-03 filter 自然语言解析批次（ADR-0014 ①，评测先行 gold-149~155 已落库）：维度等值/排除 → WHERE、度量阈值 → HAVING（上/下界双向），时间词不并入 filter；语义层 gold_test_cases 双向引用补齐（lint-governance 强制）；扩张后全量实测 **Plan Acc 50/50、歧义反问 5/5、EX 50/50、0 执行错误**（报告 `eval/reports/a207284.json`，快照 `a207284.meta.json` 指纹与 b7e9ce7 一致）；契约测试 +16（planner/compiler）
+- [x] 2026-09-03 指代消解 MVP + e2e 多轮追问（ADR-0014 ②，commit 341d7d7/bca94c5）：会话追问仅“同 metric 换时间/换维度”结构补全（链接词“那…呢/换成/按…呢/改为”，复用上轮 last_plan），自由代词与指代不明 → 澄清不猜测（契约测试 16 例）；e2e 场景 **7/7 实测通过**（S7「那 2014 年呢」多轮同构追问 + Guard 行级结果一致断言，报告 `eval/reports/e2e-acceptance.json`）
+- [x] 2026-09-03 Guard 跨表 join 注入（KL #14 收窄，commit a3825bf/a207284）：策略谓词引用表不在查询时沿语义模型 join 图补 LEFT JOIN（契约测试单跳/双跳/组合注入、无路径拒绝、恶意策略注入后二次校验），无合法路径仍拒绝；rls-verify 三角色实测差异集 3 无回归（报告 `eval/reports/rls-verify-a207284.json`，Guard 注入+表白名单复核后行级链路不变）
 
 ---
 
@@ -559,8 +562,10 @@ EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；�
 9. **Apache Calcite 未引入**：MVP 用 sqlglot，无 CBO 与语义校验（取舍见 ADR-0005）
 10. **图表与归因能力为最小实现**：仅做确定性渲染，无自动洞察
 11. **Planner 为确定性规则版**：维度解析要求显式分组结构词（“按X统计/分组”）
-    且仅匹配 dim_* 维度表字段；相对时间（“上个月/最近”）不支持（返回澄清）；
-    filter 解析未实现（详见 agent/planner.py 已知边界）
+    且仅匹配 dim_* 维度表字段；相对时间为**设计性不支持**（返回澄清，理由见
+    ADR-0014 ③——固定快照评测下相对时间必然漂移，非待实现项）；filter 支持
+    维度等值/排除与度量阈值（HAVING），不支持形态见第 29 条（详见
+    agent/planner.py 已知边界）
 12. **检索语料与查询同源、MVP 向量为词法级**：Recall 评测的问句措辞来自语义层
     同义词（同源口径验证，非跨领域泛化数字）；Milvus 向量为确定性词法稀疏向量
     （tf-IP，无 idf），不编码语义相似（“佣金”与“手续费”不同 token），嵌入与
@@ -568,11 +573,16 @@ EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；�
 13. **图约束比 Compiler 保守**：SemanticGraph 禁止事实表间桥接（dim→fact 回跳）的
     跨实体召回，Compiler 目前技术上能编译这类多跳 SQL（缺维度域检查）；检索层先剔除，
     双方口径差异属已知边界（见 retrieval/graph_store.py）
-14. **Guard 行级谓词仅限查询域内表**：策略按物理表名书写（dim_broker.branch），
-    注入前由 Guard 改写为编译 SQL 的实际别名；策略若引用查询之外的表面直接拒绝
-    （跨表 join 注入未实现，属 Phase 2）
-15. **行级权限实现的两个诚实边界**：① Polaris 层为对象级（表粒度）授权，行级过滤在
-    SQL 谓词层（Guard）完成，未下推给 Polaris；② TPC-DI 无地理/品类维度
+14. **Guard 跨表谓词已支持 join 注入，剩余边界为无路径拒绝**：策略引用表不在
+    查询中时，沿语义模型 relationships join 图补 LEFT JOIN（与编译器同形态：
+    catalog.db.table AS base 名 + 关系列 EQ，Phase 2 落地）；**无合法 join 路径
+    或未提供模型仍拒绝**（安全底线不放开），注入后二次只读校验含补表后的表白
+    名单复核；已知边界：视图展开递归校验、真实成本估算仍待实现（见
+    agent/security/sql_guard.py 模块 docstring）
+15. **行级权限实现的两个诚实边界**：① Polaris 层为对象级（表/命名空间粒度）
+    授权，无行级能力（实测 polaris-rbac-7d48dcb.json 为对象级；无行级为官方
+    文档核对结论，见 ADR-0014 ⑤）——行级过滤维持 Guard SQL 谓词层为架构终局，
+    Polaris 下推为不适用项；② TPC-DI 无地理/品类维度
     （实测 dim_broker.Branch 为随机变造串），规划原文「华东区 / 某品类」零售
     角色仅注册未实测（机制与 branch/tier 相同，零售数据装载后 rp_dept_visible
     才可实测）
@@ -601,9 +611,11 @@ EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；�
     LoRA+SC 仍 blocked = macOS arm64 无 CUDA + ml 依赖未装（Day 37-38 前置检查 exit 2
     实测，LLM 端点已就绪）。所有 LoRA 相关数字 = blocked 登记（不编数字，AGENTS.md
     N1）；解锁后 `make train`（vLLM serve + `make compare RAG_ENGINE=openai`）一键出数
-20. **Data Agent MVP 多轮边界（第 7 周落地，如实声明）**：同一会话仅支持连续提问 +
-    每轮事实留痕与结果冲刷，不做指代消解（“它/上轮那个”）；explain 的 filters 恒空
-    （Planner 无 filter 解析，见第 11 条）；handoff 仅在候选链检索 0 素材时触发，
+20. **Data Agent MVP 多轮边界（ADR-0014 ②，如实声明）**：同一会话支持连续提问 + 每轮
+    事实留痕与结果冲刷 + **指代消解 MVP**（仅“同 metric 换时间/换维度”结构补全：
+    “那…呢/换成/按…呢/改为”链接词命中时复用上轮 Plan，其余自由代词“它/上轮
+    那个”与指代不明 → 澄清，确定性优先不猜测）；explain 已回填 last_plan 供追问
+    复用；handoff 仅在候选链检索 0 素材时触发，
     Guard 拒绝（blocked）与执行期故障（error）不转人工——安全与运维边界，人工也
     不得绕过只读红线（详见 agent/state.py、agent/graph.py docstring）
 21. **图表为 spec 级确定性渲染（无像素）**：schema 必须来自已执行结果（无执行 SQL
@@ -646,6 +658,11 @@ EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；�
     Phase 2；⑤容器内 /ask 依赖构建时注入的快照身份 ATLAS_GIT_SHA（镜像无 .git）
     且对应 meta 随仓库进入镜像——带 seed 数据的环境才可答；⑥/api 契约测试 16 例
     （tests/test_api.py，fake 注入无 DB）+ 真链验收 make api-verify 在档
+29. **filter 不支持形态 → 澄清（不猜测）**：自由双指标比较（“佣金高于成交量的
+    分支”）、维度值模糊无法命中语义层同义词、HAVING 语义度量阈值但问句未解析出
+    metric（无从挂载聚合比较）均返回 ClarificationRequest；时间词不并入 filter
+    （时间一律走 TimeSpec，相对时间见第 11 条）——与 ADR-0014 ① 裁定一致，
+    这些形态是澄清机制的评测载体而非缺陷（gold-149~155 中歧义样本即为此类）
 
 **如果有真实企业数据，我会优先补做**：数据契约、IAM 集成、审计留痕、容灾、并发压测、模型红队测试、变更管理流程。
 
@@ -662,7 +679,7 @@ EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；�
 | GraphRAG + Milvus 混合过滤 | 已有工程经验 | 复用于指标、同义词、业务术语检索 |
 | OpenTelemetry + PromptOps + LLM Judge | 已有工程经验 | 接入 SQL 调用链、成本、回归评测 |
 | 声明式语义层、指标版本血缘 | **需新建** | 基于 Apache Ossie 规范实现编译器、治理扩展与测试 |
-| Data Agent 状态机与工具链（LangGraph 编排 / MCP 暴露 / 防幻觉图表 / 反馈与 handoff） | 已有工程经验 | 以确定性优先落地 agent/ 状态机（8 节点）+ tools 四件套 + MCP 工具服务器 + chart + feedback；6 场景 e2e 实测见 docs/e2e-acceptance.md（数字全部出自 eval/reports/e2e-acceptance.json，不另立声明） |
+| Data Agent 状态机与工具链（LangGraph 编排 / MCP 暴露 / 防幻觉图表 / 反馈与 handoff） | 已有工程经验 | 以确定性优先落地 agent/ 状态机（8 节点）+ tools 四件套 + MCP 工具服务器 + chart + feedback；7 场景 e2e 实测（含多轮追问 S7）见 docs/e2e-acceptance.md（数字全部出自 eval/reports/e2e-acceptance.json，不另立声明） |
 | Ossie / Polaris / Iceberg / Doris | **需新建** | 单机部署、基准测试、维护 ADR（0002/0004/0005） |
 | Agent 安全执行与自动洞察 | **需新建** | 先做安全工具，再扩展规划与归因 |
 | HTTP API / 认证中间件 | 已有工程经验 | 以 FastAPI 落地 serving/api.py（ADR-0012：/health /plan /compile /ask + JWT），契约测试 16 例 + 真链验收 api-verify 在档 |

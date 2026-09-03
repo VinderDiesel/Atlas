@@ -2,7 +2,7 @@
   "schema_version": 1,
   "purpose": "Day 43-49 批次端到端验收（README §3.3） + ADR-0014 ② 多轮同构追问",
   "snapshot_sha": "7d48dcb",
-  "created_at": "2026-09-03T090836Z",
+  "created_at": "2026-09-03T091952Z",
   "engine": "真实 Doris（eval/runner.execute_sql）+ 确定性链路（无 LLM）",
   "scenarios": [
     {
@@ -31,7 +31,7 @@
         ]
       ],
       "result_hash": "557479f4a0f2",
-      "latency_ms": 527.0,
+      "latency_ms": 407.6,
       "executor_calls": 1,
       "explanation": {
         "metric_expression": "SUM(fact_trades.Commission)",
@@ -46,7 +46,7 @@
         ],
         "data_version": "7d48dcb",
         "data_refreshed_at": "2026-09-03T09:53:50+08:00",
-        "latency_ms": 527.0
+        "latency_ms": 407.6
       }
     },
     {
@@ -138,7 +138,7 @@
           "atlas.dwd.dim_broker"
         ],
         "row_count": 5,
-        "latency_ms": 267.0,
+        "latency_ms": 251.0,
         "data_version": "7d48dcb",
         "data_refreshed_at": "2026-09-03T09:53:50+08:00",
         "path": "deterministic"
@@ -188,7 +188,7 @@
             "210358.75"
           ]
         ],
-        "latency_ms": 288.1
+        "latency_ms": 233.2
       },
       "guard": {
         "enforce_again": "pass",

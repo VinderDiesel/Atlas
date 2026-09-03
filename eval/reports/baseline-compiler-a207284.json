@@ -1,0 +1,33 @@
+{
+  "sha": "a207284",
+  "created_at": "2026-09-03T17:20:28+08:00",
+  "source_report": "eval/reports/a207284.json",
+  "gold_inventory": {
+    "total": 57,
+    "finance": 55,
+    "retail_legacy_skipped": 2
+  },
+  "main_summary": {
+    "finance_total": 55,
+    "retail_skipped": 2,
+    "plan_acc": "50/50",
+    "clarify": "5/5",
+    "ex": "50/50",
+    "ex_anchored": 0,
+    "exec_errors": 0
+  },
+  "analysis": {
+    "deterministic_coverage": "55/55",
+    "plan_hit": "50/50",
+    "clarify": "5/5",
+    "ex": "50/50",
+    "exec_errors": 0,
+    "sample_classes": {
+      "resolved_deterministically": 50,
+      "clarified_honestly": 5,
+      "ex_fail": 0,
+      "exec_errors": 0
+    }
+  },
+  "conclusion": "注册语义域内（48 条金融 gold 覆盖的口径）确定性链零 LLM 全覆盖：55/55（解析命中 50/50 + 歧义反问 5/5）；EX 50/50 与锚定快照一致。此结论不推断域外泛化：未见指标/复合分析/新措辞问句不在基线内，是 Day 31-34 RAG+LLM 候选生成器的对照实验对象。"
+}

@@ -69,13 +69,33 @@ dimension，仅替换本轮新解析片段，合并结果仍走既有确定性�
 2. 数据与工程成本无收益：BIRD dev finance 体积大、需下载建库；
 3. 公开集分数对企业场景无外推意义（AGENTS.md N10），gold 是主评测。
 
-### ⑤ Polaris 行级下推：评估登记（结论待 C8 补记本节）
+### ⑤ Polaris 行级下推：不适用项（C8 补记，2026-09-03）
 
-Polaris 层当前为对象级（表/命名空间）授权实测（polaris-rbac-7d48dcb.json），
-行级过滤在 Guard SQL 谓词层完成（KL #15 ①）。本项登记评估：核对 compose 内
-Polaris 实例授权模型与文档后，如实记录"下推是否适用"结论——若无行级能力，
-裁定 Guard 谓词层为行级权限架构终局（不重复造轮子），KL #15 ① 同步收窄。
-证据分级如实（文档核对 vs 实测），不编能力声明。
+**结论：Polaris 行级下推不适用——行级权限维持 Guard 谓词层为架构终局，
+不重复造轮子。**
+
+证据分级（如实区分实测与文档核对）：
+
+1. **对象级授权 = 实测**（serving/rbac_verify.py + `polaris-rbac-7d48dcb.json`，
+   2026-09-02）：principal → principal-role → catalog-role 两级角色，grant 单元最细
+   到表（TABLE_LIST / TABLE_READ_DATA / TABLE_FULL_METADATA /
+   TABLE_READ_PROPERTIES）；compose 对象模型注释一致（CATALOG / NAMESPACE /
+   TABLE / PRINCIPAL / ROLE / GRANT）。
+2. **无行级能力 = 官方文档核对**（2026-09-03 检索 polaris.apache.org
+   access-control/policy 文档，in-dev main/unreleased 分支——未发布文档已是
+   能力上界，发布版不超出）：securable object 全集 = Catalog / Namespace /
+   Iceberg table / View / Policy；表级 privilege 十个全部为对象/数据级，无行过滤
+   （行级谓词）项；Policy 框架系统类型仅 4 类生命周期规则（data-compaction /
+   metadata-compaction / orphan-file-removal / snapshot-expiry），行/列级策略在
+   官方路线图中（未发布）。
+
+推论：跨表谓词能力（C7 已落地）与行级策略注入均属 Guard SQL 谓词层职责，
+Polaris 只做对象级第二层（纵深防御第二层定位不变，ADR-0011 口径）；
+KL #15 ① 同步收窄。Doris 4.1 per-user identity mode 属身份透传（真实用户
+身份替代服务账号），不改变行级过滤位置。
+
+> 本裁定为**文档核对级**（非实测否定）；若 Polaris 发布行级策略能力且引擎侧
+> （Doris）支持消费，按推翻条件重审。
 
 ## 什么情况下应该推翻
 

@@ -1,0 +1,58 @@
+{
+  "sha": "a207284",
+  "catalog_uri": "http://127.0.0.1:8181/api/catalog",
+  "catalog": "atlas（tpcdi 17 + dwd 8，共 25 张 Iceberg 表）",
+  "analyst_principal": "atlas_analyst",
+  "analyst_grants": {
+    "namespace": "dwd",
+    "tables": [
+      "dim_broker",
+      "dim_customer"
+    ],
+    "privileges": [
+      "TABLE_LIST",
+      "TABLE_READ_DATA",
+      "TABLE_FULL_METADATA",
+      "TABLE_READ_PROPERTIES"
+    ]
+  },
+  "root": {
+    "list_namespaces": {
+      "ok": true,
+      "detail": [
+        "tpcdi",
+        "dwd"
+      ]
+    },
+    "load dwd.dim_broker": {
+      "ok": true,
+      "detail": "snapshots=2"
+    },
+    "load dwd.dim_customer": {
+      "ok": true,
+      "detail": "snapshots=1"
+    },
+    "load dwd.fact_trades": {
+      "ok": true,
+      "detail": "snapshots=1"
+    }
+  },
+  "analyst": {
+    "list_namespaces": {
+      "ok": false,
+      "detail": "ForbiddenError"
+    },
+    "load dwd.dim_broker": {
+      "ok": true,
+      "detail": "snapshots=2"
+    },
+    "load dwd.dim_customer": {
+      "ok": true,
+      "detail": "snapshots=1"
+    },
+    "load dwd.fact_trades": {
+      "ok": false,
+      "detail": "ForbiddenError"
+    }
+  }
+}
