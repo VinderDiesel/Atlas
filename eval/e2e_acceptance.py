@@ -1,10 +1,10 @@
-"""Day 48 端到端验收（真实 Doris + 锁定快照）：5 场景 + handoff，结构化记录。
+"""Day 48 端到端验收（真实 Doris + 锁定快照）：6 场景 + handoff，结构化记录。
 
 用法
 ----
     uv run python eval/e2e_acceptance.py [--report eval/reports/e2e-<ts>.json]
 
-场景与验收口径（README §3.3 Day 43-49 勾选）
+场景与验收口径（README §3.3 Day 43-49 勾选 + ADR-0014 ② 多轮追问）
     S1 正常提问  ：注册域问句 → kind=answer；Guard 出口 SQL 的表全部在锁定
                    快照白名单内；真实执行行数 ≤ SQL LIMIT
     S2 反问      ：歧义问句（eval/gold/gold-104.json 同源）→ kind=clarify，
@@ -18,6 +18,9 @@
                    防幻觉）+ explain 归因全字段（表/版本/刷新时间/latency）
     S6 人工接管  ：allow_candidate 模式 + 真实检索 0 候选问句 → kind=handoff
                    （LLM 生成无素材不空转，显式转人工，不编造）
+    S7 多轮追问  ：S1 的 2013 口径后同会话追问「那 2014 年呢」→ kind=answer
+                   （ADR-0014 ② 指代补全：复用上轮结构仅换时间）；追问轮 SQL
+                   再过 Guard 复核（enforce 不抛 + 出口表全在白名单内）
 
 输出：人类可读 stdout + JSON 报告（本次实测的全部数字都出自本脚本；
 docs/e2e-acceptance.md 引用本产物，禁止手写数字）。场景断言失败 → 退出码 1。
@@ -266,6 +269,53 @@ def _main() -> int:
             "executor_calls": len(quiet.calls),
         }
 
+    def s7() -> dict[str, Any]:
+        # 多轮同构追问（ADR-0014 ②）：上轮 2013 佣金 Top5 分支 → 「那 2014 年呢」
+        # → 指代补全为 2014 同构结果；追问轮 SQL 再过 Guard 复核（纵深不放松）
+        agent = DataAgent(executor=real, budget=budget, snapshot_meta=meta)
+        sid = "e2e-s7"
+        r1 = agent.ask(GOLD102_Q, session_id=sid)
+        assert r1.kind == "answer", f"S7 首轮期望 answer，实际 {r1.kind}"
+        r2 = agent.ask("那 2014 年呢", session_id=sid)
+        assert r2.kind == "answer", f"S7 追问轮期望 answer，实际 {r2.kind}"
+        assert r2.turns_in_session == 2
+        assert r2.metric == "commission_revenue", "追问必须继承上轮指标"
+        assert r2.row_count == 5, "同构追问应保持 LIMIT 5 行级口径"
+        assert r2.explanation is not None
+        dims = tuple(r2.explanation.get("dimensions") or ())
+        assert dims == ("Branch",), f"追问必须继承分支维度，实际 {dims}"
+        assert r2.sql is not None
+        # Guard 注入与行级结果一致断言：追问轮 SQL 再过 enforce 不抛；出口表全白名单
+        enforce(r2.sql, budget=budget)
+        tables = tuple(r2.explanation.get("tables") or ())
+        outside = [t for t in tables if t not in budget.allowed_tables]
+        assert not outside, f"追问轮 SQL 触碰白名单外表：{outside}"
+        return {
+            "turn1": {
+                "question": GOLD102_Q,
+                "kind": r1.kind,
+                "result_hash": result_hash(list(r1.rows)),
+                "row_count": r1.row_count,
+            },
+            "turn2": {
+                "question": "那 2014 年呢",
+                "kind": r2.kind,
+                "metric": r2.metric,
+                "turns_in_session": r2.turns_in_session,
+                "dimensions": list(dims),
+                "row_count": r2.row_count,
+                "sql": r2.sql,
+                "result_hash": result_hash(list(r2.rows)),
+                "rows_sample": [list(x) for x in r2.rows[:3]],
+                "latency_ms": r2.latency_ms,
+            },
+            "guard": {
+                "enforce_again": "pass",
+                "outside_tables": outside,
+                "tables": list(tables),
+            },
+        }
+
     scenarios = [
         run_scenario("S1", "正常提问（确定性链路）", "注册域问句 → answer", s1),
         run_scenario("S2", "反问（歧义不猜）", "歧义问句 → clarify", s2),
@@ -273,10 +323,16 @@ def _main() -> int:
         run_scenario("S4", "校验失败修复（多轮）", "反问 → 补口径 → answer", s4),
         run_scenario("S5", "图表 + 解释", "answer → 确定性图表 + 归因", s5),
         run_scenario("S6", "人工接管（handoff）", "0 候选 → 显式转人工", s6),
+        run_scenario(
+            "S7", "多轮同构追问（ADR-0014 ②）", "2013 口径 → 那 2014 年呢 → 同构 answer", s7
+        ),
     ]
     report = {
         "schema_version": 1,
-        "purpose": "Day 43-49 批次端到端验收（README §3.3）",
+        "purpose": (
+            "Day 43-49 批次端到端验收（README §3.3）"
+            " + ADR-0014 ② 多轮同构追问"
+        ),
         "snapshot_sha": meta["sha"],
         "created_at": ts,
         "engine": "真实 Doris（eval/runner.execute_sql）+ 确定性链路（无 LLM）",

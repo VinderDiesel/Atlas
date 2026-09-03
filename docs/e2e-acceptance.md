@@ -1,4 +1,4 @@
-# 端到端验收（Day 48）：Data Agent 5 场景 + 人工接管
+# 端到端验收（Day 48 + ADR-0014 ②）：Data Agent 6 场景 + 人工接管
 
 > **本文档所有数字均来自脚本产物** [eval/reports/e2e-acceptance.json](../eval/reports/e2e-acceptance.json)
 > （`eval/e2e_acceptance.py` 实测输出，禁止手写数字；复跑命令见文末）。
@@ -8,12 +8,12 @@
 
 | 项 | 值 |
 |---|---|
-| 验收日期 | 2026-09-03（报告 `created_at=2026-09-03T033501Z`） |
+| 验收日期 | 2026-09-03（报告 `created_at=2026-09-03T090836Z`，7 场景全量重跑） |
 | 数据快照 | `7d48dcb`（TPC-DI，dwd 8 表 24 万级行，见 data/snapshots/7d48dcb.meta.json） |
 | 执行引擎 | 真实 Doris（mysql.connector）+ LangGraph 状态机 + Guard 只读网关 |
 | LLM | 未调用（注册域确定性链路；候选链模式仅 retrieve 确定性检索） |
 | 报告文件 | `eval/reports/e2e-acceptance.json`（schema_version=1） |
-| 结果 | 6/6 场景通过（5 场景 + handoff 人工接管） |
+| 结果 | 7/7 场景通过（6 场景 + handoff 人工接管；S7 多轮同构追问为 ADR-0014 ② 新增） |
 
 ## 2. 总览
 
@@ -25,6 +25,7 @@
 | S4 校验失败修复 | 反问 → 补口径 → 成功 | clarify → answer | 同 session 2 轮；Guard 层越权 SQL 拒后收敛 |
 | S5 图表 + 解释 | answer 结果直接渲染 | answer | 柱状图轴名零发明；sql_sha256 绑定；归因全字段 |
 | S6 人工接管 | 0 候选不空转 | handoff | handoff_reason 带完整原因链；0 次 SQL 执行 |
+| S7 多轮同构追问 | 追问「那 2014 年呢」指代补全 | answer | 同 session 2 轮同 metric；LIMIT 5 行级口径；Guard 复核通过 |
 
 ## 3. 场景记录
 
@@ -54,7 +55,7 @@ ORDER BY commission_revenue DESC LIMIT 5
 | wjYPZaGSUHUxxicvCRtQYjjLIIoEQx | 99531.57 |
 
 - **归因（explain）**：metric=`commission_revenue`，metric_expression=`SUM(fact_trades.Commission)`，
-  dimensions=`[Branch]`，filters=`[]`（MVP 无 filter 解析，如实为空），
+  dimensions=`[Branch]`，filters=`[]`（本问句无过滤条件，如实为空），
   tables=`[atlas.dwd.fact_trades, atlas.dwd.dim_date, atlas.dwd.dim_broker]`（Guard 出口 SQL AST 提取），
   data_version=`7d48dcb`，data_refreshed_at=`2026-09-03T09:53:50+08:00`（注入快照 meta，不编造）
 
@@ -117,6 +118,42 @@ ORDER BY commission_revenue DESC LIMIT 5
   与 clarify（有素材可反问）、blocked（Guard 拒绝，人工也不得绕过，AGENTS.md N3）、
   error（执行期故障，运维排查）语义互斥，不互相吞并。
 
+### S7 多轮同构追问（ADR-0014 ② 指代补全）
+
+- **轨迹**（同一 session `e2e-s7`，turns_in_session=2）：
+  1. turn1 问「按分支统计 2013 年佣金收入，列出前 5 名」（同 S1）→ kind=`answer`，
+     result_hash=`557479f4a0f2`（与 S1 同源口径）
+  2. turn2 追问「那 2014 年呢」（残句：无指标词）→ planner 全量解析 unmatched →
+     **指代预检命中**（ADR-0014 ②）：复用上轮 metric/dimensions/排序/LIMIT，仅替换时间 →
+     编译预检通过 → 确定性链路执行 → kind=`answer`
+- **Guard 出口 SQL**（turn2 实际执行，年份 2013 → 2014 其余同构）：
+
+```sql
+SELECT dim_broker.Branch AS Branch, SUM(fact_trades.Commission) AS commission_revenue
+FROM atlas.dwd.fact_trades AS fact_trades
+INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID
+INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID
+WHERE dim_date.CalendarYearID = 2014
+GROUP BY dim_broker.Branch
+ORDER BY commission_revenue DESC LIMIT 5
+```
+
+- **结果**：turn2 `row_count=5`（LIMIT 5 行级口径保持），`latency_ms=288.1`（单次实测，非基准），
+  result_hash=`a758904750cc`（2014 年 Top5 分支佣金，与 2013 结果不同——如实）：
+
+| Branch | commission_revenue |
+|---|---|
+| FGdaQnSVoGPBrEdxLiCsEqC | 317687.06 |
+| dyOXSdNzGsXRFxaGeJgNoBBBxNQ | 283872.96 |
+| NULL | 210358.75 |
+
+- **Guard 复核**：turn2 SQL 报告内二次 `enforce` 通过（`enforce_again=pass`），出口表
+  `[fact_trades, dim_date, dim_broker]` 全在锁定快照白名单内（`outside_tables=[]`）——
+  追问链路不放松安全底线。
+- **边界**：本场景是 ADR-0014 ② 的**同构换时间**主形态；自由代词（「那它呢」）与
+  相对时间（「那去年呢」）指代在契约测试中反问不猜（tests/test_graph.py TestFollowupResolution），
+  e2e 不重复验证。
+
 ## 4. handoff 节点设计说明（agent/graph.py）
 
 - **图**：`START → plan →(unmatched, allow_candidate) retrieve → generate → validate → execute → explain → END`，
@@ -138,13 +175,15 @@ ORDER BY commission_revenue DESC LIMIT 5
 5. **截图项**：沿用 retro-p2 登记口径——本验收为 markdown 形态；前端渲染与可视化截图由
    Day 50-56（serving/可观测）统一产出，此处不重复引用占位图。
 6. 本轮验收未改动 `semantic/` 与任何数据快照；报告 `eval/reports/e2e-acceptance.json` 为脚本机械产物。
+7. **S7 多轮追问的口径继承**：turn2 仅替换时间（2014），metric/维度/排序/LIMIT 全部继承 turn1
+   ——同构追问的前提是上轮为成功 answer（last_plan 由 explain 回写）；反问/失败轮不改写基线。
 
 ## 6. 复跑命令
 
 ```bash
 # 前置：Doris 已 up 且锁定快照数据可查（AGENTS.md：make up / make seed 后）
 uv run python -m eval.e2e_acceptance --report eval/reports/e2e-acceptance.json
-# 退出码 0 = 6/6 通过；非 0 = 场景断言失败（可作门禁）
+# 退出码 0 = 7/7 通过；非 0 = 场景断言失败（可作门禁）
 ```
 
 契约测试（不依赖 Doris）：`uv run python -m unittest tests.test_graph tests.test_chart -v`
