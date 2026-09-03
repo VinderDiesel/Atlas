@@ -4,27 +4,37 @@ name: auto-tag
 #
 # 动机：仓库 v0.1 发布当时无 git tag（docs/release-notes-v0.1.md 在档、git tag 为
 # 空），版本演进没有 git 锚点可追溯；此后改由 pyproject.toml [project].version
-# 作为版本唯一事实源，push 自动打 tag，不再依赖手工记忆。
+# 作为版本唯一事实源，lint 通过后自动打 tag，不再依赖手工记忆。
+#
+# 触发链（2026-09-03 改版）：
+# - push main → semantic-lint（lint.yml）先跑；完成后本 workflow 才被触发，
+#   conclusion==success 才执行——版本 tag 只锚定通过 CI 的 commit，坏代码不打 tag。
+#   实现：on.workflow_run（workflow 间事件链；文档确认该事件下 GITHUB_TOKEN 可
+#   正常持有 write 权限）。lint 失败/PR 触发/fork 触发的 run → job 条件不满足 → skipped。
+# - workflow_dispatch 手动兜底：绕过 lint 直接检查/打 tag（lint 不可用时的显式入口）。
+# - 注意：workflow_run 的 GITHUB_SHA = 默认分支最新 commit，不是触发 run 的 commit
+#   → checkout 必须显式用 event.workflow_run.head_sha（见下）；lint.yml 若改名，
+#   本链静默失效（workflows 按 name 匹配不报错）——改 lint.yml name 须同步此处。
 #
 # 行为：
-# - 触发：push main/master 每次自动检查 + workflow_dispatch 手动补跑。
 # - 远端已存在 v<version> → 跳过（幂等：版本未 bump 不重复打 tag）。
-# - 不存在 → 以 annotated tag 打在本次触发 commit 并 push（GITHUB_TOKEN）。
+# - 不存在 → 以 annotated tag 打在通过 lint 的 commit 并 push（GITHUB_TOKEN）。
 # - 只打 git tag，不建 GitHub Release（范围外，需要 Release Notes 时再扩）。
 #
 # 已知边界（诚实声明）：
-# - tag 锚定的是触发 push 的 HEAD，不是版本号变更 commit 本身；版本 bump 与
-#   push 通常同 commit，单人仓库可接受。
-# - v0.1.0 无历史 tag：首次触发会把 v0.1.0 补打在当时的 HEAD——发布文档时代
-#   未打 tag 是既成事实，历史 commit 不回补（tag 不撒谎：锚定谁就是谁）。
+# - 版本 bump 与 lint 通过不在同一 commit：tag 锚定的是“通过 lint 的 HEAD”，
+#   若 lint 在版本 bump 后的 commit 上失败，该版本不会被打 tag（符合本改版意图）。
+# - v0.1.0 无历史 tag：lint-gated 机制上线前由 push 直接触发补打（run 33729727159），
+#   发布文档时代未打 tag 是既成事实，历史 commit 不回补（tag 不撒谎：锚定谁就是谁）。
 # - 并发竞态（同 version 两个 push 抢同一个 tag）：先到者成功，后到者 push
 #   失败报错可见、重跑即跳过，不静默吞掉。
 # - 权限面：permissions.contents=write 是打 tag 所需的最小权限（GITHUB_TOKEN
 #   推送无需个人 token，匿名 bot 署名）。
 
 on:
-  push:
-    branches: [main, master]
+  workflow_run:
+    workflows: [semantic-lint]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -33,10 +43,20 @@ permissions:
 jobs:
   tag:
     runs-on: ubuntu-latest
+    # 只处理本体仓库 main 分支 lint 成功的 run；PR/fork/失败的 run 一律跳过
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
-          # 打 tag 只需触发 commit 本身；远端 tag 用 ls-remote 直查，无需本地 tag 历史
+          # workflow_run 事件下 GITHUB_SHA=默认分支最新，必须显式检出触发 run 的
+          # commit 才能把 tag 打在“通过 lint 的那个 commit”上；dispatch 时取触发 sha
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # 打 tag 只需目标 commit 本身；远端 tag 用 ls-remote 直查，无需本地 tag 历史
           fetch-depth: 1
 
       - uses: actions/setup-python@v5
