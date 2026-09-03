@@ -155,5 +155,94 @@ class TestFilterParsing(unittest.TestCase):
         self.assertIsInstance(result, ClarificationRequest)
 
 
+class TestFollowupParsing(unittest.TestCase):
+    """ADR-0014 ② 指代消解 MVP：同构残句补全（复用上轮 Plan 结构，仅替换片段）。
+
+    followup 由 graph 指代预检调用（仅 plan() 已 unmatched 的残句）；本层契约
+    直接测补全形态的正反两侧：链接词命中 → 结构 Plan；自由代词/歧义 → 反问。
+    """
+
+    PREV = Plan(
+        metric="commission_revenue",
+        dimensions=("Branch",),
+        time=TimeSpec("year", 2013),
+        order_by=(OrderSpec("commission_revenue", desc=True),),
+        limit=5,
+    )
+    PREV_FILTER = Plan(
+        metric="commission_revenue",
+        time=TimeSpec("year", 2013),
+        filters=(Filter("Branch", "=", "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"),),
+    )
+
+    def test_change_time_inherits_structure(self) -> None:
+        """「那 2014 年呢」→ 同 metric/维度/排序，仅换时间（同构追问主形态）。"""
+        merged = PLANNER.followup("那 2014 年呢", self.PREV)
+        self.assertIsInstance(merged, Plan)
+        assert isinstance(merged, Plan)
+        self.assertEqual(merged.metric, "commission_revenue")
+        self.assertEqual(merged.dimensions, ("Branch",))
+        self.assertEqual(merged.time, TimeSpec("year", 2014))
+        self.assertEqual(merged.order_by, self.PREV.order_by)
+        self.assertEqual(merged.limit, 5)
+
+    def test_change_time_keeps_prev_filters(self) -> None:
+        """上轮带维度值过滤时纯换时间：过滤继承（同构口径不变）。"""
+        merged = PLANNER.followup("那 2014 年呢", self.PREV_FILTER)
+        self.assertIsInstance(merged, Plan)
+        assert isinstance(merged, Plan)
+        self.assertEqual(merged.filters, self.PREV_FILTER.filters)
+        self.assertEqual(merged.time, TimeSpec("year", 2014))
+
+    def test_change_dimension(self) -> None:
+        """「那按客户等级统计呢 / 那换成客户等级呢」→ 替换分组维度。"""
+        for q in ("那按客户等级统计呢", "那换成客户等级呢"):
+            with self.subTest(question=q):
+                merged = PLANNER.followup(q, self.PREV)
+                self.assertIsInstance(merged, Plan)
+                assert isinstance(merged, Plan)
+                self.assertEqual(merged.dimensions, ("Tier",))
+                self.assertEqual(merged.time, TimeSpec("year", 2013))  # 时间保持
+
+    def test_swap_time_via_shell_word(self) -> None:
+        """「换成 2014 年呢」：壳词吃时间短语 → 换时间而非误判换维。"""
+        merged = PLANNER.followup("换成 2014 年呢", self.PREV)
+        self.assertIsInstance(merged, Plan)
+        assert isinstance(merged, Plan)
+        self.assertEqual(merged.time, TimeSpec("year", 2014))
+        self.assertEqual(merged.dimensions, ("Branch",))
+
+    def test_change_dim_with_prev_filter_clarifies(self) -> None:
+        """换维 + 上轮带维度值过滤 = 过滤作用域二义 → 反问不猜。"""
+        result = PLANNER.followup("那按客户等级统计呢", self.PREV_FILTER)
+        self.assertIsInstance(result, ClarificationRequest)
+
+    def test_free_pronoun_clarifies(self) -> None:
+        """自由代词（那它呢/这些呢）无片段可替换 → 反问。"""
+        for q in ("那它呢", "那这些呢"):
+            with self.subTest(question=q):
+                result = PLANNER.followup(q, self.PREV)
+                self.assertIsInstance(result, ClarificationRequest)
+
+    def test_relative_time_clarifies(self) -> None:
+        """「那去年呢」→ 透传 relative_time 反问（快照评测口径）。"""
+        result = PLANNER.followup("那去年呢", self.PREV)
+        self.assertIsInstance(result, ClarificationRequest)
+        assert isinstance(result, ClarificationRequest)
+        self.assertEqual(result.kind, "relative_time")
+
+    def test_no_shell_returns_none(self) -> None:
+        """无链接词形态（新问句/陈述）→ None，调用方维持原 unmatched 流程。"""
+        self.assertIsNone(PLANNER.followup("随便看看", self.PREV))
+
+    def test_bare_ne_suffix_residual(self) -> None:
+        """「2014 年呢」裸呢字残句（无链接词前缀）也补全换时间。"""
+        merged = PLANNER.followup("2014 年呢", self.PREV)
+        self.assertIsInstance(merged, Plan)
+        assert isinstance(merged, Plan)
+        self.assertEqual(merged.time, TimeSpec("year", 2014))
+        self.assertEqual(merged.dimensions, ("Branch",))
+
+
 if __name__ == "__main__":
     unittest.main()

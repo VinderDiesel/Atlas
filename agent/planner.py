@@ -16,6 +16,11 @@
   （"排除/不含 X"）、度量阈值（"超过/低于 N"，HAVING 语义）；值含中文或
   过滤短语无法归属维度字段时不产生 filter（仅当维度词命中而**值**模糊时才
   反问，如 gold-155「核心分支」）；自由双指标比较不支持
+- 指代消解（ADR-0014 ②，多轮追问）：followup() 仅处理**同构残句**——全量
+  解析 unmatched（句内无指标词）且命中链接词形态（"那 X 呢 / 换成 X /
+  按 X 呢"）时，复用上轮 Plan 的 metric/过滤/排序结构，只替换本轮解析出的
+  时间/维度片段；自由代词（"它/这些"）与无法归属的碎片 → 反问完整重述，
+  不猜测（换维 + 上轮带维度值过滤 = 口径作用域二义，同样反问）
 """
 
 from __future__ import annotations
@@ -64,6 +69,15 @@ _THRESHOLD_GT_RE = re.compile(r"(?:超过|大于|高于|不小于|不低于)\s*(
 _THRESHOLD_LT_RE = re.compile(r"(?:低于|小于|不足|不超过|不高于)\s*([\d.]+)\s*(亿|千万|百万|万)?")
 # 量级词须先匹配长形（千万 → 万），regex 交替顺序即优先级
 _CN_UNIT = {"亿": 100_000_000, "千万": 10_000_000, "百万": 1_000_000, "万": 10_000}
+
+# 指代追问（ADR-0014 ②；仅全量解析 unmatched 的残句才进入，见 followup()）：
+# - 链接词开头（那/那么/换成/改成/改为/按）或"呢"结尾 = 口语残句形态
+_FOLLOWUP_PREFIXES = ("那", "那么", "换成", "改成", "改为", "按")
+# - 换维壳：换成/改成/改为/按 引导的短语（可带"那"前缀与"统计/分组/呢"尾缀）；
+#   $ 锚防非贪婪截断过早（"按客户等级统计呢"须整体消费到句尾）
+_FOLLOWUP_DIM_RE = re.compile(
+    r"(?:那|那么)?(?:换成|改成|改为|按)\s*(.+?)(?:统计|分组)?\s*呢?\s*$"
+)
 
 
 @dataclass(frozen=True)
@@ -134,6 +148,58 @@ class Planner:
             limit=limit,
         )
 
+    def followup(
+        self, question: str, prev: Plan
+    ) -> Plan | ClarificationRequest | None:
+        """指代追问补全（ADR-0014 ②）：残句无指标词 → 复用上轮 Plan 结构。
+
+        仅处理**同构追问**（调用方保证：planner.plan 已 unmatched——句内无指标
+        词，且 prev 为同会话上轮成功采纳的 Plan）：命中链接词形态（"那 X 呢 / 换成
+        X / 按 X 统计"等）时，继承 prev 的 metric/维度/过滤/排序，只替换本轮新
+        解析出的时间/维度片段。返回 None = 非链接形态（调用方维持原 unmatched
+        流程）；ClarificationRequest = 补全歧义/相对时间（不猜，反问完整重述）。
+
+        确定性边界（不猜测）：
+        - 自由代词（"那它呢/这些呢"）与剥壳后无片段 → 反问
+        - 相对时间（"那去年呢"）→ 透传 relative_time 反问
+        - 换维且上轮带维度值过滤 → 口径作用域二义（保留=子集，去掉=改口径）→ 反问
+        """
+        text = question.strip().strip("？?。!！，, ")
+        # 链接词开头或"呢"结尾才算口语残句（否则维持原 unmatched 流程）
+        if not (text.startswith(_FOLLOWUP_PREFIXES) or text.endswith("呢")):
+            return None
+        # 时间片段：壳词不影响既有时间正则；相对时间 → 透传澄清
+        time = self._parse_time(text)
+        if isinstance(time, ClarificationRequest):
+            return time
+        # 维度片段：换维壳命中后做维度字段子串匹配（多命中全取，与分组解析同风格）；
+        # 壳误吃时间短语（"换成 2014 年"）时 new_dims 为空 → 不算换维，回落仅换时间
+        new_dims: tuple[str, ...] = ()
+        m = _FOLLOWUP_DIM_RE.search(text)
+        if m:
+            new_dims = self._dim_hits(m.group(1))
+            if new_dims and prev.filters:
+                return ClarificationRequest(
+                    question,
+                    (f"追问「{text}」要更换分组维度，但上轮口径带维度值过滤"
+                     "（过滤作用域无法确定），请完整重述问句",),
+                )
+        # 无任何可替换片段（自由代词）→ 反问不猜
+        if time is None and not new_dims:
+            return ClarificationRequest(
+                question,
+                (f"追问「{text}」没有识别到可替换的时间/维度片段"
+                 "（自由代词指代不支持），请完整重述问句",),
+            )
+        return Plan(
+            metric=prev.metric,
+            dimensions=new_dims if new_dims else prev.dimensions,
+            time=time if isinstance(time, TimeSpec) else prev.time,
+            filters=prev.filters,
+            order_by=prev.order_by,
+            limit=prev.limit,
+        )
+
     # -- 内部实现 ----------------------------------------------------------
 
     def _parse_time(self, question: str) -> TimeSpec | None | ClarificationRequest:
@@ -169,13 +235,15 @@ class Planner:
         m = _GROUP_RE.search(question)
         if not m:
             return ()
-        phrase = m.group(1)
-        hits = [
+        return self._dim_hits(m.group(1))
+
+    def _dim_hits(self, phrase: str) -> tuple[str, ...]:
+        """短语内命中的维度字段（dim_* 非时间字段同义词子串，多命中全取）。"""
+        return tuple(
             name
             for name, syns in self.model.dimension_synonyms.items()
             if any(s in phrase for s in syns)
-        ]
-        return tuple(hits)
+        )
 
     def _parse_filters(
         self, question: str, metric: str

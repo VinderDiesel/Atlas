@@ -4,9 +4,12 @@
 ------------------------------------------------
 - 状态 = 单次问答的完整事实轨迹（question / plan / sql / rows / 归因…），
   每轮由 checkpointer 按 session_id 持久化，可回溯可审计。
-- **多轮边界（诚实声明）**：MVP 支持「同一会话连续提问 + 每轮事实留痕」，
-  不做指代消解（"上轮那个/它"类指代需要会话推断，MVP 不支持——问句每次
-  全量解析，指代消解会引入编造风险，见 AGENTS.md 决策优先级）。
+- **多轮（ADR-0014 ② 指代消解 MVP）**：同一会话支持「连续提问 + 每轮事实留痕
+  + 同构追问补全」——last_plan（最近成功轮采纳的 Plan，explain 回写）在 plan
+  节点做指代预检：残句（无指标词）命中链接词形态（"那 2014 年呢 / 换成 X /
+  按 X 呢"）时复用上轮 metric/维度/过滤/排序，仅替换本轮解析出的时间/维度
+  片段，合并 Plan 仍走编译预检；其余指代（自由代词"它/这些"、无法归属碎片、
+  换维遇上轮维度值过滤）→ 澄清不猜（见 agent/planner.py followup docstring）。
 - 回合输出 TurnResult 按 kind 分类：answer（执行成功）/ clarify（反问，
   不猜）/ blocked（Guard 拒绝）/ error（执行期故障）/ handoff（人工接管，
   Day 48）。
@@ -41,6 +44,7 @@ class TurnState(TypedDict, total=False):
     question: str
     session_id: str
     plan: Plan  # Planner 命中（deterministic）或候选链 validate 通过（candidate）
+    last_plan: Plan  # 最近成功轮采纳的 Plan（explain 回写；同构追问补全基线，ADR-0014 ②）
     clarification: ClarificationRequest  # 反问输出（歧义直出 / clarify 终端组装）
     candidates: tuple[str, ...]  # retrieve 输出：schema linking top-K 候选
     unmatched: bool  # plan 判定未命中指标同义词（可进候选链/澄清增强）

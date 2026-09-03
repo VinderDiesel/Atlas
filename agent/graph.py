@@ -42,8 +42,11 @@ explain，落地为 **plan 先行** 的条件路由图（AGENTS.md 决策优先�
 候选链仅当 allow_candidate=True（RAG 评测 / 端到端场景演示）才从 unmatched
 问句进入，且与 eval/rag_eval.py 同口径（歧义问句给答案 = 评测失败）。
 
-**多轮**：checkpointer（MemorySaver）按 session_id 持久化每轮事实轨迹；
-DataAgent 维护会话轮数。MVP 不做指代消解（见 agent/state.py docstring）。
+**多轮（ADR-0014 ②）**：checkpointer（MemorySaver）按 session_id 持久化每轮事实
+轨迹；DataAgent 维护会话轮数。plan 节点以最近成功轮采纳的 Plan（last_plan，
+explain 回写）做指代预检——同构追问（"那 2014 年呢 / 换成 X 统计"）残句无
+指标词时复用上轮 metric/维度/过滤结构，仅替换本轮时间/维度片段，合并 Plan
+仍过编译预检；自由代词与无法归属的碎片不猜 → 反问完整重述。
 """
 
 from __future__ import annotations
@@ -202,7 +205,29 @@ def build_graph(
             "error": None,
             "handoff_reason": None,
         }
-        result = planner.plan(str(state["question"]))
+        question = str(state["question"])
+        result = planner.plan(question)
+        if isinstance(result, ClarificationRequest) and result.kind == "unmatched":
+            # 指代预检（ADR-0014 ②）：残句（无指标词）且同会话存在上轮成功 Plan →
+            # 尝试结构补全；补全产物仍走既有校验链（编译预检），失败/歧义不猜
+            prev_plan = state.get("last_plan")
+            if isinstance(prev_plan, Plan):
+                merged = planner.followup(question, prev_plan)
+                if isinstance(merged, Plan):
+                    try:
+                        compiler.compile(merged)
+                    except Exception as exc:  # noqa: BLE001 - 原因完整转述
+                        merged = ClarificationRequest(
+                            question,
+                            (f"追问补全后编译失败：{exc}——请完整重述问句",),
+                        )
+                if isinstance(merged, Plan):
+                    result = merged
+                elif isinstance(merged, ClarificationRequest):
+                    # 补全歧义/相对时间：残句检索无意义，直出反问（不附候选）
+                    out["clarification"] = merged
+                    return out
+                # merged is None：非链接形态 → 维持原 unmatched 流程（fall through）
         if isinstance(result, ClarificationRequest):
             if result.kind == "unmatched":
                 # 未命中：不落 clarification（可能继续走候选链）；原因走 reason
@@ -330,7 +355,7 @@ def build_graph(
             # 口径版本 = 语义层 YAML（git 版本管理）；表达式即唯一版本标识
             "dimensions": tuple(plan.dimensions),
             "time": str(plan.time.value) if plan.time is not None else None,
-            # MVP 无 filter 解析（见 planner.py docstring），恒空——如实展示
+            # filters：本轮 Plan 的过滤条件（= != < >；维度值/度量阈值，如实展示）
             "filters": [f"{f.column} {f.op} {f.value}" for f in plan.filters],
             "sql": state.get("sql"),
             "tables": _extract_tables(state.get("sql"), budget.dialect),
@@ -342,7 +367,9 @@ def build_graph(
             "data_version": (snapshot_meta or {}).get("sha"),
             "data_refreshed_at": (snapshot_meta or {}).get("created_at"),
         }
-        return {"explanation": explanation}
+        # 回写 last_plan：本轮成功采纳的 Plan 成为下轮追问的指代基线（ADR-0014
+        # ②）；失败轮（blocked/error）不进 explain，last_plan 保持上轮成功值
+        return {"explanation": explanation, "last_plan": plan}
 
     # -- 节点：clarify（反问终端：unmatched/候选链放弃统一组装反问） --------
     def node_clarify(state: TurnState) -> dict[str, Any]:
@@ -484,7 +511,7 @@ class DataAgent:
         r1.kind  # "answer"；r1.sql / r1.rows / r1.explanation …
 
     多轮边界见 agent/state.py docstring：同一 session 连续提问 + 每轮留痕，
-    不做指代消解。
+    支持同构追问补全（"那 2014 年呢"，ADR-0014 ②），自由代词指代不猜。
     """
 
     def __init__(
@@ -520,7 +547,8 @@ class DataAgent:
 
         参数
         ----
-        question   : 自然语言问句（每次全量解析，MVP 不做指代消解）。
+        question   : 自然语言问句（每轮全量解析；同构残句追问走 last_plan 补全，
+                     自由代词指代会反问完整重述，见 ADR-0014 ②）。
         session_id : 会话键（缺省生成随机会话，单轮）。
 
         返回

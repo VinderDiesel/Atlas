@@ -438,5 +438,92 @@ class TestSessionTurns(unittest.TestCase):
         self.assertEqual(r.kind, "error")
 
 
+class TestFollowupResolution(unittest.TestCase):
+    """ADR-0014 ② 指代消解 MVP：多轮同构追问的图级链路契约。
+
+    - 同 session 连续提问：残句（无指标词）命中链接词 → 复用上轮 Plan 补全并执行
+    - 自由代词 / 相对时间 / 新会话首问残句 → 反问不猜、0 SQL 执行
+    """
+
+    def _agent(self, executor: FakeExecutor | None = None):
+        self.executor = executor or FakeExecutor()
+        return DataAgent(executor=self.executor, budget=BUDGET)
+
+    def test_change_time_second_turn_executes(self) -> None:
+        """上轮 2013 佣金 Top5 分支 → 「那 2014 年呢」→ 2014 同构 SQL。"""
+        agent = self._agent()
+        sid = "s-fu-time"
+        r1 = agent.ask(GOLD102_Q, session_id=sid)
+        self.assertEqual(r1.kind, "answer")
+        r2 = agent.ask("那 2014 年呢", session_id=sid)
+        self.assertEqual(r2.kind, "answer")
+        self.assertEqual(r2.metric, "commission_revenue")
+        self.assertEqual(r2.turns_in_session, 2)
+        self.assertEqual(len(self.executor.calls), 2)
+        sql2 = self.executor.calls[1]
+        self.assertNotEqual(sql2, self.executor.calls[0], "追问必须产出新 SQL（换年）")
+        self.assertIn("CalendarYearID = 2014", sql2)
+        self.assertIn("dim_broker.Branch", sql2)  # 维度结构同构继承
+        self.assertIn("Commission", sql2)
+        self.assertIn("LIMIT 5", sql2)
+
+    def test_change_dimension_second_turn_executes(self) -> None:
+        """「那按客户等级统计呢」→ 分组维度替换为 Tier（时间保持 2013）。"""
+        agent = self._agent()
+        sid = "s-fu-dim"
+        r1 = agent.ask(GOLD102_Q, session_id=sid)
+        self.assertEqual(r1.kind, "answer")
+        r2 = agent.ask("那按客户等级统计呢", session_id=sid)
+        self.assertEqual(r2.kind, "answer")
+        assert r2.explanation is not None
+        self.assertEqual(r2.explanation["dimensions"], ("Tier",))
+        sql2 = self.executor.calls[1]
+        self.assertIn("dim_customer.Tier", sql2)
+        self.assertIn("CalendarYearID = 2013", sql2)
+        self.assertIn("LIMIT 5", sql2)
+
+    def test_free_pronoun_clarifies_without_sql(self) -> None:
+        """自由代词「那它呢」→ 反问完整重述；不执行 SQL（不猜）。"""
+        agent = self._agent()
+        sid = "s-fu-pron"
+        r1 = agent.ask(GOLD102_Q, session_id=sid)
+        self.assertEqual(r1.kind, "answer")
+        r2 = agent.ask("那它呢", session_id=sid)
+        self.assertEqual(r2.kind, "clarify")
+        self.assertEqual(len(self.executor.calls), 1, "反问轮不得执行 SQL")
+        self.assertEqual(r2.clarification and r2.clarification.kind, "ambiguous")
+
+    def test_relative_time_followup_clarifies(self) -> None:
+        """「那去年呢」→ relative_time 反问（快照评测口径不漂移）。"""
+        agent = self._agent()
+        sid = "s-fu-rel"
+        agent.ask(GOLD102_Q, session_id=sid)
+        r2 = agent.ask("那去年呢", session_id=sid)
+        self.assertEqual(r2.kind, "clarify")
+        self.assertEqual(r2.clarification and r2.clarification.kind, "relative_time")
+        self.assertEqual(len(self.executor.calls), 1)
+
+    def test_fresh_session_followup_does_not_leak(self) -> None:
+        """跨会话隔离：新会话首问残句无 last_plan → 不误触发补全，正常反问。"""
+        agent = self._agent()
+        r = agent.ask("那 2014 年呢", session_id="s-fu-fresh")
+        self.assertEqual(r.kind, "clarify")
+        self.assertEqual(r.clarification and r.clarification.kind, "unmatched")
+        self.assertEqual(self.executor.calls, [], "无补全基线时残句不得执行 SQL")
+
+    def test_clarify_turn_does_not_update_last_plan(self) -> None:
+        """反问轮不改写 last_plan：其后的同构追问仍补全为最近成功口径。"""
+        agent = self._agent()
+        sid = "s-fu-mid"
+        r1 = agent.ask(GOLD102_Q, session_id=sid)  # 2013 Top5 分支
+        self.assertEqual(r1.kind, "answer")
+        r2 = agent.ask("那它呢", session_id=sid)  # 反问（不成功轮）
+        self.assertEqual(r2.kind, "clarify")
+        r3 = agent.ask("那 2014 年呢", session_id=sid)  # 仍应补全 2013 结构换 2014
+        self.assertEqual(r3.kind, "answer")
+        self.assertIn("CalendarYearID = 2014", self.executor.calls[1])
+        self.assertIn("dim_broker.Branch", self.executor.calls[1])
+
+
 if __name__ == "__main__":
     unittest.main()
