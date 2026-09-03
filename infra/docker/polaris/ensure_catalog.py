@@ -55,8 +55,9 @@ def _basic() -> str:
     return "Basic " + base64.b64encode(raw).decode()
 
 
-def _request(token: str, path: str, method: str = "GET", payload: dict | None = None,
-             etag: str | None = None) -> dict | None:
+def _request(
+    token: str, path: str, method: str = "GET", payload: dict | None = None, etag: str | None = None
+) -> dict | None:
     url = f"{BASE}/{path}"
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -115,13 +116,11 @@ def main() -> int:
     # 更新接口要求 UpdateCatalogRequest 包装（实测缺 currentEntityVersion 报 500），
     # 且必须带 If-Match 乐观锁头（实测缺失时 PUT 返回 200 但改动不持久化）
     payload = {"currentEntityVersion": version, "catalog": catalog}
-    _request(token, f"catalogs/{CATALOG_NAME}", method="PUT", payload=payload,
-             etag=str(version))
+    _request(token, f"catalogs/{CATALOG_NAME}", method="PUT", payload=payload, etag=str(version))
     # 自检：重新 GET 确认已持久化，防止静默失败
     after = _request(token, f"catalogs/{CATALOG_NAME}") or {}
     if after.get("storageConfigInfo", {}).get("endpoint") != PUBLIC_ENDPOINT:
-        print("[error] 提交后自检失败：endpoint 未生效，请检查 Polaris 日志。",
-              file=sys.stderr)
+        print("[error] 提交后自检失败：endpoint 未生效，请检查 Polaris 日志。", file=sys.stderr)
         return 3
     print("[done] catalog 已更新。")
     return 0

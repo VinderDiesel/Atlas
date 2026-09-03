@@ -116,6 +116,54 @@ class TestRowPolicy(unittest.TestCase):
         self.assertIn("x = 'safe'", sql)
         self.assertIn("y = 1", sql)
 
+    def test_qualified_column_rewritten_to_alias(self) -> None:
+        """Day 25：谓词按物理表名书写，注入时改写为编译 SQL 的实际别名。
+
+        别名遮蔽后原表名不可用（实测：FROM atlas.dwd.dim_broker AS db 下
+        写 WHERE dim_broker.branch=... 报 Unknown table），Guard 必须对齐。
+        """
+        policy = Policy(
+            name="rp_branch",
+            condition="dim_broker.branch = '{{ user.branch }}'",
+            columns=("*",),
+        )
+        sql, _ = enforce(
+            "SELECT * FROM atlas.dwd.dim_broker AS db WHERE region = 1",
+            policy=policy,
+            user_context={"branch": "east"},
+        )
+        self.assertIn("db.branch = 'east'", sql)
+        self.assertNotIn("dim_broker.branch", sql)
+        self.assertIn("region = 1", sql)  # 原有 WHERE 不丢
+
+    def test_policy_table_not_in_query_rejected(self) -> None:
+        """谓词引用的表不在查询中直接拒绝（跨表 join 注入属 Phase 2，不静默放行）。"""
+        policy = Policy(
+            name="rp_branch",
+            condition="dim_broker.branch = '{{ user.branch }}'",
+            columns=("*",),
+        )
+        with self.assertRaises(UnsafeQuery):
+            enforce(
+                "SELECT * FROM trades",
+                policy=policy,
+                user_context={"branch": "east"},
+            )
+
+    def test_alias_equal_to_table_name_keeps_original(self) -> None:
+        """编译器产物别名=原名（AS dim_broker）时无需改写。"""
+        policy = Policy(
+            name="rp_tier",
+            condition="dim_customer.tier <= {{ user.max_tier }}",
+            columns=("*",),
+        )
+        sql, _ = enforce(
+            "SELECT * FROM atlas.dwd.dim_customer AS dim_customer",
+            policy=policy,
+            user_context={"max_tier": 3},
+        )
+        self.assertIn("dim_customer.tier <= 3", sql)
+
 
 class TestBudget(unittest.TestCase):
     def test_exceeded(self) -> None:
