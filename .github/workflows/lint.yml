@@ -15,22 +15,27 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install minimal deps
-        # 语义层 lint 与契约测试的第三方顶层依赖：编译器/规划器 sqlglot+pyyaml、
-        # 治理/结构校验 jsonschema、图约束召回 networkx（pymilvus 在 milvus_client
-        # 内延迟导入，unittest 不触发，故不入列）；Day 39 起 eval.runner 顶层
-        # import mysql.connector（dry 模式同样触发）、agent.generator 顶层
-        # import dotenv（test_build_pairs/test_generator 触发），故补
-        # mysql-connector-python 与 python-dotenv。新增测试若引入新的第三方顶层
-        # import，必须同步此清单——本地 .venv 是全量安装，漏声明只在 CI 暴露。
-        run: pip install pyyaml jsonschema sqlglot networkx mysql-connector-python python-dotenv
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install deps (uv sync, mirrors local .venv)
+        # 历史：手工最小依赖清单两次漏声明（2026-09-03 CI 暴露 langgraph /
+        # opentelemetry / pyarrow（pyiceberg 传递）顶层 import 缺失，且两次都只
+        # 在干净 checkout 上暴露）→ 改与本地同口径的全量同步；测试若引入新的
+        # 第三方顶层 import，只需进 pyproject.toml（uv.lock 同 commit 更新）。
+        # runner 在美国：默认 PyPI 覆盖 pyproject 内清华镜像 default。
+        run: uv sync --extra dev --frozen
+        env:
+          UV_DEFAULT_INDEX: https://pypi.org/simple
 
       - name: Semantic layer lint (structure / governance / gold schema)
         # CI 无 FIBO 闭包：governance_validate 走权威注册表（data/fibo/iri_registry.json）轻量校验，
         # 闭包级深度校验（rdflib）由本地 data/fibo/validate_alignments.py 与 eval/gold/validate_gold.py 执行
-        run: make PYTHON=python lint
+        run: make PYTHON=.venv/bin/python lint
 
       - name: Contract tests (compiler / planner / guard / retrieval)
         # unittest 零测试框架依赖，pytest 兼容；覆盖 gold-101~103 编译链路、
         # 只读 Guard、BM25/图约束/元数据 Rerank 契约（graph_store 需 networkx）
-        run: make PYTHON=python test
+        run: make PYTHON=.venv/bin/python test

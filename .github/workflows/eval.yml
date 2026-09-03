@@ -42,26 +42,32 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install minimal deps
-        # 顶层依赖清单：compiler/guard(sqlglot)、语义 yaml(pyyaml)、结构校验
-        # (jsonschema)、runner 顶层 mysql-connector（dry 也 import）、图约束
-        # (networkx)。新增顶层 import 必须同步此清单（漏声明只在 CI 暴露）。
-        run: pip install pyyaml jsonschema sqlglot mysql-connector-python networkx
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install deps (uv sync, mirrors local .venv)
+        # 与 lint.yml 同口径（2026-09-03：手工最小清单漏 langgraph/opentelemetry/…
+        # 顶层 import，只在干净 checkout 暴露）→ 全量同步。默认 PyPI（runner 在美国）。
+        run: uv sync --extra dev --frozen
+        env:
+          UV_DEFAULT_INDEX: https://pypi.org/simple
 
       - name: Semantic layer lint (structure / governance / gold schema)
         # CI 无 FIBO 闭包：governance_validate 走权威注册表轻量校验，闭包级深度
         # 校验由本地 data/fibo/validate_alignments.py 执行（与 lint.yml 同口径）
-        run: make PYTHON=python lint
+        run: make PYTHON=.venv/bin/python lint
 
       - name: Contract tests
-        run: make PYTHON=python test
+        run: make PYTHON=.venv/bin/python test
 
       - name: Plan Acc regression (eval.runner --dry, no DB)
         # dry 模式 = Planner/Compiler 确定性回归（语义层与提示词变更的主信号）；
         # 产出 JSON 到文件，后续步骤机械转述（不手写数字）
         run: |
-          python -m eval.runner --dry > /tmp/dry-report.json
-          python - <<'PY'
+          .venv/bin/python -m eval.runner --dry > /tmp/dry-report.json
+          .venv/bin/python - <<'PY'
           import json
           report = json.load(open("/tmp/dry-report.json", encoding="utf-8"))
           s = report["summary"]
@@ -81,7 +87,7 @@ jobs:
       - name: Publish summary
         # 机械转述 dry 摘要到 PR/commit 摘要（数字来自 eval.runner 输出）
         run: |
-          python - <<'PY'
+          .venv/bin/python - <<'PY'
           import json
           report = json.load(open("/tmp/dry-report.json", encoding="utf-8"))
           s = report["summary"]
