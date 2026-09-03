@@ -31,8 +31,8 @@ CASH_SECURITY_MISMATCHES = [
 
 class TestGraphStructure(unittest.TestCase):
     def test_node_and_edge_counts(self) -> None:
-        """15 指标 + 8 数据集 + 维度字段都在图内，rel 边生效。"""
-        self.assertEqual(len(MODEL.metrics), 15)
+        """20 指标 + 8 数据集 + 维度字段都在图内，rel 边生效。"""
+        self.assertEqual(len(MODEL.metrics), 20)
         self.assertEqual(len(MODEL.relationships), 12)
         for metric in MODEL.metrics:
             self.assertTrue(GRAPH.datasets_for(metric))

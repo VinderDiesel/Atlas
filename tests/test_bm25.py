@@ -91,7 +91,7 @@ class TestSparseLexicalDeterminism(unittest.TestCase):
         from agent.compiler import SemanticModel
 
         docs = build_metric_docs(SemanticModel())
-        self.assertEqual(len(docs), 15)
+        self.assertEqual(len(docs), 20)  # Day 27 发布 5 派生指标后 15→20
         texts = {d.doc_id: d.text for d in docs}
         self.assertIn("佣金收入", texts["commission_revenue"])
         self.assertIn("成交证券数", texts["traded_security_count"])

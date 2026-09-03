@@ -65,11 +65,7 @@ class SemanticGraph:
         g = self._g
         # 1) metric → 引用数据集
         for name, expr in model.metrics.items():
-            refs = {
-                col.table
-                for col in parse_one(expr).find_all(exp.Column)
-                if col.table
-            }
+            refs = {col.table for col in parse_one(expr).find_all(exp.Column) if col.table}
             if not refs:  # 防御：表达式必须有显式表前缀（compiler 同样要求）
                 refs = {m.group(1) for m in _FIELD_REF_RE.finditer(expr)}
             self._metric_datasets[name] = refs
@@ -94,6 +90,18 @@ class SemanticGraph:
     def dimension_table(self, field: str) -> str | None:
         """维度字段所在数据集（无同义词字段或不存在 → None）。"""
         return self._field_ds.get(field)
+
+    def reachable_tables(self, metric: str) -> set[str]:
+        """指标的可达表集合（含主事实表）：主数据集 + 沿合法边可达的数据集。
+
+        schema linking 表级输出口径：候选指标可 join 的全部表
+        （与 Compiler._join_chain 同源的可达性规则；fact→fact 桥接与
+        dim→fact 回跳被排除，见模块 docstring 的边界声明）。
+        """
+        tables: set[str] = set()
+        for ds in self.datasets_for(metric):
+            tables.update(self._reachable_datasets(ds))
+        return tables
 
     def can_group_by(self, metric: str, field: str) -> bool:
         """指标能否按某维度字段分组（维度域可达性，见模块 docstring 边界）。
@@ -121,7 +129,7 @@ class SemanticGraph:
             for node in self._g.neighbors(_DATASET + cur):
                 if not node.startswith(_DATASET):
                     continue
-                nxt = node[len(_DATASET):]
+                nxt = node[len(_DATASET) :]
                 if nxt in visited:
                     continue
                 if cur.startswith("fact_"):
@@ -133,20 +141,14 @@ class SemanticGraph:
                 queue.append(nxt)
         return visited
 
-    def filter_candidates(
-        self, candidates: list[str], dimension_fields: list[str]
-    ) -> list[str]:
+    def filter_candidates(self, candidates: list[str], dimension_fields: list[str]) -> list[str]:
         """按维度约束过滤候选指标（保序）。
 
         全部 dimension_fields 都可达才保留；无维度约束时原样返回。
         """
         if not dimension_fields:
             return list(candidates)
-        return [
-            m
-            for m in candidates
-            if all(self.can_group_by(m, f) for f in dimension_fields)
-        ]
+        return [m for m in candidates if all(self.can_group_by(m, f) for f in dimension_fields)]
 
     def detect_dimensions(self, question: str) -> list[str]:
         """问句 → 命中的维度字段（子串匹配，不要求显式分组结构词）。
@@ -159,8 +161,7 @@ class SemanticGraph:
         hits = [
             name
             for name, syns in self._model.dimension_synonyms.items()
-            if any(s in question for s in syns)
-            and self.dimension_table(name) != "dim_date"
+            if any(s in question for s in syns) and self.dimension_table(name) != "dim_date"
         ]
         # 去重保序（同义词命中多个字段时按模型字段序）
         seen: set[str] = set()

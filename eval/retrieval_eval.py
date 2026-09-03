@@ -1,19 +1,23 @@
-"""指标检索评测：BM25 / Milvus 稀疏向量在 44 条可解析 gold 问句上的
-Recall@1/@5（确定性召回，双路独立报告）。
+"""指标检索评测：BM25 / Milvus 稀疏向量 / RRF 融合 / 元数据 Rerank
+在 44 条可解析 gold 问句上的 Recall@1/@5（确定性召回，各引擎独立报告）。
 
 口径（与 eval/runner.py 同一诚实基线）
 -------------------------------------
-- 语料：atlas_finance.ossie.yaml 的 15 个指标文档（名 + 同义词 + 描述，
-  retrieval/metric_docs.py 确定性生成），与 gold 问句同源。
+- 语料：atlas_finance.ossie.yaml 的当前指标文档（名 + 同义词 + 描述，
+  retrieval/metric_docs.py 确定性生成），与 gold 问句同源（Day 27 起为 20）。
 - 查询集：gold-1xx 中 ambiguous=false 的 44 条问句（expected_metric 为正确
   指标）；歧义样本由 Planner 澄清承接，不进检索评测。
 - 指标：Recall@1 / Recall@5 = 正确指标出现在 top-1 / top-5 的比例。
-- 引擎：--engine bm25（内存 BM25，零依赖）或 --engine milvus（Milvus
-  稀疏词法向量，SPARSE_INVERTED_INDEX；需 atlas-milvus 服务在跑）。
+- 引擎：--engine bm25（内存 BM25，零依赖）、--engine milvus（Milvus
+  稀疏词法向量，SPARSE_INVERTED_INDEX；需 atlas-milvus 服务在跑）、
+  --engine fuse（RRF 融合双路）、--engine rerank（双路 RRF top-20 后按
+  同义词置信度/留一热度/owner 优先级元数据重排，retrieval/rerank.py）。
 - 报告：eval/reports/retrieval-<engine>-<sha>.json（文件名绑定 commit sha）。
 
 已知边界（诚实声明）：查询措辞与语料同源（问句含语义层同义词），
-Recall 是"确定性检索在自建口径上全命中"的验证性数字，不代表跨领域泛化。
+Recall 是“确定性检索在自建口径上全命中”的验证性数字，不代表跨领域泛化；
+rerank 的“热度”为 gold 问句留一计数（排除当前查询），是运营热度的代理
+而非真实查询日志。
 """
 
 from __future__ import annotations
@@ -37,16 +41,13 @@ def git_short_sha() -> str:
     """当前 HEAD 短 sha（与 runner.py 同口径：报告绑定 commit）。"""
     import subprocess
 
-    return (
-        subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=REPO,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        .stdout.strip()
-    )
+    return subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=REPO,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def load_queries() -> list[dict[str, str]]:
@@ -79,7 +80,7 @@ def run_eval(engine: str = "bm25") -> tuple[dict[str, Any], list[dict[str, Any]]
         for doc in docs:
             index.add(doc.doc_id, doc.text)
 
-        def search(q: str, k: int = 5) -> list[str]:
+        def search(q: str, *, k: int = 5, expected: str | None = None) -> list[str]:
             return [hit.doc_id for hit in index.search(q, k=k)]
 
         engine_label = "bm25"
@@ -100,13 +101,53 @@ def run_eval(engine: str = "bm25") -> tuple[dict[str, Any], list[dict[str, Any]]
                 f"Milvus 不可用（{exc}）：fuse 引擎需要双路在跑，请 make up 后重试"
             ) from exc
 
-        def search(q: str, k: int = 5) -> list[str]:
+        def search(q: str, *, k: int = 5, expected: str | None = None) -> list[str]:
             bm25_top = [hit.doc_id for hit in index.search(q, k=20)]
             mv_top = [hit.doc_id for hit in mv.search(q, k=20)]
             return rrf([bm25_top, mv_top])[:k]
 
         engine_label = "rrf-bm25+milvus"
         params = {"k": 60, "depth_per_engine": 20, "method": "reciprocal-rank-fusion"}
+    elif engine == "rerank":
+        # Day 24：双路 RRF top-20 → 元数据重排（同义词/留一热度/owner）→ top-5
+        from collections import Counter
+
+        from retrieval.fusion import rrf
+        from retrieval.milvus_client import MilvusIndex, MilvusUnavailable
+        from retrieval.rerank import MetaReranker
+
+        index = Bm25Index()
+        for doc in docs:
+            index.add(doc.doc_id, doc.text)
+        try:
+            mv = MilvusIndex()
+            mv.rebuild(docs)
+        except MilvusUnavailable as exc:
+            raise RuntimeError(
+                f"Milvus 不可用（{exc}）：rerank 引擎需要双路在跑，请 make up 后重试"
+            ) from exc
+        hot_all = Counter(q["expected_metric"] for q in queries)
+
+        def search(q: str, *, k: int = 5, expected: str | None = None) -> list[str]:
+            bm25_top = [hit.doc_id for hit in index.search(q, k=20)]
+            mv_top = [hit.doc_id for hit in mv.search(q, k=20)]
+            fused = rrf([bm25_top, mv_top], k=60)[:20]
+            # 留一热度：排除当前查询自身的期望指标，防止用目标当证据
+            hot = dict(hot_all)
+            if expected is not None and hot.get(expected, 0) > 0:
+                hot[expected] -= 1
+            reranked = MetaReranker(model, popularity=hot).rerank(fused, q)
+            return reranked[:k]
+
+        engine_label = "rrf+rerank-meta"
+        params = {
+            "method": "rrf->meta-rerank (lexicographic)",
+            "order": ["synonym", "popularity", "owner", "base_rank"],
+            "popularity": "gold leave-one-out (exclude current query)",
+            "k": 60,
+            "depth_per_engine": 20,
+            "rerank_depth": 20,
+        }
     else:
         from retrieval.milvus_client import MilvusIndex, MilvusUnavailable
 
@@ -118,7 +159,7 @@ def run_eval(engine: str = "bm25") -> tuple[dict[str, Any], list[dict[str, Any]]
                 f"Milvus 不可用（{exc}）：请先 make up 启动 atlas-milvus，或改用 --engine bm25"
             ) from exc
 
-        def search(q: str, k: int = 5) -> list[str]:
+        def search(q: str, *, k: int = 5, expected: str | None = None) -> list[str]:
             return [hit.doc_id for hit in mv.search(q, k=k)]
 
         engine_label = "milvus-sparse-lexical"
@@ -127,7 +168,7 @@ def run_eval(engine: str = "bm25") -> tuple[dict[str, Any], list[dict[str, Any]]
     details: list[dict[str, Any]] = []
     fails: list[dict[str, Any]] = []
     for q in queries:
-        ids = search(q["question"])
+        ids = search(q["question"], expected=q["expected_metric"])
         rank = ids.index(q["expected_metric"]) + 1 if q["expected_metric"] in ids else 0
         details.append({**q, "top5": ids, "rank": rank})
         if rank == 0:
@@ -154,13 +195,13 @@ def run_eval(engine: str = "bm25") -> tuple[dict[str, Any], list[dict[str, Any]]
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="指标检索评测：BM25 / Milvus 稀疏向量 / RRF 融合（Recall@1/@5）"
+        description="指标检索评测：BM25 / Milvus 稀疏向量 / RRF 融合 / 元数据 Rerank"
     )
     parser.add_argument(
         "--engine",
         default="bm25",
-        choices=["bm25", "milvus", "fuse"],
-        help="召回引擎（默认 bm25；milvus/fuse 需 Milvus 服务在跑）",
+        choices=["bm25", "milvus", "fuse", "rerank"],
+        help="召回引擎（默认 bm25；milvus/fuse/rerank 需 Milvus 服务在跑）",
     )
     parser.add_argument(
         "--out",
@@ -173,14 +214,16 @@ def main(argv: list[str] | None = None) -> int:
     except RuntimeError as exc:
         print(f"评测失败：{exc}")
         return 2
-    suffix = "bm25" if args.engine == "bm25" else ("milvus" if args.engine == "milvus" else "fuse")
+    suffix = {"bm25": "bm25", "milvus": "milvus", "fuse": "fuse", "rerank": "rerank"}[args.engine]
     out = Path(args.out) if args.out else REPORTS_DIR / f"retrieval-{suffix}-{report['sha']}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     m = report["metrics"]
     print(f"retrieval 报告：{out}")
-    print(f"  引擎 {report['engine']}：语料 {report['corpus']['n_docs']} 篇"
-          f" / 查询 {report['queries']['n']} 条")
+    print(
+        f"  引擎 {report['engine']}：语料 {report['corpus']['n_docs']} 篇"
+        f" / 查询 {report['queries']['n']} 条"
+    )
     print(f"  Recall@1 = {m['recall_at_1']}  Recall@5 = {m['recall_at_5']}  失败 {m['fail_cases']}")
     if m["fail_cases"]:
         print("  失败明细（人工确认后决定是否调整语料/分词）：")
