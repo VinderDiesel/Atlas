@@ -241,12 +241,31 @@ class Compiler:
         if plan.time is not None:
             time_predicates.append(self._time_predicate(plan.time))
 
-        filter_predicates = [self._filter_predicate(f) for f in plan.filters]
+        # filter 拆分（ADR-0014 ①）：维度过滤 → WHERE（其表须入 join 目标）；
+        # 度量阈值（column == plan.metric）→ HAVING 聚合比较，无分组则无意义
+        having_predicates: list[exp.Expr] = []
+        where_filters: list[Filter] = []
+        for f in plan.filters:
+            if f.column == plan.metric:
+                if not dim_targets:
+                    raise CompileError(
+                        f"度量阈值过滤（{f.column} {f.op} {f.value}）需要分组维度，"
+                        "当前问句无可分组维度"
+                    )
+                having_predicates.append(self._compare(metric_ast.copy(), f.op, f.value))
+                continue
+            if self.model.find_field(f.column) is None:
+                raise CompileError(f"过滤字段不存在：{f.column}")
+            where_filters.append(f)
 
-        # join 链（BFS 最短路径）
+        # join 链（BFS 最短路径）；WHERE filter 引用的表也须可达
         target_ds = set(dim_targets)
         if time_predicates:
             target_ds.add("dim_date")
+        for f in where_filters:
+            found = self.model.find_field(f.column)
+            if found is not None:
+                target_ds.add(found[0])
         joins, notes = self._join_chain(main_ds, target_ds)
 
         # 组装 SELECT（AST 构建）：维度列在前（分组键可见），指标在后
@@ -263,12 +282,20 @@ class Compiler:
         if joins:
             select.set("joins", joins)
 
-        where_parts = time_predicates + filter_predicates
+        where_parts = time_predicates + [
+            self._filter_predicate(f) for f in where_filters
+        ]
         if where_parts:
             where_expr = where_parts[0]
             for p in where_parts[1:]:
                 where_expr = exp.and_(where_expr, p)
             select.set("where", exp.Where(this=where_expr))
+
+        if having_predicates:
+            having_expr = having_predicates[0]
+            for p in having_predicates[1:]:
+                having_expr = exp.and_(having_expr, p)
+            select.set("having", exp.Having(this=having_expr))
 
         if dim_targets:
             group_cols = [self._column_ast(ds_name, col) for ds_name, col in dim_targets.items()]
@@ -364,20 +391,30 @@ class Compiler:
             this=self._column_ast("dim_date", column), expression=exp.Literal.number(value)
         )
 
+    def _compare(self, left: exp.Expr, op: str, value: object) -> exp.Expr:
+        """比较谓词（WHERE/HAVING 共用）：left op value，值按类型转字面量。"""
+        ops = {
+            "=": exp.EQ,
+            "!=": exp.NEQ,
+            "<": exp.LT,
+            "<=": exp.LTE,
+            ">": exp.GT,
+            ">=": exp.GTE,
+        }
+        if op not in ops:
+            raise CompileError(f"不支持的过滤操作符：{op}")
+        if isinstance(value, (int, float)):
+            right: exp.Expr = exp.Literal.number(value)
+        else:
+            right = exp.Literal.string(str(value))
+        return ops[op](this=left, expression=right)
+
     def _filter_predicate(self, f: Filter) -> exp.Expr:
         found = self.model.find_field(f.column)
         if found is None:
             raise CompileError(f"过滤字段不存在：{f.column}")
         ds_name, field = found
-        left = self._column_ast(ds_name, field.physical)
-        ops = {"=": exp.EQ, "!=": exp.NEQ, "<": exp.LT, "<=": exp.LTE, ">": exp.GT, ">=": exp.GTE}
-        if f.op not in ops:
-            raise CompileError(f"不支持的过滤操作符：{f.op}")
-        if isinstance(f.value, (int, float)):
-            right: exp.Expr = exp.Literal.number(f.value)
-        else:
-            right = exp.Literal.string(str(f.value))
-        return ops[f.op](this=left, expression=right)
+        return self._compare(self._column_ast(ds_name, field.physical), f.op, f.value)
 
     def _join_chain(self, main_ds: str, targets: set[str]) -> tuple[list[exp.Join], list[str]]:
         """BFS 找最短 join 链；返回 (join AST 列表, 可解释说明)。

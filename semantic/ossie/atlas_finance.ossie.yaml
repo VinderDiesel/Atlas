@@ -21,6 +21,10 @@
 # 2026-09-03 修改：指标 15 → 20（第二批 P0 扩展），FIBO 覆盖审计补齐 9 条映射
 #   （22 → 31；概念清单 26 → 29，见 data/fibo/README.md 审计节）。
 #   total_trade_tax 因锁定闭包无贴切税务金额类，登记为待办（不硬补）。
+# 2026-09-03 修改（ADR-0014 ① filter MVP）：dim_date 三日历字段 is_time false → true
+#   （修复时间词"年/月/季度"混入 dimension_synonyms 导致"2013 年"误命中维度的缺陷）；
+#   total_trade_value/commission_revenue/total_trade_quantity 三指标 quality.gold_test_cases
+#   补入 filter 能力样本 gold-149 ~ 154（governance_validate 双向对齐）。
 
 version: "0.2.0.dev0"
 
@@ -988,7 +992,7 @@ semantic_model:
             description: 自然年（如 2024）
             datatype: Integer
             dimension:
-              is_time: false
+              is_time: true
             ai_context:
               synonyms:
                 - "年"
@@ -1002,7 +1006,7 @@ semantic_model:
             description: 自然月（如 202407）
             datatype: Integer
             dimension:
-              is_time: false
+              is_time: true
             ai_context:
               synonyms:
                 - "月"
@@ -1016,7 +1020,7 @@ semantic_model:
             description: 自然季度（如 20242）
             datatype: Integer
             dimension:
-              is_time: false
+              is_time: true
             ai_context:
               synonyms:
                 - "季度"
@@ -1168,7 +1172,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-101", "gold-116", "gold-123", "gold-124", "gold-141", "gold-146"],
+                  "gold_test_cases": ["gold-101", "gold-116", "gold-123", "gold-124", "gold-141", "gold-146", "gold-152"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }
@@ -1200,7 +1204,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-102", "gold-119", "gold-127", "gold-140"],
+                  "gold_test_cases": ["gold-102", "gold-119", "gold-127", "gold-140", "gold-149", "gold-151", "gold-153", "gold-154"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }
@@ -1359,7 +1363,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-105", "gold-117", "gold-125", "gold-126", "gold-144"],
+                  "gold_test_cases": ["gold-105", "gold-117", "gold-125", "gold-126", "gold-144", "gold-150"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }

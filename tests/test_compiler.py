@@ -9,7 +9,15 @@ import unittest
 
 from sqlglot import parse_one
 
-from agent.compiler import CompileError, Compiler, OrderSpec, Plan, SemanticModel, TimeSpec
+from agent.compiler import (
+    CompileError,
+    Compiler,
+    Filter,
+    OrderSpec,
+    Plan,
+    SemanticModel,
+    TimeSpec,
+)
 
 MODEL = SemanticModel()
 COMPILER = Compiler(MODEL)
@@ -64,6 +72,94 @@ class TestGoldFinance(unittest.TestCase):
             Plan(metric="total_trade_value", time=TimeSpec("quarter", "2013Q2")),
             Plan(metric="commission_revenue", dimensions=("Branch",), time=TimeSpec("year", 2013)),
             Plan(metric="holdings_value", time=TimeSpec("date", "2017-07-07")),
+        )
+        for plan in plans:
+            sql, _ = COMPILER.compile(plan)
+            self.assertEqual(parse_one(sql).sql(), sql)
+
+
+class TestFilterCompilation(unittest.TestCase):
+    """filter → SQL 编译契约（ADR-0014 ①：维度值 WHERE + 度量阈值 HAVING）。"""
+
+    def test_dimension_equality_where_with_auto_join(self) -> None:
+        """维度过滤表不在查询中时自动补 join（gold-149 形态）。"""
+        sql, _ = COMPILER.compile(
+            Plan(
+                metric="commission_revenue",
+                time=TimeSpec("year", 2013),
+                filters=(Filter("Branch", "=", "BR_X"),),
+            )
+        )
+        self.assertIn("dim_broker.Branch = 'BR_X'", sql)
+        self.assertIn("INNER JOIN atlas.dwd.dim_broker", sql)
+
+    def test_dimension_exclusion_neq(self) -> None:
+        sql, _ = COMPILER.compile(
+            Plan(
+                metric="total_trade_quantity",
+                time=TimeSpec("year", 2013),
+                filters=(Filter("Branch", "!=", "BR_X"),),
+            )
+        )
+        self.assertIn("dim_broker.Branch <> 'BR_X'", sql)
+
+    def test_metric_threshold_having(self) -> None:
+        """度量阈值（column == metric）→ HAVING 聚合比较（gold-151/154 形态）。"""
+        sql, _ = COMPILER.compile(
+            Plan(
+                metric="commission_revenue",
+                dimensions=("Branch",),
+                time=TimeSpec("year", 2013),
+                filters=(Filter("commission_revenue", ">", 10000000),),
+                order_by=(OrderSpec("commission_revenue", desc=True),),
+                limit=5,
+            )
+        )
+        self.assertIn("GROUP BY dim_broker.Branch", sql)
+        self.assertIn("HAVING SUM(fact_trades.Commission) > 10000000", sql)
+        self.assertNotIn("HAVING commission_revenue", sql)
+
+    def test_threshold_join_auto_join_and_having(self) -> None:
+        """维度过滤 + 度量阈值并存：WHERE 维度 + HAVING 阈值（gold-153 加阈值形态）。"""
+        sql, _ = COMPILER.compile(
+            Plan(
+                metric="commission_revenue",
+                dimensions=("Branch",),
+                time=TimeSpec("year", 2014),
+                filters=(Filter("commission_revenue", ">", 10000000), Filter("Tier", "=", 3)),
+            )
+        )
+        self.assertIn("dim_customer.Tier = 3", sql)
+        self.assertIn("INNER JOIN atlas.dwd.dim_customer", sql)
+        self.assertIn("HAVING SUM(fact_trades.Commission) > 10000000", sql)
+
+    def test_having_without_group_raises(self) -> None:
+        """度量阈值无分组维度 → 确定性报错（不静默降级为 WHERE）。"""
+        with self.assertRaises(CompileError):
+            COMPILER.compile(
+                Plan(metric="commission_revenue", filters=(Filter("commission_revenue", ">", 1),))
+            )
+
+    def test_unknown_filter_column_raises(self) -> None:
+        with self.assertRaises(CompileError):
+            COMPILER.compile(
+                Plan(metric="commission_revenue", filters=(Filter("not_a_field", "=", 1),))
+            )
+
+    def test_filter_sql_roundtrip_parsable(self) -> None:
+        """filter 生成的 SQL 必须可 sqlglot 往返（AGENTS.md 7.2）。"""
+        plans = (
+            Plan(
+                metric="commission_revenue",
+                dimensions=("Branch",),
+                time=TimeSpec("year", 2013),
+                filters=(Filter("commission_revenue", ">", 10000000),),
+            ),
+            Plan(
+                metric="commission_revenue",
+                time=TimeSpec("year", 2013),
+                filters=(Filter("Branch", "=", "BR_X"),),
+            ),
         )
         for plan in plans:
             sql, _ = COMPILER.compile(plan)

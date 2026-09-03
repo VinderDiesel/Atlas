@@ -1,6 +1,6 @@
 {
   "id": "gold-154",
-  "question": "2014 年佣金收入低于 50 万的分支，列出前 5 名",
+  "question": "2014 年按分支统计佣金收入低于 50 万的分支，列出前 5 名",
   "expected_metric": "commission_revenue",
   "expected_dimensions": [
     "Branch"
@@ -14,8 +14,8 @@
       "value": 500000
     }
   ],
-  "result_hash": null,
-  "snapshot_sha": "b47a6c1",
+  "result_hash": "a758904750cc05c3359f12f5cd3ae469a38604603f4b4a97688c8b8c0b21b3f9",
+  "snapshot_sha": "b7e9ce7",
   "tags": [
     "aggregation",
     "dimension_group_by",

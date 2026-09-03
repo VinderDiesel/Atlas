@@ -11,8 +11,11 @@
 - 维度解析要求**显式分组结构词**（"按X统计/分组"），且 X 命中 dim_* 维度表的
   非时间字段同义词；"账户/佣金/年"等通用词在无显式结构时不触发维度（避免误分组）
 - 相对时间（"上个月/最近"）不支持，返回 ClarificationRequest
-  （固定快照评测下相对时间会漂移，见 eval/gold/README.md）
-- filter 解析未实现（gold 用例未涉及），Plan.filters 恒为空
+  （固定快照评测下相对时间会漂移，见 eval/gold/README.md；ADR-0014 ③ 设计性不支持）
+- filter 解析（ADR-0014 ①）：支持维度值等值（"只看/仅统计 X"）、排除
+  （"排除/不含 X"）、度量阈值（"超过/低于 N"，HAVING 语义）；值含中文或
+  过滤短语无法归属维度字段时不产生 filter（仅当维度词命中而**值**模糊时才
+  反问，如 gold-155「核心分支」）；自由双指标比较不支持
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from agent.compiler import OrderSpec, Plan, SemanticModel, TimeSpec
+from agent.compiler import Filter, OrderSpec, Plan, SemanticModel, TimeSpec
 
 # 中文数字 → 阿拉伯数字（季度编号）
 _CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4}
@@ -51,6 +54,16 @@ _RELATIVE_TIME = (
 # 显式分组结构词："按分支统计 / 按客户等级分组"
 _GROUP_RE = re.compile(r"按(.+?)(?:统计|分组|维度|来看|看)")
 _TOP_N_RE = re.compile(r"前\s*(\d+)\s*名")
+
+# filter 触发结构（ADR-0014 ①；顺序无关，逐形态独立扫描）
+# - 维度值等值/排除：前缀词 + 目标短语，到分隔符截断
+_EQ_FILTER_RE = re.compile(r"(?:只看|只统计|仅统计|仅看|仅保留|仅取)\s*(.+?)(?=的|，|,|$)")
+_EXC_FILTER_RE = re.compile(r"(?:排除|不含|除去)\s*(.+?)(?=后|的|外|，|,|$)")
+# - 度量阈值（HAVING 语义）：比较词 + 数值 + 可选中文量级（"1000 万"）
+_THRESHOLD_GT_RE = re.compile(r"(?:超过|大于|高于|不小于|不低于)\s*([\d.]+)\s*(亿|千万|百万|万)?")
+_THRESHOLD_LT_RE = re.compile(r"(?:低于|小于|不足|不超过|不高于)\s*([\d.]+)\s*(亿|千万|百万|万)?")
+# 量级词须先匹配长形（千万 → 万），regex 交替顺序即优先级
+_CN_UNIT = {"亿": 100_000_000, "千万": 10_000_000, "百万": 1_000_000, "万": 10_000}
 
 
 @dataclass(frozen=True)
@@ -104,14 +117,19 @@ class Planner:
         # 3. 维度解析（显式分组结构 + 维度表同义词）
         dimensions = self._parse_dimensions(question)
 
-        # 4. "前 N 名" → 按指标降序 + limit
+        # 4. filter 解析（ADR-0014 ①）；值模糊 → 反问
+        filters = self._parse_filters(question, metric)
+        if isinstance(filters, ClarificationRequest):
+            return filters
+
+        # 5. "前 N 名" → 按指标降序 + limit
         order_by, limit = self._parse_top_n(question, metric)
 
         return Plan(
             metric=metric,
             dimensions=dimensions,
             time=time,
-            filters=(),
+            filters=filters,
             order_by=order_by,
             limit=limit,
         )
@@ -158,6 +176,77 @@ class Planner:
             if any(s in phrase for s in syns)
         ]
         return tuple(hits)
+
+    def _parse_filters(
+        self, question: str, metric: str
+    ) -> tuple[Filter, ...] | ClarificationRequest:
+        """filter 解析（ADR-0014 ①）。返回顺序固定：度量阈值在前，维度值在后。
+
+        维度词命中而**值**模糊（含中文/为空）→ ClarificationRequest（gold-155）；
+        过滤短语整体无法归属任何维度字段时不产生 filter（"只看/仅"等前缀
+        也可能是强调语，不做过度澄清）——两类不猜测边界见模块 docstring。
+        """
+        filters: list[Filter] = []
+        m = _THRESHOLD_GT_RE.search(question)
+        if m:
+            filters.append(Filter(metric, ">", self._cn_number(m.group(1), m.group(2))))
+        m = _THRESHOLD_LT_RE.search(question)
+        if m:
+            filters.append(Filter(metric, "<", self._cn_number(m.group(1), m.group(2))))
+        for prefix_re, op in ((_EQ_FILTER_RE, "="), (_EXC_FILTER_RE, "!=")):
+            m = prefix_re.search(question)
+            if not m:
+                continue
+            matched = self._match_dim_value(m.group(1))
+            if matched is None:
+                continue
+            field, raw_value, has_prefix = matched
+            if has_prefix:
+                return ClarificationRequest(
+                    question,
+                    (f"「{m.group(1)}」的取值无法唯一确定"
+                     "（维度词前带修饰，请给出精确值）",),
+                )
+            if raw_value == "":
+                return ClarificationRequest(
+                    question, (f"过滤目标缺少取值：{m.group(1)!r}，请给出精确值",)
+                )
+            if any("\u4e00" <= ch <= "\u9fff" for ch in raw_value):
+                return ClarificationRequest(
+                    question,
+                    (f"「{raw_value}」无法对应到 {field} 的已注册值/同义词"
+                     "（中文维度值暂不支持，请给出精确值）",),
+                )
+            value: str | int = raw_value
+            if re.fullmatch(r"\d+", raw_value):
+                value = int(raw_value)
+            filters.append(Filter(field, op, value))
+        return tuple(filters)
+
+    def _match_dim_value(self, phrase: str) -> tuple[str, str, bool] | None:
+        """过滤短语 → (维度字段名, 取值原文, 维度词前是否有修饰)。
+
+        返回 None = 短语不含任何维度词（"只看/仅"可能是强调语，不产生 filter）；
+        维度词前带修饰（如「核心分支」）→ has_prefix=True——修饰词可能是口语
+        定语，值无法确定性确认（gold-155 反问载体），由调用方澄清。
+        多 syn 命中取最长（"客户等级" 优先 "客户"）。
+        """
+        best: tuple[int, str, str, int] | None = None  # (syn 长, 字段名, 命中 syn, 位置)
+        for field, syns in self.model.dimension_synonyms.items():
+            for syn in syns:
+                pos = phrase.find(syn)
+                if pos >= 0 and (best is None or len(syn) > best[0]):
+                    best = (len(syn), field, syn, pos)
+        if best is None:
+            return None
+        _, field, syn, pos = best
+        return field, phrase[pos + len(syn) :].strip(), pos > 0
+
+    @staticmethod
+    def _cn_number(num: str, unit: str | None) -> int | float:
+        """"1000 万" → 10000000；有小数保留 float（1.5 亿 → 150000000.0 规约 int）。"""
+        value = float(num) * (_CN_UNIT[unit] if unit else 1)
+        return int(value) if value.is_integer() else value
 
     def _parse_top_n(self, question: str, metric: str) -> tuple[tuple[OrderSpec, ...], int]:
         """ "前 N 名" → 按指标降序 + limit=N；未命中则默认 limit=100。"""

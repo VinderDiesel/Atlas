@@ -11,7 +11,7 @@ import json
 import unittest
 from pathlib import Path
 
-from agent.compiler import OrderSpec, Plan, SemanticModel, TimeSpec
+from agent.compiler import Filter, OrderSpec, Plan, SemanticModel, TimeSpec
 from agent.planner import ClarificationRequest, Planner
 
 REPO = Path(__file__).resolve().parent.parent
@@ -83,6 +83,76 @@ class TestPlannerDeterminism(unittest.TestCase):
         sql, notes = compiler.compile(plan)
         self.assertIn("CalendarQtrID = 20132", sql)
         self.assertTrue(notes)
+
+
+class TestFilterParsing(unittest.TestCase):
+    """filter 解析契约（ADR-0014 ①，gold-149~155 评测载体）。"""
+
+    def test_gold_149_dimension_equality(self) -> None:
+        plan = PLANNER.plan(
+            "只看分支 IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD 的 2013 年佣金收入是多少？"
+        )
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(
+            plan.filters,
+            (Filter("Branch", "=", "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"),),
+        )
+
+    def test_gold_150_dimension_exclusion(self) -> None:
+        plan = PLANNER.plan(
+            "排除分支 IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD 后，2013 年总成交量是多少？"
+        )
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(
+            plan.filters,
+            (Filter("Branch", "!=", "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"),),
+        )
+
+    def test_gold_151_metric_threshold_having(self) -> None:
+        plan = PLANNER.plan("2013 年按分支统计佣金收入超过 1000 万的分支，列出前 5 名")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.dimensions, ("Branch",))
+        self.assertEqual(plan.filters, (Filter("commission_revenue", ">", 10000000),))
+
+    def test_gold_152_threshold_with_multi_dimension(self) -> None:
+        plan = PLANNER.plan("2015 年按分支和客户等级统计交易额，交易额超过 1 亿的取前 5 名")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.dimensions, ("Tier", "Branch"))
+        self.assertEqual(plan.filters, (Filter("total_trade_value", ">", 100000000),))
+
+    def test_gold_153_dimension_equality_with_group(self) -> None:
+        plan = PLANNER.plan("只看客户等级 3 的客户，按分支统计 2014 年佣金收入，列出前 5 名")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.dimensions, ("Branch",))
+        self.assertEqual(plan.filters, (Filter("Tier", "=", 3),))
+
+    def test_gold_154_threshold_lower_bound(self) -> None:
+        plan = PLANNER.plan("2014 年按分支统计佣金收入低于 50 万的分支，列出前 5 名")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.filters, (Filter("commission_revenue", "<", 500000),))
+
+    def test_gold_155_ambiguous_filter_value_asks_clarification(self) -> None:
+        """维度词前带修饰（「核心分支」）→ 值无法唯一确定 → 反问（gold-155）。"""
+        result = PLANNER.plan("只看核心分支的 2013 年佣金收入是多少？")
+        self.assertIsInstance(result, ClarificationRequest)
+
+    def test_emphasis_only_without_dimension_produces_no_filter(self) -> None:
+        """「只看」作强调语（短语无维度词）时不产生 filter 也不反问。"""
+        plan = PLANNER.plan("只看 2013 年佣金收入是多少？")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.filters, ())
+
+    def test_missing_filter_value_asks_clarification(self) -> None:
+        """维度词命中但无取值（「只看分支的…」）→ 反问。"""
+        result = PLANNER.plan("只看分支的 2013 年佣金收入是多少？")
+        self.assertIsInstance(result, ClarificationRequest)
 
 
 if __name__ == "__main__":

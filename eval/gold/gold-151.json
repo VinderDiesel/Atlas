@@ -1,6 +1,6 @@
 {
   "id": "gold-151",
-  "question": "2013 年佣金收入超过 1000 万的分支，列出前 5 名",
+  "question": "2013 年按分支统计佣金收入超过 1000 万的分支，列出前 5 名",
   "expected_metric": "commission_revenue",
   "expected_dimensions": [
     "Branch"
@@ -14,8 +14,8 @@
       "value": 10000000
     }
   ],
-  "result_hash": null,
-  "snapshot_sha": "b47a6c1",
+  "result_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "snapshot_sha": "b7e9ce7",
   "tags": [
     "aggregation",
     "dimension_group_by",

@@ -12,8 +12,8 @@
       "value": "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"
     }
   ],
-  "result_hash": null,
-  "snapshot_sha": "b47a6c1",
+  "result_hash": "11d97222b01ee70cb888cd7bbfd278868548125abd928070122d15e73ea0bfaf",
+  "snapshot_sha": "b7e9ce7",
   "tags": [
     "aggregation",
     "filter",

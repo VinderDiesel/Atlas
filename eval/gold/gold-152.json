@@ -15,8 +15,8 @@
       "value": 100000000
     }
   ],
-  "result_hash": null,
-  "snapshot_sha": "b47a6c1",
+  "result_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "snapshot_sha": "b7e9ce7",
   "tags": [
     "aggregation",
     "dimension_group_by",

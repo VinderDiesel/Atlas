@@ -1,6 +1,6 @@
 {
   "id": "gold-153",
-  "question": "只看等级 3 的客户，按分支统计 2014 年佣金收入，列出前 5 名",
+  "question": "只看客户等级 3 的客户，按分支统计 2014 年佣金收入，列出前 5 名",
   "expected_metric": "commission_revenue",
   "expected_dimensions": [
     "Branch"
@@ -14,8 +14,8 @@
       "value": 3
     }
   ],
-  "result_hash": null,
-  "snapshot_sha": "b47a6c1",
+  "result_hash": "148908772c6513deaba70c0b0fdc1f9b192747b3b665d591e91b81136962047a",
+  "snapshot_sha": "b7e9ce7",
   "tags": [
     "aggregation",
     "dimension_group_by",
