@@ -190,6 +190,51 @@ services:
     command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
 
   # ============================================================
+  # Atlas HTTP API（ADR-0012，serving/api.py）
+  # 服务面：/health 公开；/plan /compile /ask 需 Bearer JWT（make token 签发）
+  # - 容器网络内直连 Doris 9030（execute_sql 只读封装 + Guard 预算不变；
+  #   写面 loader/dwd 不入本容器）
+  # - 构建参数 GIT_SHA = 快照身份：镜像无 .git，由 ARG 注入 ATLAS_GIT_SHA
+  #   （eval/runner.git_short_sha 的 env 覆盖面）。默认当前数据装载 commit
+  #   7d48dcb（data/snapshots/ 唯一活动 meta）；数据重装后改宿主 .env 的
+  #   GIT_SHA 或显式 build args
+  # - ATLAS_JWT_SECRET 不落盘默认值（N9）：compose 从宿主 .env 注入运行时；
+  #   未设置则服务能起但签发/校验拒绝（serving/auth.py 报错提示）
+  # - 会话进程内内存态：重启即失；uvicorn 单进程（workers=1，会话不分裂）
+  # 部署与 curl 示例见 README「对外 HTTP API」小节
+  # ============================================================
+  atlas-api:
+    build:
+      context: .
+      dockerfile: infra/docker/api/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-7d48dcb}
+    container_name: atlas-api
+    depends_on:
+      doris-fe:
+        condition: service_healthy
+      polaris:
+        condition: service_healthy
+    environment:
+      ATLAS_JWT_SECRET: ${ATLAS_JWT_SECRET:-}
+      DORIS_HOST: atlas-doris-fe
+      DORIS_PORT: "9030"
+      DORIS_USER: ${DORIS_USER:-root}
+      DORIS_PASSWORD: ${DORIS_PASSWORD:-}
+    ports:
+      - "8001:8000" # 宿主机 8000 被用户资产配置服务占用，映射到 8001
+    # doris-fe 只在 doris_net（compose：指定 networks 即只入该网），
+    # atlas-api 必须同网才能解析 atlas-doris-fe:9030
+    networks:
+      - doris_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ============================================================
   # 可观测
   # ============================================================
   grafana:

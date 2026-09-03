@@ -1,0 +1,11 @@
+# Docker build context 排除（atlas-api 镜像；对照 .gitignore 防泄/瘦身）
+# .env 含密钥（ATLAS_JWT_SECRET）：只经 compose environment 注入运行时，绝不进镜像
+.git
+.venv
+__pycache__
+*.py[cod]
+.env
+.env.*
+data/raw
+data/raw-source
+.DS_Store

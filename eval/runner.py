@@ -54,7 +54,15 @@ MAX_ROWS = 10_000  # Guard 强制行数上限（gold SQL 自带更小 LIMIT，�
 
 
 def git_short_sha() -> str:
-    """当前 HEAD 短 sha：报告文件名与快照绑定键。"""
+    """当前 HEAD 短 sha：报告文件名与快照绑定键。
+
+    环境变量 ATLAS_GIT_SHA 优先（容器/无 .git 环境的身份注入，见
+    infra/docker/api/Dockerfile 与 docker-compose atlas-api）；未设置时走
+    git 命令（本地/CI 行为不变）。
+    """
+    injected = os.environ.get("ATLAS_GIT_SHA", "").strip()
+    if injected:
+        return injected
     out = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"],
         cwd=REPO_ROOT,
