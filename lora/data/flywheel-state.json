@@ -1,0 +1,19 @@
+{
+  "sha": "7d48dcb",
+  "ran_at": "2026-09-03T10:27:14+08:00",
+  "report": "/Users/yangxinlong/gitee/Atlas/eval/reports/7d48dcb.json",
+  "stages": {
+    "scan": {},
+    "export": {
+      "exported": 0,
+      "skipped_no_answer": 0,
+      "skipped_invalid_plan": 0
+    },
+    "build": {
+      "exit": 0
+    },
+    "train": {
+      "exit": 2
+    }
+  }
+}

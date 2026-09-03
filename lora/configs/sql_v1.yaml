@@ -1,0 +1,66 @@
+# sql_v1 adapter 训练配置（Day 37/38，ADR-0008）
+# owner: agent-onboarding@atlas.local；最后修改：2026-09-03
+#
+# 说明：本文件只含工程配置（超参/路径/门槛），训练结果数字一律由
+# lora/train.py 的 train-report.json 产出（AGENTS.md N1：禁止手写数字）。
+# 本机无 GPU 未实测训练分支——任何实测数字待 GPU 就绪后由脚本生成。
+
+# ---- 训练目标（ADR-0008 决策 1）----
+# SFT 目标 = 合法 Plan JSON（metric/dimensions/time/top_n），answer 形态由
+# lora/build_pairs.py mode=plan 构造并校验（与 agent/generator 推理同口径）。
+# SQL 不由模型生成：推理时由确定性 Compiler 编译 Plan（最小攻击面）。
+
+# ---- 底座与量化（ADR-0008 决策 2/5）----
+base_model: Qwen/Qwen2.5-7B-Instruct   # Apache-2.0；24G 不足时切 3B（config 级降级）
+quantization:
+  method: bitsandbytes                 # QLoRA nf4（依赖见 pyproject ml extra）
+  load_in_4bit: true
+  bnb_4bit_quant_type: nf4
+  bnb_4bit_compute_dtype: bfloat16
+
+# ---- LoRA 超参（public 基线默认值，未调参）----
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:                       # Qwen2.5 全注意力+MLP 线性层
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  task_type: CAUSAL_LM
+
+# ---- 训练（transformers.Trainer）----
+training:
+  epochs: 3
+  learning_rate: 2.0e-4
+  batch_size: 4
+  grad_accum_steps: 4                   # 有效 batch 16
+  max_length: 1024                      # 问句 ≤300 字 + Plan JSON ≤3000 字符，保守截断
+  warmup_ratio: 0.1
+  lr_scheduler: cosine
+  seed: 42
+  logging_steps: 10
+
+# ---- 模板（训练文本形态，与 prompts/generator_plan.yaml 的问答形态一致）----
+template:
+  prompt: "问题：{question}\n输出合法的计划 JSON（只输出一个 JSON，不要解释）："
+  # answer = 合法 Plan JSON 原样（question 部分 loss mask 掉，见 lora/train.py）
+
+# ---- 数据与门槛 ----
+data:
+  min_samples: 50                      # 低于门槛拒绝训练（防几条例样本烧 GPU 费）
+  max_samples: 2000
+
+# ---- 输出与下一步 ----
+output:
+  weights_dir: lora/weights/sql_v1      # 权重不入库（.gitignore）
+  adapter_name: sql_v1
+# serve（GPU 机上，vLLM 加载 adapter 后以 OpenAI 兼容端点暴露）：
+#   vllm serve Qwen/Qwen2.5-7B-Instruct --enable-lora --lora-modules sql_v1=lora/weights/sql_v1 \
+#     --served-model-name sql_v1 --port 8000
+#   然后：OPENAI_BASE_URL=http://localhost:8000/v1 OPENAI_API_KEY=stub MODEL=sql_v1 \
+#     uv run python -m eval.rag_eval --engine openai   # LoRA 行进入四策略对比
