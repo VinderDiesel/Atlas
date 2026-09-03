@@ -531,7 +531,7 @@ curl http://127.0.0.1:8001/health
 
 真链验收与报告：`make api-verify`（全 HTTP 栈 + 真 Doris + 锁定快照，A1 问→编→问
 EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；最新报告
-`eval/reports/api-acceptance-607f3f5.json`（A1 EX=557479f4a0f2 与快照一致）。
+`eval/reports/api-acceptance-8e5a64e.json`（A1 EX=557479f4a0f2 与快照一致）。
 部署前必读边界：进程内内存会话、workers=1、未做限流/审计/生产验证——见 KL #28。
 
 ---
