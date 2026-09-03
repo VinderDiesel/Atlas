@@ -131,7 +131,7 @@ def _plan_payload(plan: Plan) -> dict[str, Any]:
 
 def _turn_payload(result: TurnResult) -> dict[str, Any]:
     """TurnResult → 平铺 JSON：字段全集稳定输出（kind 无关字段为 null）。"""
-    return _jsonable(
+    payload = _jsonable(
         {
             "kind": result.kind,
             "session_id": result.session_id,
@@ -158,6 +158,8 @@ def _turn_payload(result: TurnResult) -> dict[str, Any]:
             "handoff_reason": result.handoff_reason,
         }
     )
+    assert isinstance(payload, dict)  # 静态收窄：_jsonable 递归后必为 dict
+    return payload
 
 
 def _compile_plan(body: CompileBody) -> Plan:

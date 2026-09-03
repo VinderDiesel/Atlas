@@ -54,7 +54,8 @@ WRITE_KEYWORDS = ("INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUN
 
 
 def load_gold(gold_id: str) -> dict[str, Any]:
-    return json.loads((GOLD_DIR / f"{gold_id}.json").read_text(encoding="utf-8"))
+    doc: dict[str, Any] = json.loads((GOLD_DIR / f"{gold_id}.json").read_text(encoding="utf-8"))
+    return doc
 
 
 def result_hash(rows: list[Any]) -> str:

@@ -153,11 +153,12 @@ def verify_token(token: str, *, secret: str | None = None) -> dict[str, object]:
     if not hmac.compare_digest(expected, actual):
         raise AuthError("JWT 签名校验失败")
     try:
-        payload = json.loads(_b64url_decode(body_part))
+        payload: dict[str, object] = json.loads(_b64url_decode(body_part))
     except (ValueError, json.JSONDecodeError) as exc:
         raise AuthError(f"JWT payload 解析失败：{exc}") from exc
     now = int(time.time())
-    if int(payload.get("exp", 0)) <= now:
+    exp = payload.get("exp", 0)
+    if not isinstance(exp, int) or exp <= now:
         raise AuthError("JWT 已过期")
     if payload.get("role") not in ROLE_DIRECTORY:
         raise AuthError(f"JWT role 未注册：{payload.get('role')!r}")
