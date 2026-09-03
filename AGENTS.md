@@ -96,11 +96,13 @@ atlas-data-platform/
 │   ├── graph.py         # 状态机：clarify→retrieve→plan→generate→validate→execute→explain
 │   ├── planner.py       # 问句 → Plan
 │   ├── compiler.py      # Plan → SQL（确定性）
-│   ├── security.py      # 只读 Guard
+│   ├── security/        # 只读 Guard（sql_guard.py）
+│   ├── factory.py       # CLI 与 HTTP API 共源的真实 Agent 工厂（ADR-0012）
+│   ├── cli.py           # plan / compile / ask 命令行入口
 │   ├── tools/           # Agent 可调用工具（确定性优先）
 │   └── prompts/         # 提示词（Git 版本管理，禁止内联在代码里）
 ├── retrieval/           # bm25 / milvus_client / graph_store
-├── serving/             # api / auth / gateway
+├── serving/             # api（HTTP 服务面 v1，ADR-0012）/ auth / 验证工具
 ├── observability/       # otel 埋点 / grafana dashboards
 ├── eval/
 │   ├── gold/            # 自建黄金集（主评测）

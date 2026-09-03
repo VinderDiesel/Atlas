@@ -455,7 +455,7 @@ atlas-data-platform/
 ├── agent/               # graph（LangGraph 状态机）/ planner / compiler / security / feedback /
 │                        #   tools（registry 四件套 · mcp_server · chart）/ cli / prompts
 ├── retrieval/           # bm25 / milvus_client / graph_store
-├── serving/             # api / auth / gateway
+├── serving/             # api（HTTP 服务面 v1，ADR-0012）/ auth / 验证工具
 ├── observability/       # otel / dashboards
 ├── eval/                # gold / spider / bird / runner / reports
 ├── lora/                # SQL 适配器训练与数据飞轮
@@ -489,6 +489,50 @@ atlas-data-platform/
 | `make rbac-verify` | Polaris 层对象级 RBAC 回归验证（`make rbac-verify-ensure` 幂等建 principal/roles/grants；需 `.env` 的 POLARIS_RBAC_*） |
 | `make metrics-verify` | 新发布指标编译 + Guard + Doris 实测验证（Day 27，产出 `eval/reports/metrics-verify-<sha>.json`） |
 | `make test` | 全量单元 + 契约测试 |
+| `make serve` | 启动 HTTP API（uvicorn 127.0.0.1:8000，单进程，见 §9.1） |
+| `make token` | 签发本地测试 JWT（默认 ROLE=hq_admin；如 `ROLE=branch_manager CONTEXT='{"branch": "east"}'`） |
+| `make api-verify` | HTTP API 真链验收（/plan→/compile→/ask + 认证，产出 `eval/reports/api-acceptance-<sha>.json`） |
+
+### 9.1 对外 HTTP API（v1）
+
+Atlas 的服务面（ADR-0012，落地 [serving/api.py](serving/api.py)）：同一确定性链路
+（Planner → Compiler → Guard → Doris 只读执行）的 HTTP 出口，engine=stub 确定性
+默认，LLM 引擎服务化属 Phase 2。
+
+| 端点 | 认证 | 请求 | 响应 |
+|---|---|---|---|
+| `GET /health` | 公开 | — | `{status, head_sha, snapshot_sha\|None}`（存活 + 快照绑定状态） |
+| `POST /plan` | Bearer | `{question}`（≤500 字符） | `{kind: "plan", plan}` 或 `{kind: "clarify", clarification}`（歧义 200，CLI exit 1 语义的 HTTP 化） |
+| `POST /compile` | Bearer | Plan JSON（`metric/dimensions/time/filters/order_by/limit`） | `{sql}`（Doris 只读方言）；结构非法/编译失败 422 |
+| `POST /ask` | Bearer | `{question, session_id?}` | TurnResult 全集（kind ∈ answer/clarify/blocked/error；rows 的 Decimal→str 保精度、datetime→ISO8601）；快照 meta 缺失 503 |
+
+认证：JWT（HS256）复用 `serving/auth.py`，密钥走 env `ATLAS_JWT_SECRET`（N9，
+无默认值）。本地签发测试 token：
+
+```bash
+make token                          # ROLE=hq_admin
+curl -H "Authorization: Bearer $(make token)" \
+  http://127.0.0.1:8000/plan -d '{"question":"2013 年第二季度总交易额是多少？"}'
+```
+
+> 本地 `make serve` 监听 127.0.0.1:8000；容器部署宿主端口映射为 **8001**
+> （本机 8000 被其他服务占用，见 compose 注释）——容器 curl 请用
+> `http://127.0.0.1:8001/`。
+
+容器化部署（单机，依赖 Doris 已在 compose 内）：
+
+```bash
+docker compose up -d --build atlas-api   # 8001:8000；镜像无 .git，快照身份由
+                                         # build arg GIT_SHA 注入（默认 7d48dcb，
+                                         # 即 data/snapshots/ 活动 meta 的数据装载
+                                         # commit；数据重装后更新 .env 的 GIT_SHA）
+curl http://127.0.0.1:8001/health
+```
+
+真链验收与报告：`make api-verify`（全 HTTP 栈 + 真 Doris + 锁定快照，A1 问→编→问
+EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；最新报告
+`eval/reports/api-acceptance-607f3f5.json`（A1 EX=557479f4a0f2 与快照一致）。
+部署前必读边界：进程内内存会话、workers=1、未做限流/审计/生产验证——见 KL #28。
 
 ---
 
@@ -593,6 +637,14 @@ atlas-data-platform/
     Commons 20250801）无贴切税务金额类（候选仅税务治理概念/经纪服务费，语义不贴切），
     补映射需先扩展闭包域并重跑冒烟验证，登记待办不硬补；审计方法与数字见
     `data/fibo/README.md` 覆盖审计节（2026-09-03）
+28. **HTTP API v1 边界（ADR-0012，2026-09-03）**：服务面为本地演示/集成面，非
+    生产部署——①会话是进程内内存态（MemorySaver checkpointer + 进程内轮数），
+    重启即失、无横向扩展；②uvicorn 必须 workers=1，多 worker = 会话分裂；③未做
+    限流/审计/生产化身份下推（0011 记录的 gateway 硬化项，v1 只有 JWT 认证无角色
+    策略注入，口径与 CLI 一致）；④engine=stub 确定性默认，LLM 引擎服务化属
+    Phase 2；⑤容器内 /ask 依赖构建时注入的快照身份 ATLAS_GIT_SHA（镜像无 .git）
+    且对应 meta 随仓库进入镜像——带 seed 数据的环境才可答；⑥/api 契约测试 16 例
+    （tests/test_api.py，fake 注入无 DB）+ 真链验收 make api-verify 在档
 
 **如果有真实企业数据，我会优先补做**：数据契约、IAM 集成、审计留痕、容灾、并发压测、模型红队测试、变更管理流程。
 
@@ -612,6 +664,7 @@ atlas-data-platform/
 | Data Agent 状态机与工具链（LangGraph 编排 / MCP 暴露 / 防幻觉图表 / 反馈与 handoff） | 已有工程经验 | 以确定性优先落地 agent/ 状态机（8 节点）+ tools 四件套 + MCP 工具服务器 + chart + feedback；6 场景 e2e 实测见 docs/e2e-acceptance.md（数字全部出自 eval/reports/e2e-acceptance.json，不另立声明） |
 | Ossie / Polaris / Iceberg / Doris | **需新建** | 单机部署、基准测试、维护 ADR（0002/0004/0005） |
 | Agent 安全执行与自动洞察 | **需新建** | 先做安全工具，再扩展规划与归因 |
+| HTTP API / 认证中间件 | 已有工程经验 | 以 FastAPI 落地 serving/api.py（ADR-0012：/health /plan /compile /ask + JWT），契约测试 16 例 + 真链验收 api-verify 在档 |
 
 ---
 
