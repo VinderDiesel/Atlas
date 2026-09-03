@@ -125,9 +125,17 @@ class Policy:
         return rendered
 
     def rewrite(self, tree: exp.Expr) -> exp.Expr:
-        """把谓词注入到 WHERE 子句（AND 连接，不覆盖已有条件）。"""
+        """把谓词注入到 WHERE 子句（AND 连接，不覆盖已有条件）。
+
+        注入前做**表引用对齐**（Day 25）：谓词按物理表名书写
+        （如 dim_broker.branch），编译 SQL 可能给表起了别名
+        （如 ``FROM atlas.dwd.dim_broker AS db``，别名遮蔽后原表名不可用），
+        因此把谓词列引用改写为 SQL 中的实际别名；谓词引用的表不在
+        SQL 中则拒绝（跨表注入需要 join 补充，属 Phase 2）。
+        """
         predicate_sql = self.condition
         predicate = sqlglot.parse_one(predicate_sql, read="clickhouse")
+        predicate = _qualify_predicate_to_sql(predicate, tree)
         tree = tree.copy()
         where = tree.find(exp.Where)
         if where is None:
@@ -167,6 +175,34 @@ def _escape_literal(value: object) -> str:
         raise UnsafeQuery(f"用户上下文字面量含非法字符：{text!r}")
     # 正则已排除单引号，此转义仅为纵深防御保留
     return text.replace("'", "''")
+
+
+def _qualify_predicate_to_sql(predicate: exp.Expr, tree: exp.Expr) -> exp.Expr:
+    """谓词的表限定列引用 → SQL 实际别名（无别名则保持原名）。
+
+    只处理形如 `dim_broker.branch = ...` 的限定列：列所在物理表在查询中
+    存在时（无论是否起别名）都合法；**不在查询中的表直接拒绝**——此时
+    需要沿语义模型 join 图补表（Phase 2），静默放行会产生引用不存在表
+    的坏 SQL。未限定的列（如 `branch = ...`）不做处理，保持兼容。
+    """
+    aliases: dict[str, str] = {}
+    for table in tree.find_all(exp.Table):
+        # 多段名（catalog.db.table）也按 base 名对齐；别名遮蔽后原表名不可引用
+        aliases[table.name] = table.alias or table.name
+    predicate = predicate.copy()
+    for column in predicate.find_all(exp.Column):
+        table_name = column.table
+        if not table_name:
+            continue
+        base = str(table_name).split(".")[-1]
+        if base not in aliases:
+            raise UnsafeQuery(
+                f"策略引用表 {base} 不在查询中（MVP 仅支持查询域内表，"
+                "跨表谓词需 join 注入，见 Known Limitations）"
+            )
+        if aliases[base] != base:
+            column.set("table", exp.to_identifier(aliases[base]))
+    return predicate
 
 
 def parse(sql: str, dialect: str) -> exp.Expr:

@@ -54,9 +54,7 @@ class TestGoldFinance(unittest.TestCase):
 
     def test_month_granularity_yyyym_encoding(self) -> None:
         """月粒度谓词必须匹配 TPC-DI YYYYM 编码（实测 201405 命中 0 行，回归防护）。"""
-        sql, _ = COMPILER.compile(
-            Plan(metric="trade_count", time=TimeSpec("month", 201405))
-        )
+        sql, _ = COMPILER.compile(Plan(metric="trade_count", time=TimeSpec("month", 201405)))
         # TimeSpec 用 YYYYMM（201405）承载，物理列是 YYYYM 拼接（2014 年 5 月 = 20145）
         self.assertIn("CalendarMonthID = 20145", sql)
 

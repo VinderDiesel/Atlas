@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -135,6 +136,7 @@ class SemanticModel:
         self.metrics: dict[str, str] = {}
         self.metric_descriptions: dict[str, str] = {}
         self.metric_synonyms: dict[str, tuple[str, ...]] = {}
+        self.metric_owners: dict[str, str] = {}
         self.dimension_synonyms: dict[str, tuple[str, ...]] = {}
 
         for ds in model["datasets"]:
@@ -182,6 +184,16 @@ class SemanticModel:
             if isinstance(desc, str):
                 self.metric_descriptions[m["name"]] = desc
             self.metric_synonyms[m["name"]] = tuple(m.get("ai_context", {}).get("synonyms", []))
+            # ATLAS 治理扩展 → owner（供检索 rerank 的 owner 优先级信号使用）
+            owner = ""
+            for ext in m.get("custom_extensions", []):
+                if ext.get("vendor_name") == "ATLAS":
+                    try:
+                        gov = json.loads(ext["data"]).get("governance", {})
+                    except (KeyError, json.JSONDecodeError):
+                        continue
+                    owner = str(gov.get("owner", ""))
+            self.metric_owners[m["name"]] = owner
 
     def find_field(self, field_name: str) -> tuple[str, Field] | None:
         """按逻辑字段名查找（维度解析：branch → dim_broker.Branch）。"""

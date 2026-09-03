@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from agent.compiler import OrderSpec, Plan, SemanticModel, TimeSpec
 
@@ -54,11 +55,19 @@ _TOP_N_RE = re.compile(r"前\s*(\d+)\s*名")
 
 @dataclass(frozen=True)
 class ClarificationRequest:
-    """歧义澄清请求：Planner 无法确定性解析时返回，Agent 应反问而不是猜（gold-104）。"""
+    """歧义澄清请求：Planner 无法确定性解析时返回，Agent 应反问而不是猜（gold-104）。
+
+    kind 语义（Day 43 图路由用，见 agent/graph.py）：
+    - ambiguous：问句命中多个指标口径，歧义，反问（不可安全路由到候选链）
+    - relative_time：相对时间（固定快照下会漂移），反问绝对时间
+    - unmatched：未命中任何指标同义词（新措辞/超范围）——图可配置走候选链
+      （retrieve → generate → validate），默认也是反问 + 附检索候选。
+    """
 
     question: str
     reasons: tuple[str, ...]
     candidates: tuple[str, ...] = ()
+    kind: Literal["ambiguous", "relative_time", "unmatched"] = "ambiguous"
 
 
 class Planner:
@@ -76,7 +85,11 @@ class Planner:
             if any(s in question for s in syns)
         ]
         if not metric_hits:
-            return ClarificationRequest(question, ("无法确定指标口径（问句未命中任何指标同义词）",))
+            return ClarificationRequest(
+                question,
+                ("无法确定指标口径（问句未命中任何指标同义词）",),
+                kind="unmatched",
+            )
         if len(metric_hits) > 1:
             return ClarificationRequest(
                 question, ("指标口径歧义（命中多个指标）",), tuple(metric_hits)
@@ -111,6 +124,7 @@ class Planner:
             return ClarificationRequest(
                 question,
                 ("不支持相对时间（固定快照评测下会漂移，请使用绝对日期）",),
+                kind="relative_time",
             )
         m = _DATE_RE.search(question)
         if m:
