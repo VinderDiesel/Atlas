@@ -108,8 +108,8 @@ Apache Ossie Core Spec（semantic_model / datasets / fields / relationships / me
 - **企业已有 dbt / Cube 资产** → 优先复用，Ossie 作为交换中间格式
 - **0.2.0 正式版 schema 与 draft 差异过大** → 重新评估迁移成本
 
-**面试时必须主动说明这三点。** 自研治理层 + 标准规范层的组合，
-是为了展示架构判断；不是对所有场景的通用建议。
+**对外介绍时必须主动说明这三点。** 自研治理层 + 标准规范层的组合，
+是架构判断而非对所有场景的通用建议。
 
 ---
 

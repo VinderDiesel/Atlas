@@ -80,8 +80,8 @@ Iceberg + Polaris + Doris（物理层）
 
 1. **补 Ossie 信任缺口 = 项目核心价值**：ADR-0002 已论证"Ossie 不标准化信任"是企业落地最大缺口，
    FIBO 映射给出标准化的答案，且可审计、可评测
-2. **双标准叙事升级**：Ossie（Apache 孵化，语义表达）+ FIBO（OMG 标准，金融概念）——
-   从"全栈 Apache"升级为"行业标准双支柱"，面试叙事更完整（FIBO 非 Apache 项目，
+2. **双标准技术叙事**：Ossie（Apache 孵化，语义表达）+ FIBO（OMG 标准，金融概念）——
+   从"全栈 Apache"升级为"行业标准双支柱"，技术叙事更完整（FIBO 非 Apache 项目，
    但 ADR-0004 口径是"尽可能"采用 Apache，且 FIBO 是 OMG 标准，属于行业标准范畴）
 3. **许可证无风险**：MIT 许可比 CC 系列更宽松，个人项目可放心使用；商标署名要求成本极低
 4. **与官方 AI 趋势对齐**：EDM Council 官方将 FIBO 定位为 AI 数据发现/分类的基础，
@@ -101,7 +101,7 @@ Iceberg + Polaris + Doris（物理层）
 | FIBO 季度更新 | 概念 IRI 可能变化 | 锁定 FIBO release（记录具体 commit/tag sha），随语义层版本演进 |
 | 新增依赖 | `rdflib` 进入依赖树 | MIT 兼容，无冲突；仅解析层使用，不进入查询路径 |
 | 商标与署名 | FIBO 是 EDM Council 商标 | README 与 NOTICE 注明"FIBO is a trademark of EDM Council, Inc." |
-| 面试追问"为何不全量用 FIBO" | — | 标准答案：FIBO 无数据、无指标计算语义；Ossie 管表达、FIBO 管概念，分层职责不同 |
+| 评审追问"为何不全量用 FIBO" | — | 标准答案：FIBO 无数据、无指标计算语义；Ossie 管表达、FIBO 管概念，分层职责不同 |
 
 ---
 

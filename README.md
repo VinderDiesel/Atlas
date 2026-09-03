@@ -4,14 +4,16 @@
 >
 > Status: **under active development**
 > 所有数字来自可复现脚本产物，不是营销断言。见 `EVAL_REPORT.md`。
+> v0.1 发布说明与已知边界：`docs/release-notes-v0.1.md`
 
 ---
 
 ## 0. 一句话定位
 
-Atlas 是一个**个人主导建设的 AI 数据平台设计项目**：以**金融为主场景**（TPC-DI 零售经纪数据），
-**FIBO 金融业务本体作为语义锚点**（L2 概念对齐层，ADR-0007），使用声明式语义层、指标编排、
-受控 SQL 执行与 LangGraph Agent，打通**业务术语 → FIBO 概念 → 指标计划 → 安全查询 → 可解释结果 → 评测回流**的完整闭环。
+Atlas 是一个**以真实可落地为目标构建的金融语义数据系统**（个人预算内：单机 + 公开数据，非企业生产环境）：
+以**金融为主场景**，
+**FIBO 金融业务本体作为语义锚点**，使用声明式语义层、指标编排、受控 SQL 执行与 LangGraph Agent，
+打通**业务术语 → FIBO 概念 → 指标计划 → 安全查询 → 可解释结果 → 评测回流**的完整闭环。
 
 **它刻意不做的事**：不训练基座模型、不追求 NL2SQL 榜单分数、不声称企业级生产能力。
 **它刻意做好的事**：口径唯一、权限下推、SQL 只读、结果可解释、评测可复现。
@@ -65,8 +67,9 @@ Atlas 是一个**个人主导建设的 AI 数据平台设计项目**：以**金�
                         │
 ┌───────────────────────▼──────────────────────────────────────┐
 │  Data Agent（LangGraph 状态机；确定性工具优先）              │
-│  clarify → retrieve → plan → generate → validate → execute   │
-│  → explain → visualize → reflect → handoff                   │
+│  落地（Day 43-48）：plan → execute → explain 确定性主链，  │
+│  歧义反问 clarify / 候选链 generate·validate / handoff 等   │
+│  条件分支；端到端验收见 docs/e2e-acceptance.md              │
 └──────┬──────────────┬───────────────┬───────────────┬────────┘
        │              │               │               │
 ┌──────▼──────┐ ┌─────▼─────┐ ┌──────▼──────┐ ┌──────▼──────┐
@@ -103,7 +106,9 @@ Atlas 是一个**个人主导建设的 AI 数据平台设计项目**：以**金�
 
 ## 3. 30 分钟快速开始
 
-> ⚠️ 以下步骤处于**待验证**状态。首次跑通后请回填真实耗时与遇到的问题，并更新本节。
+> 以下命令均按开发日程逐条实测回填（状态与数据来源见 3.3 勾选清单与 §9 命令速查）；
+> `make seed` 耗时分钟级（装载 17 张 ODS 并核验）；环境差异（端口占用 / Doris 内存）处理见
+> infra/docker 与 ADR-0004 降级路径。
 
 ### 3.1 前置条件
 
@@ -148,7 +153,7 @@ make eval
 # 6) 生成评测报告
 make report && cat EVAL_REPORT.md
 
-# 7) 导出为 dbt MetricFlow YAML（证明语义层非封闭）
+# 7) 导出为 dbt MetricFlow YAML（证明语义层非封闭；20 指标三态映射报告见 exports/）
 make export
 ```
 
@@ -164,7 +169,31 @@ make export
 - [x] `make eval` 已跑通且幂等：金融段 48 例（44 可解析 + 4 歧义）Plan Acc 44/44、歧义反问 4/4、EX 44/44，报告 `eval/reports/b47a6c1.json`（gold 共 50 条含零售 2，50 条目标达成，见 5.3）
 - [x] `make retrieve` 指标检索双路实测：语料 15 指标文档（与 gold 同源）、查询 44 条可解析问句；BM25 Recall@1 44/44、Milvus 稀疏向量 Recall@1 42/44（两路 @5 均 44/44），报告 `eval/reports/retrieval-bm25-b47a6c1.json` / `retrieval-milvus-b47a6c1.json`
 - [x] `make retrieve ENGINE=fuse` RRF 融合实测：BM25 + Milvus 双路各 top-20 融合后 Recall@1 = 44/44、@5 = 44/44（修复向量路 2 条 top-1 失手），报告 `eval/reports/retrieval-fuse-b47a6c1.json`；SemanticGraph 图约束过滤跨实体错配（现金域 × 证券维度），13 组 gold 维度样本契约测试全保留（tests/test_graph_store.py）
-- [ ] Grafana 面板能看到 TTFT / p95 / token_cost
+- [x] `make retrieve ENGINE=rerank` 元数据 Rerank 实测：双路 RRF top-20 后按词典序（同义词置信度 → 留一热度 → owner）重排，Recall@1 = 44/44、@5 = 44/44，报告 `eval/reports/retrieval-rerank-7d48dcb.json`；加权线性混合版曾实测 34/44@1（热度分系统性推高恒在热门指标），存档 `retrieval-rerank-7d48dcb.linear-weighted.json`，词典序修正设计理由见 retrieval/rerank.py；15 指标治理补齐（11 个新指标补 ATLAS 扩展），gold_test_cases 与评测集双向一致性由 governance_validate 强制
+- [x] Day 25 三角色行级权限验证：同一问句（gold-146「按分支和客户等级统计 2015 年交易额 Top5」）走同一 Planner/Compiler/Guard 链，仅 JWT 角色不同 → 注入不同谓词 → Doris 实测：hq_admin 5 行 / branch_manager 2 行（仅本人分支）/ compliance_auditor 5 行（tier≤3，排除 tier8 与 NULL 档），结果差异集 3；权限生效在 SQL 谓词层（Guard 别名对齐 + 二次只读校验），非应用层过滤，报告 `eval/reports/rls-verify-7d48dcb.json`，截图 `docs/screenshots/rls-verify.png`
+- [x] Day 25 Polaris 层 RBAC（纵深第二层验证）：同一 catalog（atlas，25 表）两个 principal——root 全可见；atlas_analyst（受限只读，仅授 dwd.dim_broker/dim_customer 表级权限）list_namespaces/list_tables Forbidden（防枚举）、load 授权表 OK、load fact_trades Forbidden，报告 `eval/reports/polaris-rbac-7d48dcb.json`，截图 `docs/screenshots/polaris-rbac.png`
+- [x] Day 26 元数据抽取器：`spark/metadata_parser.py` 确定性抽取（sqlglot Tokenizer 提注释规避字符串内 `--` 误判 + AST 提结构），25 个 SQL 脚本（sql/dwd 8 + loader 生成的 tpcdi ODS DDL 17）实测：dataset 候选 25（9 已注册）、measure 候选 42（13 已注册）、聚合 metric 候选 1（`daily_net` 账户日净额，未注册=新候选池）；主键/代理键/旗标/建库语句与窗口函数正确排除，候选不产已注册对象（known 标记防 N8），报告 `eval/reports/metadata-extract-7d48dcb.json`；候选≠发布（Day 27 人工审核）；TPC-DS 脚本随 ADR-0006 已退场，语料口径记录于任务清单 Day 26
+- [x] Day 27 审核与发布：人工审核 Day 26 抽取候选——ODS 原始层 measure 候选拒绝入分析语义层（无权威口径锚点，理由记录于发布单）、`daily_net` 未物化登记待物化；**发布 5 个可计算派生指标**到 `atlas_finance.ossie.yaml`（15→20 metrics，governance v1 active + lineage，FIBO 概念映射 +5 键 MonetaryAmount/Fee/Balance）；`make lint` 全绿；新工具 `serving/metrics_verify.py` 走真实链路（YAML 权威表达式 → Compiler → Guard → Doris）实测：平均每笔成交金额 27578.61 / 平均每笔佣金 89.57 / 佣金率 0.3247% / 户均持仓市值 1136660.85 / 户均现金余额 -32465124.70（负值系数据特性，见 Known Limitations #17），报告 `eval/reports/metrics-verify-7d48dcb.json`；发布审核判定记录 `semantic/migrations/2026-09-02-release-day27.md`
+- [x] Day 27 指标版本机制：`governance_validate.py` 新增 supersedes 链跨文件校验——取代目标存在、非自身、新版本号严格大于被取代版本（递增天然防环）、被取代者不得仍为 active、治理记录不得重名；演进规范＝新名 + supersedes 旧名（同名全局唯一由 ossie_validate 强制，N8）；契约测试 10 例 `tests/test_governance_validate.py`，CI 经 `make lint` 自动执行
+- [x] Day 27 语料扩展回归（15→20 指标文档）：bm25 Recall@1 44/44→41/44、Milvus 42/44→35/44、fuse 44/44→40/44（三路 @5 均保持 44/44；15 语料旧值 44/42/44 记录于上两行）；rerank 主链路 44/44 无损；归因与后续见 Known Limitations #18；配套修复：Doris FE 官方默认 JVM 堆 8G 吃满单机内存致全表聚合查询 OOM → compose 挂载自定义 fe.conf（`infra/docker/doris/fe.conf`，Xmx2g），FE 内存 5.5G→1.0G 实测（docker stats）
+- [x] Day 28 P1 端到端验收（`make p1-verify`，serving/p1_acceptance.py）：gold-102「按分支统计 2013 年佣金收入 Top5」全链路 = 唯一路由 → commission_revenue@v1（governance active）→ 编译断言 → Guard 注入行级策略 → Doris 实测；5 道 gates 全过：唯一路由 / @v1 / LIMIT+谓词 / **恶意 SQL 10 条全拒**（INSERT/UPDATE/DELETE/DROP/ALTER/GRANT/CREATE/sleep/pg_sleep/benchmark）/ **EX 匹配**（hq_admin 结果 sha256 = gold-102 锚定 hash）；branch_manager 只见注入分支 1 行；报告 `eval/reports/p1-chain-7d48dcb.json`、截图 `docs/screenshots/p1-chain.png`、验收记录 `docs/p1-acceptance.md`、复盘 `docs/retro-p1.md`
+- [x] Day 29 schema linking（`make schema-link`，agent/tools/schema_linker.py）：两阶段 = 图域约束粗筛（SemanticGraph 可达性预检，跨实体错配打分前剔除）→ 受限候选域打分（子域 BM25，可选双路 RRF）→ 元数据重排（同义词置信度主键）；44 条 gold 上 **指标 Recall@1 = 44/44**（同日 BM25 全量域单路基线 41/44——KL#18 主链路修复）、@3/@5 = 44/44、表覆盖 44/44（下界验证口径，6 表域无区分度如实声明）；报告 `eval/reports/schema-link-bm25-7d48dcb.json`，契约测试 7 例 `tests/test_schema_linker.py`（含 KL#18 市值问句回归、现金×证券错配剔除）
+- [x] Day 30 compiler-only 基线（`make eval` + `make baseline`）：50 条 gold 盘存分离报告——金融段 48 条（44 可解析 + 4 歧义）全量实测 Plan Acc **44/44**、歧义反问 **4/4**、EX **44/44**（与 b47a6c1 时代锚定 hash 一致，0 失败 0 错误）、零售段 2 条如实跳过不混报；基线分析：**注册语义域内确定性链零 LLM 覆盖 48/48**（0 样本需要生成式猜测），域外边界不推断；报告 `eval/reports/7d48dcb.json` + `eval/reports/baseline-compiler-7d48dcb.json`，分析 `docs/baseline-compiler.md`；新快照 `data/snapshots/7d48dcb.meta.json`（数据指纹与 b47a6c1 一致）
+- [x] Day 31-32 LLM 策略（`make rag-eval ENGINE=openai|stub`，agent/generator.py）：Generator = 问句 → **Plan 候选**（metric/dimensions/time/top_n，SQL 一律由确定性 Compiler 生成，Guard 只兜底 Compiler 产物——最小攻击面）；Prompt 资产 `agent/prompts/generator_plan.yaml`（version/owner/changelog 契约）；stub 引擎链路自检 44/44+4/4+44/44 与基线同口径（报告 `rag-llm-stub-7d48dcb.json`，显式声明 stub 不代表 LLM 能力）；**openai 实测（2026-09-03 端点就绪）：44/44 Plan Acc + 4/4 歧义反问 + 44/44 EX + 0 拒绝**，与 compiler-only 持平（deepseek-v4-flash，99597 tokens、2564.3ms/条、$0.0179 估算——报告 `rag-llm-openai-7d48dcb.json`）；实测驱动两处修复：max_tokens 300→800（截断拒答）与维度顺序注册序规范化（gold-146 hash 口径）；公开集重新评估：Spider 判定历史对照不再新增，BIRD finance 对照待 text2sql 生成器可用（`eval/spider|bird/README.md` 阻塞与恢复登记）
+- [x] Day 33 自洽投票与执行校验（agent/tools/）：execution_validator 形态检查（空结果/全 NULL/非分组多行 → issues）+ self_consistency（候选执行 hash 聚类取众数、平局取候选序、top1 失败自动回退 top-k 首个有效），13 例契约测试全过；gold 域 0 失败 → 回退链 0 触发为设计结论（注册域不需要自愈）；LLM 单采样全量实测 44/44 无失败 → 多采样 0 触发为实测结论（LoRA 行解锁后由 lora-sc 承接）
+- [x] Day 34 四策略对比（`make compare`，eval/compare_4way.py）：六维表 EX / Plan Acc / Token / Latency / Cost / 拒绝率——compiler-only 44/44 / 44/44 / 0（确定性设计事实）/ 178.6ms（现场重测）/ 0 / 0/44；rag-llm(openai) 44/44 / 44/44 / 99597 / 2564.3ms / $0.0179（估算）/ 0/44——**同分不同代价：注册域 LLM 无增量，确定性优先量级差异实证**；**lora / lora-sc 两行 blocked**（仅无 GPU，LLM 端点已就绪，不编数字 AGENTS.md N1）；所有策略 SQL 同一 Guard 无旁路（报告 `compare-4way-7d48dcb.json`）
+- [x] Day 35 失败样本体系：7 类分类 schema（eval/failures/categories.json）+ 自动归类（failure_collect.py）+ 四步流程 README（人工确认后才可进 SFT）；compiler-only / rag-llm-stub / rag-llm-openai 三份报告程序化扫描 **0 失败**——空集是脚本产物不是假设；LLM 实测暴露的缺陷（截断/维度序）在评测侧修复归零，失败样本的价值以口径修复兑现（Day 31 补测记录）
+- [x] Day 36 训练数据构造 + **架构对齐修正**（lora/build_pairs.py）：pair 形态 = question → **合法 Plan JSON**（mode=plan，非任务书旧字面 question→SQL；校验与推理共用模块级 `agent.generator.validate_plan_json`，ADR-0008 同口径）；三道红线 = gold 问句逐字拒绝 + 同义词/数字归一模板级检测 + 去重质量过滤（13 例契约测试锁定）；`lora/data/README.md` 数据源政策——gold 与 ETL SQL 不可作训练源，**空语料为设计结论**（脚本实测 [empty] 为证）
+- [x] Day 37-38 LoRA 训练栈（ADR-0008）：`lora/train.py` 前置检查 exit 2 模式（语料非空 → 全量 validate_plan_json → min_samples=50 → ml 依赖 → CUDA，任一不满足 blocked 不烧钱）+ `lora/configs/sql_v1.yaml`（Qwen2.5-7B-Instruct QLoRA nf4、r16/alpha32、loss 只算 answer 段、权重落 lora/weights/ 不入库）；实测登记：macOS arm64 无 CUDA + ml 依赖 5 件未装 → `make train` blocked（exit 2）；训练路径未实测，ADR 验证方式 4 条全 [ ] 不勾选；Makefile train target 修正为先 build_pairs 后吃 pairs.jsonl
+- [x] Day 39 评测闭环（`make report`，eval/report.py）：**机械转述** eval/reports 八类报告 → EVAL_REPORT.md（§1 主评测…§8 来源清单），每格数字带 source 列可核对、0 个「待填写」、只聚合当前 sha（防新旧混报）；契约测试 6 例 `tests/test_report.py`；旧版占位模板 EVAL_REPORT 被真实产物替换
+- [x] Day 40 CI 回归评测（.github/workflows/eval.yml，部署目标 GitHub Actions）：push/PR 触发 plan-regression = lint + 契约测试 + **Plan Acc dry 回归**（eval.runner --dry 自洽断言，公共 runner 无数据库依赖）+ eval-data 手动 job（完整 EX，前置 compose+seed+快照）；诚实边界登记：EX 不可 CI 化（公共 runner 无 TPC-DI 数据/Doris）、prompts 变更对 dry 回归不敏感（仅被 LLM 引擎消费，待端点由 rag-eval 承接）；本地等价验证 dry 门槛通过（44/44+4/4+0 errors）；**真实执行待 push**（本地无法模拟 GitHub runner）；修复 lint.yml 最小依赖清单（mysql-connector-python/python-dotenv）
+- [x] Day 41 数据飞轮（lora/flywheel.py）：五阶段状态机 scan（复用 failure_collect 归类）→ review（人工闸口，红线）→ export（approved + answer_plan 过 validate_plan_json 双闸）→ build（子进程防泄漏过滤）→ train（子进程，blocked exit 2 如实记录）；**空转实测**（0 失败样本下 scan {} → export 0 → build exit 0 → train exit 2，state 绑定 sha 落盘 `lora/data/flywheel-state.json`——设计结论不是缺陷）；6 例契约测试 `tests/test_flywheel.py`；完整轮转截图 blocked（需失败样本 + GPU）
+- [x] Day 42 P2 验收与复盘（docs/retro-p2.md）：验收记录三件套（eval dashboard = EVAL_REPORT.md + Guard 恶意 SQL 10/10 逐条 kind 表 + 四歧义 gold 反问 4/4 结构化表）；P2 门槛复核：EVAL_REPORT 自动生成 ✓ / CI 回归（本地等价验证）✓ / 无泄漏 ✓ / 四策略数据齐全 [~]（compiler-only + RAG+LLM(openai) 实测；LoRA/LoRA+SC 两行 blocked 如实登记，2026-09-03 端点就绪后 RAG+LLM 行已解锁，见 retro-p2.md §9）
+- [x] Day 43-49 Data Agent 端到端落地（批次 D）：LangGraph 8 节点状态机（确定性主链 plan→execute→explain + clarify/候选链/handoff 条件分支，MemorySaver 多轮会话）+ 确定性工具四件套 + MCP 风格暴露（参数校验/作用域）+ 歧义反问 4/4（gold 歧义样本）+ 确定性图表（schema 必须来自已执行结果）+ 纠错反馈入口；**5 场景端到端验收**（含恶意 SQL 拒绝与 handoff）回归记录 `docs/e2e-acceptance.md`，报告 `eval/reports/e2e-acceptance.json`，演示入口 `make ask`（多轮）与 `make e2e`（门禁）
+- [x] Day 50 OTel 全链路埋点（`observability/otel.py`，测试 7 例）：每回合一个 `atlas.turn` span——question_id（`session#tN` 可回放）/ metric_id / SQL / rows / latency / snapshot sha 全属性可追；`gen_ai.token_cost` 单位 token、仅 LLM 真消耗时产出；默认 no-op 零 I/O、埋点故障隔离、atexit flush（CLI 短进程不丢埋点，2026-09-03 实测修正）；启用：`.env` 设 `OTEL_EXPORTER_OTLP_ENDPOINT` 即自动导出
+- [x] Day 51-53 可观测栈冒烟实测（Grafana 11 + Prometheus + otel-collector，`docker compose --profile obs up -d`）：provisioning（prometheus 数据源 / 6 面板 / 4 告警）加载实测 200；**真实回合 7 条（Doris 执行 answer + clarify）→ OTLP → collector → Prometheus → Grafana datasource proxy 全链路通**，6/6 面板表达式查询 success，p95 实测 242.5ms（回合 165-376ms 分布，冒烟数据非流量基线）；修复两处实测缺陷：面板/告警 latency 指标名缺 exporter 规范化后缀 `_milliseconds`（测试改为精确形态契约锁定，`tests/test_dashboards.py` 9 例）、CLI 短进程随机 instance 致序列碎片（固定 `service.instance.id`）；token_cost 面板无序列 = 确定性链路 0 token 设计事实（KL #24），QPS rate 形态注记 KL #23
+- [x] Day 52 ADR 补全三篇（0009 LangGraph 框架取舍 / 0010 评测方法论 / 0011 安全三层纵深），0005 增补推翻条件，累计 11 篇；rbac-verify 实测通过（Polaris analyst 对 fact_trades/列表目录均 Forbidden，报告 `polaris-rbac-7d48dcb.json`）——ADR-0011 按实测修正口径
+- [x] Day 53 `make export` 实测（`semantic/export_dbt.py` + 契约测试 7 例）：Ossie 20 指标 → dbt MetricFlow YAML 三态如实映射——**agg 14**（单列聚合→measure）/ **ratio 3**（分子/分母 measure）/ **unmapped 3**（`SUM(a*b)` 先乘后加，MetricFlow measure 无法表达，逐条登记理由不伪造等价物）；产物 `exports/dbt_semantic_models.yml` + `exports/metric-export-report.json`（绑定 git sha 7d48dcb）
 
 ---
 
@@ -179,7 +208,7 @@ make export
 **2026-07-10 进入 Apache 孵化器**并改名（避免与 OSI 缩写冲突）。
 50+ 组织参与：Snowflake、Databricks、Salesforce、dbt Labs、Dremio、RelationalAI 等。
 
-三条决定性边界，**面试必须讲清**：
+三条决定性边界，**对外介绍必须讲清**：
 
 | 边界 | 含义 | 对 Atlas 的影响 |
 |---|---|---|
@@ -202,8 +231,9 @@ Apache Ossie Core Spec（semantic_model / datasets / fields / relationships / me
 
 ### 4.2 语义模型文件
 
-主模型：`semantic/ossie/atlas_finance.ossie.yaml`（8 datasets / 12 relationships / 6 metrics，
-挂载 17 条 FIBO 概念映射，见 `data/fibo/README.md`）；
+主模型：`semantic/ossie/atlas_finance.ossie.yaml`（8 datasets / 12 relationships / 20 metrics，
+挂载 31 条 FIBO 概念映射（8 datasets 全覆盖 + 19/20 metrics；total_trade_tax 待办见 `data/fibo/README.md` 审计节），
+见 `data/fibo/README.md`；指标审核发布记录见 `semantic/migrations/`）；
 `atlas_retail.ossie.yaml` 保留为演进对照（TPC-DS 零售，不再扩展）
 
 ```yaml
@@ -267,8 +297,12 @@ semantic_model:
 
 ### 4.3 第一约束：同一业务词只有一个权威定义
 
-创建 `xxx_v2` **必须**填写 `supersedes`、`reason`、`migration_window`。
-CI 禁止同名 active 指标并存，并对生产引用发出 Breaking Change 告警。
+同名指标（无论 status）由 ossie_validate 跨文件全局唯一强制（AGENTS.md N8），指标演进一律采用
+**新名 + `supersedes` 指向旧名**。`supersedes` 非空时**必须**填 `reason`、`migration_window`
+（schema if-then 强制）；governance_validate 对 supersedes 链做跨文件语义校验：取代目标存在、
+非自身、新版本号严格大于被取代版本（版本递增天然防环）、被取代者不得仍为 active
+（发布新版本前须先置 deprecated）。契约测试 `tests/test_governance_validate.py` 10 例，
+CI 经 `make lint` 自动执行。
 （这套治理元数据挂在 custom_extensions 的 `governance` 节点下。）
 
 ### 4.4 与开源方案的关系
@@ -343,7 +377,8 @@ eval/
 - 评测只认当前 HEAD：启动时复核 `data/snapshots/<sha>.meta.json` 数据指纹，漂移即拒绝出报告
 - 首轮执行自动锚定：gold JSON 的 `result_hash` 占位符回填为实测 sha256（`snapshot_sha` 同步绑定），此后比对即 EX
 - 歧义样本（`ambiguous: true`）要求返回澄清反问；反问命中 = pass，不猜
-- 产出：`eval/reports/<git sha>.json`（当前 `b47a6c1`：金融段 48 例，Plan Acc 44/44、反问 4/4、EX 44/44）
+- 产出：`eval/reports/<git sha>.json`（当前 `7d48dcb`：金融段 48 例，Plan Acc 44/44、反问 4/4、EX 44/44，跨 sha 锚定 hash 未漂移；基线分析 `eval/reports/baseline-compiler-7d48dcb.json` 与 `docs/baseline-compiler.md`——注册语义域内确定性链零 LLM 覆盖 48/48；域外问题由 RAG+LLM（已实测 44/44 持平，`rag-llm-openai-7d48dcb.json`）/LoRA（blocked）策略对照承接，见 `docs/retro-p2.md`）
+- 闭环（Day 39-42 后）：`make report` → `eval/report.py` 机械转述生成 `EVAL_REPORT.md`（八节，无手写数字，每格带 source 列）；CI 回归 `.github/workflows/eval.yml`（dry Plan Acc 自洽断言；完整 EX 需数据环境，手动触发）；失败样本 `eval/failure_collect.py` 自动归类 → 人工确认 → `lora.flywheel` 五阶段进 SFT（answer 形态 = 合法 Plan JSON，ADR-0008）；LLM 实测后仍 0 失败（缺陷在评测侧修复归零），飞轮空转与 LoRA 训练（无 GPU）如实登记
 
 ### 5.4 准确率提升手段（按优先级）
 
@@ -362,7 +397,13 @@ eval/
 ```python
 # agent/security/sql_guard.py（设计示意，实现见源码）
 READONLY_AST_RULES = [
-    Insert, Update, Delete, Drop, AlterTable, Grant, Copy,  # 全部禁止
+    Insert,
+    Update,
+    Delete,
+    Drop,
+    AlterTable,
+    Grant,
+    Copy,  # 全部禁止
 ]
 ```
 
@@ -411,7 +452,8 @@ atlas-data-platform/
 ├── sql/                 # tpcds_ddl（零售历史，只读）/ dwd / dws / views（金融表待建）
 ├── spark/               # 元数据抽取器（SQL/DDL/ETL 注释解析）
 ├── airflow/             # yaml_jobs（源）+ dags/generated（自动生成，勿手改）
-├── agent/               # state / graph / tools / planner / compiler / security
+├── agent/               # graph（LangGraph 状态机）/ planner / compiler / security / feedback /
+│                        #   tools（registry 四件套 · mcp_server · chart）/ cli / prompts
 ├── retrieval/           # bm25 / milvus_client / graph_store
 ├── serving/             # api / auth / gateway
 ├── observability/       # otel / dashboards
@@ -436,10 +478,16 @@ atlas-data-platform/
 | `make lint` | 校验语义层定义（JSON Schema + 唯一性 + 血缘） |
 | `make plan Q="..."` | 问句 → 指标计划（不执行） |
 | `make compile` | 计划 → 只读 SQL |
+| `make ask` | Data Agent 多轮问数（真实 Doris + 锁定快照；无参数进交互会话） |
+| `make e2e` | Data Agent 端到端验收门禁：5 场景 + handoff（Day 48） |
 | `make eval` | 跑评测集，产出 report JSON |
-| `make retrieve` | 指标检索评测（BM25；`ENGINE=milvus` 走 Milvus 稀疏向量；`ENGINE=fuse` 走 RRF 双路融合） |
+| `make retrieve` | 指标检索评测（BM25；`ENGINE=milvus` 走 Milvus 稀疏向量；`ENGINE=fuse` 走 RRF 双路融合；`ENGINE=rerank` 走元数据 Rerank） |
+| `make extract-meta` | SQL/DDL 注释 → 语义对象候选（Day 26，产出 `eval/reports/metadata-extract-<sha>.json`） |
 | `make train` | 用确认后的失败样本训练 SQL LoRA |
 | `make report` | 生成 EVAL_REPORT.md |
+| `make rls-verify` | 行级权限回归验证（gold-146 问句 → 角色 JWT → Guard 谓词下推 → Doris 实测差异；需 `.env` 的 ATLAS_JWT_SECRET） |
+| `make rbac-verify` | Polaris 层对象级 RBAC 回归验证（`make rbac-verify-ensure` 幂等建 principal/roles/grants；需 `.env` 的 POLARIS_RBAC_*） |
+| `make metrics-verify` | 新发布指标编译 + Guard + Doris 实测验证（Day 27，产出 `eval/reports/metrics-verify-<sha>.json`） |
 | `make test` | 全量单元 + 契约测试 |
 
 ---
@@ -449,10 +497,14 @@ atlas-data-platform/
 > 这一节是**诚实性的核心**，禁止删除或美化。
 
 1. **数据规模有限**：TPC-DI 为基准默认规模（实测数据段 2012-07-07~2017-07-07，294 万行），与真实金融机构 PB 级、上千张表的复杂度不可比
-2. **Schema Linking 未大规模验证**：当前仅在 15 张表子集上验证；1000 表场景属于**待验证假设**
+2. **Schema Linking 未大规模验证**：当前仅在语义层注册域上验证——8 张注册 dataset，
+   其中 gold 判别域 6 表（5 dim + fact_trades，全连通无区分度，见 `schema-link-bm25-7d48dcb.json`
+   note 口径）；1000 表场景属于**待验证假设**
 3. **权限模型简化**：行级策略为自研简化实现，未经过真实 IAM/审计/合规检验
 4. **并发与容灾未验证**：MVP 为单机部署，无高可用、无限流压测
-5. **NL2SQL 准确率数字待填**：所有 EX / Recall 数值必须实测后填写，不得预估
+5. **数字纪律与回填状态（历史注记）**：早期文档的「待填写」占位已随评测闭环全部回填
+   为实测值（来源见 3.3 勾选行与 EVAL_REPORT.md 各报告）；新增任何数字仍必须来自脚本
+   产物，不得预估（AGENTS.md N1）
 6. **Apache Ossie 0.2.0.dev0 是 DRAFT**：schema 可能变化；且 Ossie 是孵化器项目，
    存在无法毕业的可能（迁移路径见 ADR-0002）
 7. **Ossie 不含治理字段**：owner / lineage / freshness 由 Atlas 扩展补齐，
@@ -471,6 +523,77 @@ atlas-data-platform/
 13. **图约束比 Compiler 保守**：SemanticGraph 禁止事实表间桥接（dim→fact 回跳）的
     跨实体召回，Compiler 目前技术上能编译这类多跳 SQL（缺维度域检查）；检索层先剔除，
     双方口径差异属已知边界（见 retrieval/graph_store.py）
+14. **Guard 行级谓词仅限查询域内表**：策略按物理表名书写（dim_broker.branch），
+    注入前由 Guard 改写为编译 SQL 的实际别名；策略若引用查询之外的表面直接拒绝
+    （跨表 join 注入未实现，属 Phase 2）
+15. **行级权限实现的两个诚实边界**：① Polaris 层为对象级（表粒度）授权，行级过滤在
+    SQL 谓词层（Guard）完成，未下推给 Polaris；② TPC-DI 无地理/品类维度
+    （实测 dim_broker.Branch 为随机变造串），任务清单原文「华东区 / 某品类」零售
+    角色仅注册未实测（机制与 branch/tier 相同，零售数据装载后 rp_dept_visible
+    才可实测，见 docs/逐日任务清单.md Day 25）
+16. **Day 27 新发布指标尚无黄金用例背书**：5 个派生指标 gold_test_cases 为空、
+    expected_value_snapshot_sha 未填（YAML 如实声明）；metrics-verify 的实测值只证明
+    「可编译、过 Guard、可执行、值非空」，EX 与口径正确性待补黄金用例与快照绑定后
+    验证——发布定义 ≠ 数值背书
+17. **户均现金余额为负是数据特性，非口径错误**：average_cash_balance 实测 -32465124.70
+    （户均），核查 atlas.dwd.fact_cash_balances：219214 行中 132758 行（60.6%）Cash<0，
+    行区间 -12477107.22 ~ +9250918.74、无低于 -1 亿的值——负值源于 TPC-DI 变造数据
+    与该子集抽取口径；指标计算正确但该数值不具「户均余额」业务代表性，口径界定待
+    补黄金用例
+18. **检索单路词法引擎在语料扩展后退化**（指标文档 15→20，Day 27 发布所致）：BM25
+    Recall@1 44/44→41/44、Milvus 42/44→35/44、fuse 44/44→40/44（三路 @5 均保持
+    44/44），rerank 主链路 44/44 无损；归因：新增「平均/比率」类指标与存量「合计」
+    类指标同域词法重叠（市值合计问句被户均市值文档抢 top-1 等），元数据重排
+    （同义词置信度优先）吸收了漂移。**当前状态（Day 29 已落地解决路径）**：
+    schema linking 三阶段链路（图域粗筛 → 受限域打分 → 元数据重排）在 44 条 gold 上
+    Recall@1 = 44/44（基线对照见 `eval/reports/schema-link-bm25-7d48dcb.json`）；
+    单路引擎（无重排层）仍 41/44 属引擎设计内（Day 24 rerank 引擎本就含重排层），
+    不再视为待修复回归；Milvus/fuse 单路在 20 语料上的 35/40 复测同属词法层限制
+19. **LoRA 策略路径尚未实测（环境阻塞，非能力声明）；RAG+LLM 已于 2026-09-03 实测**：
+    RAG+LLM（deepseek-v4-flash）注册域 44/44 Plan Acc + 4/4 歧义反问 + 44/44 EX + 0
+    拒绝（报告 `rag-llm-openai-7d48dcb.json`）——与确定性链同分但代价高两个量级
+    （99597 tokens / 2564ms 每批均值 vs 0 token / 178.6ms），域内无增量的实证；LoRA /
+    LoRA+SC 仍 blocked = macOS arm64 无 CUDA + ml 依赖未装（Day 37-38 前置检查 exit 2
+    实测，LLM 端点已就绪）。所有 LoRA 相关数字 = blocked 登记（不编数字，AGENTS.md
+    N1）；解锁后 `make train`（vLLM serve + `make compare RAG_ENGINE=openai`）一键出数，
+    恢复指引见 `docs/retro-p2.md` §6/§9
+20. **Data Agent MVP 多轮边界（第 7 周落地，如实声明）**：同一会话仅支持连续提问 +
+    每轮事实留痕与结果冲刷，不做指代消解（“它/上轮那个”）；explain 的 filters 恒空
+    （Planner 无 filter 解析，见第 11 条）；handoff 仅在候选链检索 0 素材时触发，
+    Guard 拒绝（blocked）与执行期故障（error）不转人工——安全与运维边界，人工也
+    不得绕过只读红线（详见 agent/state.py、agent/graph.py docstring）
+21. **图表为 spec 级确定性渲染（无像素）**：schema 必须来自已执行结果（无执行 SQL
+    引用的裸数据拒绝）；多数值列只渲染第一个；折线不插值不排序；密集结果（>200
+    类目）降级表格并注记；NaN/Inf/空结果拒绝（agent/tools/chart.py docstring）
+22. **可观测栈为可选启动（配置态，Day 51-53 如实声明）**：埋点默认 no-op（未配
+    `OTEL_EXPORTER_OTLP_ENDPOINT` 零 I/O）；otel-collector/prometheus 属 compose
+    `obs` profile，`make up` 不启动，需 `docker compose --profile obs up -d` 点亮
+    （grafana 默认起，宿主机 3001）；面板与告警阈值是**配置占位**（2026-09-03 冒烟
+    7 回合不构成流量基线，阈值非实测统计边界），告警规则未经真实事件触发验证
+23. **Prometheus counter 形态受进程生命周期影响**：CLI 短进程（每回合独立进程）的
+    counter 每进程从 0 累计——固定 `service.instance.id` 后同序列值恒 1 不增，
+    rate()/QPS 趋 0 失真（非真实流量为 0）；QPS 面板在长驻服务进程下语义才成立
+    （serving 常驻模式未部署）。p95 直方图经 reset 修正不受影响（冒烟实测 242.5ms）；
+    埋点数据仅代表人工问数冒烟，不构成性能声明
+24. **token_cost 空序列与单位口径**：确定性链路 0 token 不产出 `gen_ai.token_cost`
+    （Grafana token 面板无序列是设计事实，非链路故障）；单位 token 不换算 USD（未接
+    定价表，避免伪精确）；gen_ai 属性（model/prompt_version）仅 LLM 真消耗 token 时
+    写入（N2 不虚构调用）
+25. **trace 粒度与评测链路埋点边界**：trace 为回合级单 span（无 LLM 调用级细分）；
+    评测批处理（make eval / rag-eval）直接驱动内部函数不经 DataAgent ask 路径，
+    **评测数字不出现在 Grafana**——评测口径一律以 eval/reports/*.json 为准，
+    Prometheus/Grafana 只覆盖 ask 路径；会话记忆为进程内 MemorySaver（重启即失，
+    会话内多轮有效）
+26. **dbt MetricFlow 导出为三态非无损映射**（Day 53 `make export` 实测）：20 指标中
+    agg 14（单列聚合→measure）/ ratio 3（聚合后除法）可表达；**unmapped 3**
+    （`SUM(a*b)` 先乘后加，如 total_trade_value）MetricFlow measure 无法表达，
+    理由逐条登记在产物 header（`exports/dbt_semantic_models.yml`），不伪造等价物；
+    DATABRICKS 方言列为占位，未实测不填（AGENTS.md N1）
+27. **FIBO L2 映射覆盖 19/20 指标**（Day 54 审计补齐后）：8 datasets 全覆盖（含
+    fact_holdings → Holding）；唯一缺口 total_trade_tax——锁定闭包（FND+FBC+BE +
+    Commons 20250801）无贴切税务金额类（候选仅税务治理概念/经纪服务费，语义不贴切），
+    补映射需先扩展闭包域并重跑冒烟验证，登记待办不硬补；审计方法与数字见
+    `data/fibo/README.md` 覆盖审计节（2026-09-03）
 
 **如果有真实企业数据，我会优先补做**：数据契约、IAM 集成、审计留痕、容灾、并发压测、模型红队测试、变更管理流程。
 
@@ -487,6 +610,7 @@ atlas-data-platform/
 | GraphRAG + Milvus 混合过滤 | 已有工程经验 | 复用于指标、同义词、业务术语检索 |
 | OpenTelemetry + PromptOps + LLM Judge | 已有工程经验 | 接入 SQL 调用链、成本、回归评测 |
 | 声明式语义层、指标版本血缘 | **需新建** | 基于 Apache Ossie 规范实现编译器、治理扩展与测试 |
+| Data Agent 状态机与工具链（LangGraph 编排 / MCP 暴露 / 防幻觉图表 / 反馈与 handoff） | 已有工程经验 | 以确定性优先落地 agent/ 状态机（8 节点）+ tools 四件套 + MCP 工具服务器 + chart + feedback；6 场景 e2e 实测见 docs/e2e-acceptance.md（数字全部出自 eval/reports/e2e-acceptance.json，不另立声明） |
 | Ossie / Polaris / Iceberg / Doris | **需新建** | 单机部署、基准测试、维护 ADR（0002/0004/0005） |
 | Agent 安全执行与自动洞察 | **需新建** | 先做安全工具，再扩展规划与归因 |
 

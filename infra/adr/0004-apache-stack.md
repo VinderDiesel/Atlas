@@ -11,7 +11,7 @@
 原方案混用 ClickHouse（非 Apache）、自研语义 DSL、Hudi。
 现要求尽可能采用 Apache 成熟项目，理由是：
 
-1. **面试价值**：Apache 项目有公开治理、可查源码、社区背书，讲得清
+1. **信任与可查证**：Apache 项目有公开治理、可查源码、社区背书，讲得清
 2. **可验证性**：任何人都能复现，不依赖闭源或 SaaS
 3. **组合完整性**：Ossie + Polaris + Iceberg + Doris 已形成事实上的开放湖仓栈
 
@@ -31,7 +31,7 @@
 | **计算** | Spark / Flink | Spark / Flink | ✅ 不变 | 已是 Apache |
 | **编排** | Airflow | Airflow | ✅ 不变 | 已是 Apache |
 | **对象存储** | 本地文件 | **MinIO**（S3 兼容） | 🆕 需配 | Iceberg 需要对象存储语义 |
-| **向量检索** | Milvus | Milvus | ✅ 保留 | 已有工程经验，是简历资产 |
+| **向量检索** | Milvus | Milvus | ✅ 保留 | 语义召回候选通道，已有工程经验 |
 | **可观测** | OTel + Prometheus | OTel + Prometheus | ✅ 不变 | 已是 CNCF/Apache 生态 |
 
 ---
@@ -77,7 +77,7 @@
    - 替换 ClickHouse 的最大收益是 **Doris ↔ Iceberg ↔ Polaris 三者的原生组合**，
      而不是孤立选一个 OLAP
    - **per-user identity mode 正好解决行级权限下推**（2026 新特性）
-   - 向量检索可作为 Milvus 的对比项，但 **MVP 仍用 Milvus**（已有经验，是简历资产）
+   - 向量检索可作为 Milvus 的对比项，但 **MVP 仍用 Milvus**（语义召回通道，已有工程经验）
 
 ---
 

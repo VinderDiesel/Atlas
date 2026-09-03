@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Day 27 指标发布验证（7d48dcb）</title>
+<style>
+body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 32px; color: #1f2328; }
+h1 { font-size: 20px; } h2 { font-size: 16px; margin-top: 28px; }
+table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+th, td { border: 1px solid #d0d7de; padding: 8px 10px; text-align: left; "
+"vertical-align: top; font-size: 13px; }
+th { background: #f6f8fa; } code, pre { font-family: ui-monospace, Menlo, monospace; }
+pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; }
+.ok { background: #dafbe1; color: #1a7f37; }
+.meta { color: #656d76; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>Day 27 指标审核发布 · 编译与实测验证</h1>
+<p class="meta">git sha <code>7d48dcb</code> · 语义层 "
+"<code>semantic/ossie/atlas_finance.ossie.yaml</code> ·
+实测执行走 Doris 只读（eval/runner.execute_sql）· 语义表达式来源为 YAML 权威定义，脚本不复制口径</p>
+<p><span class="badge ok">Guard 通过 · 5 个指标实测 OK</span></p>
+<table>
+<thead><tr><th style="width:22%">指标</th><th style="width:30%">口径</th>"
+"<th style="width:30%">编译 SQL</th><th>实测值</th></tr></thead>
+<tbody>
+<tr><td><code>average_trade_value</code></td><td>平均每笔成交金额（总成交额 / 成交笔数，美元）</td><td><pre>SELECT SUM(fact_trades.Quantity * fact_trades.TradePrice) / COUNT(fact_trades.TradeID) AS average_trade_value FROM atlas.dwd.fact_trades AS fact_trades LIMIT 100</pre></td><td><pre>27578.61147400</pre></td></tr><tr><td><code>average_commission_per_trade</code></td><td>平均每笔佣金（佣金收入合计 / 成交笔数，美元）</td><td><pre>SELECT SUM(fact_trades.Commission) / COUNT(fact_trades.TradeID) AS average_commission_per_trade FROM atlas.dwd.fact_trades AS fact_trades LIMIT 100</pre></td><td><pre>89.573512</pre></td></tr><tr><td><code>commission_rate</code></td><td>佣金率（佣金收入 / 成交金额，无单位比率）</td><td><pre>SELECT SUM(fact_trades.Commission) / SUM(fact_trades.Quantity * fact_trades.TradePrice) AS commission_rate FROM atlas.dwd.fact_trades AS fact_trades LIMIT 100</pre></td><td><pre>0.003247</pre></td></tr><tr><td><code>average_holding_value</code></td><td>平均每账户持仓市值（持仓总市值 / 有持仓的去重账户数，美元）</td><td><pre>SELECT SUM(fact_holdings.CurrentValue) / COUNT(DISTINCT fact_holdings.SK_AccountID) AS average_holding_value FROM atlas.dwd.fact_holdings AS fact_holdings LIMIT 100</pre></td><td><pre>1136660.848888</pre></td></tr><tr><td><code>average_cash_balance</code></td><td>平均每账户现金余额（现金余额合计 / 有余额的去重账户数，美元）</td><td><pre>SELECT SUM(fact_cash_balances.Cash) / COUNT(DISTINCT fact_cash_balances.SK_AccountID) AS average_cash_balance FROM atlas.dwd.fact_cash_balances AS fact_cash_balances LIMIT 100</pre></td><td><pre>-32465124.695621</pre></td></tr>
+</tbody>
+</table>
+</body>
+</html>

@@ -48,9 +48,11 @@
 
 ---
 
-## 但必须在面试中讲清：什么时候该用 Calcite
+## 什么情况下应该推翻这个决策（什么时候该用 Calcite）
 
-诚实答案是这几条，能讲出来比"我用了 Calcite"更有说服力：
+> 本决策 = “MVP 不用 Calcite”。以下任一条件成立，即应推翻本决策、引入 Calcite：
+
+诚实答案是这几条，能讲清边界比“我用了 Calcite”更有说服力：
 
 1. **需要跨数据源联邦查询**时（Iceberg + MySQL + API 混查），Calcite 的 adapter 机制是标准解法
 2. **需要物化视图自动改写**时（指标预聚合加速），Calcite 的 `MaterializedViewRule` 远优于手写路由
