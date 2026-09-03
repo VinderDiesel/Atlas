@@ -22,6 +22,10 @@ dependencies = [
     "pydantic-settings>=2.4",
     # 存储与查询引擎
     "pyiceberg>=0.7",          # Apache Iceberg Python 客户端
+    # data/loader.py 与 data/snapshot.py 直接依赖（建仓/快照的 Arrow 写路径）；
+    # pyiceberg>=0.12 核心依赖已不含 pyarrow，直接依赖必须显式声明
+    # （2026-09-03 CI 干净环境暴露：本地 .venv 为早期历史残留，掩盖漏声明）
+    "pyarrow>=14.0",
     "mysql-connector-python>=9.0",  # Apache Doris（MySQL 协议）
     "psycopg[binary]>=3.2",    # PostgreSQL（Polaris / Atlas 元数据）
     # 向量检索
