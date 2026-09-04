@@ -10,7 +10,7 @@
 {
   "sha": "<git rev-parse --short HEAD>",
   "created_at": "<ISO 8601, +08:00>",
-  "source": "TPC-DI",
+  "source": "TPC-DI",  # 全库含 TPC-DS SF0.1 零售表时自动为 "TPC-DI + TPC-DS SF0.1"
   "data_range": "<tpcdi.trade.t_dts min~max, 实测>",
   "raw_size_bytes": "<data/raw/tpcdi 递归字节, 实测>",
   "row_counts": {
@@ -30,6 +30,8 @@
 `data/snapshot.py`（从仓库根 `uv run python -m data.snapshot`）：
 
 - 枚举 Polaris 下全部表（pyiceberg scan count）并写入 `row_counts` 与 `snapshot_ids`
+  （2026-09-04 起全库 29 表 = tpcdi 17 + dwd 12：金融 8 + TPC-DS 零售 4；`source`
+  字段随 dwd 是否含零售表自动声明多源）
 - git sha 只锁代码/清单版本；**snapshot id 锁数据文件版本**：任何重跑 loader 或
   DWD 加工都会改变它，必须重新锁快照
 - 防呆：目标文件已存在时复核数据指纹，一致则 noop；不一致则拒绝覆盖

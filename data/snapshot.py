@@ -32,6 +32,10 @@ SNAPSHOT_DIR = REPO_ROOT / "data" / "snapshots"
 # data_range 口径：主事实表交易时间戳的实际覆盖范围（实测，不取模板示例）
 RANGE_TABLE = ("tpcdi", "trade")
 RANGE_COLUMN = "t_dts"
+# TPC-DS SF0.1 零售装载落位 dwd 的表（data/tpcds_loader.py）；dwd.dim_date 已被
+# TPC-DI 金融占用，零售日期表用 TPC-DS 原生名 date_dim（物理表名由 dataset
+# source 决定，dataset 名仅是 SQL 别名）。dwd 出现这些表即全库为双源。
+RETAIL_DWD_TABLES = ("store_sales", "date_dim", "dim_item", "dim_store")
 # raw_size_bytes 口径：TPC-DI 源数据目录（Batch1 已加载；Batch2 存在未加载，Batch3 空）
 RAW_DIR = REPO_ROOT / "data" / "raw" / "tpcdi"
 
@@ -99,19 +103,28 @@ def raw_size_bytes() -> int:
 
 def build_meta(notes: str | None = None) -> dict:
     """组装 meta.json 内容（不含 created_at 的文件名无关字段）。"""
+    row_counts = measure_row_counts()
+    has_retail = set(row_counts.get("dwd", {})) & set(RETAIL_DWD_TABLES)
     return {
         "sha": git_short_sha(),
         "created_at": datetime.now(TZ).isoformat(timespec="seconds"),
-        "source": "TPC-DI",
+        # 全库多源时如实声明（零售 4 表随装载进 dwd，见 RETAIL_DWD_TABLES）
+        "source": "TPC-DI + TPC-DS SF0.1" if has_retail else "TPC-DI",
         "data_range": measure_data_range(),
         "raw_size_bytes": raw_size_bytes(),
-        "row_counts": measure_row_counts(),
+        "row_counts": row_counts,
         "snapshot_ids": measure_snapshot_ids(),
         "generation_seconds": None,  # 数据加载耗时未单独计时（历史会话完成）
         "notes": notes
-        or "Batch1 全量 + DWD 加工后状态；row_counts 口径 pyiceberg scan count；"
-        "snapshot_ids 为各表 current snapshot id；data_range 口径 tpcdi.trade.t_dts；"
-        "raw_size_bytes 口径 data/raw/tpcdi 递归字节。",
+        or (
+            "全库锁定：TPC-DI Batch1 + DWD 加工（金融 8 表）"
+            "+ TPC-DS SF0.1 零售装载（data/tpcds_loader.py，dwd 4 表）"
+            if has_retail
+            else "全库锁定：TPC-DI Batch1 + DWD 加工（金融 8 表）"
+        )
+        + "；row_counts 口径 pyiceberg scan count；snapshot_ids 为各表 current "
+        "snapshot id；data_range 口径 tpcdi.trade.t_dts（金融主事实表；零售销售窗口见 "
+        "eval/gold/retail/data-profile.md）；raw_size_bytes 口径 data/raw/tpcdi 递归字节。",
     }
 
 
