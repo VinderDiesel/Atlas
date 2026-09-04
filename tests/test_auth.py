@@ -13,6 +13,7 @@ from serving.auth import (
     ROLE_DIRECTORY,
     AuthError,
     ResolvedPolicy,
+    resolve_claims,
     resolve_policy,
     sign_token,
     verify_token,
@@ -147,6 +148,49 @@ class TestRetailPolicyRender(unittest.TestCase):
             with self.subTest(role=role):
                 policy_name = ROLE_DIRECTORY[role][0]
                 self.assertEqual(policy_name, "rp_dept_visible")
+
+
+class TestResolveClaims(unittest.TestCase):
+    """resolve_claims 纯函数（C1 拆分回归锁）：与 resolve_policy(token) 等价。
+
+    拆分把 resolve_policy 中 verify_token 之后的部分抽为 resolve_claims（claims
+    版纯函数，供 DataAgent.ask(identity=…) 复用）；同 token 同 claims 必须产出
+    同 ResolvedPolicy（frozen dataclass 全字段相等）。
+    """
+
+    def test_equivalent_to_resolve_policy(self) -> None:
+        """全部注册角色：resolve_claims(verify_token(t)) == resolve_policy(t)。"""
+        cases: list[tuple[str, dict]] = [
+            ("hq_admin", {}),
+            ("branch_manager", {"branch": "BR_A1"}),
+            ("compliance_auditor", {"max_tier": 3}),
+            ("region_manager", {"region": "TN"}),
+            ("category_analyst", {"region": "TN", "categories": ["Shoes"]}),
+        ]
+        for role, user_context in cases:
+            with self.subTest(role=role):
+                token = sign_token(role, user_context, secret=SECRET)
+                claims = verify_token(token, secret=SECRET)
+                self.assertEqual(
+                    resolve_claims(claims, policy_path=POLICY_PATH),
+                    resolve_policy(token, secret=SECRET, policy_path=POLICY_PATH),
+                )
+
+    def test_claims_reject_unregistered_role(self) -> None:
+        """claims role 未注册 → AuthError（防 KeyError，与 verify_token 同拒绝语义）。"""
+        with self.assertRaises(AuthError):
+            resolve_claims({"role": "ceo_omniscient", "user_context": {}})
+
+    def test_claims_reject_missing_user_context(self) -> None:
+        with self.assertRaises(AuthError):
+            resolve_claims({"role": "hq_admin"})
+
+    def test_claims_reject_illegal_literal(self) -> None:
+        """直调纯函数同样拒绝非法字面量（渲染安全校验不依赖 token 路径）。"""
+        with self.assertRaises(AuthError):
+            resolve_claims(
+                {"role": "branch_manager", "user_context": {"branch": "a'; DROP"}}
+            )
 
 
 if __name__ == "__main__":

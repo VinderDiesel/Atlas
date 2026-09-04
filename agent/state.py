@@ -61,6 +61,8 @@ class TurnState(TypedDict, total=False):
     path: PathKind  # 链路来源（explain 归因）
     engine: EngineName  # 实际生成引擎（answer 归因展示）
     explanation: dict[str, Any]  # explain 节点归因（Day 46 扩展字段）
+    policy_effect: str  # identity 注入轮生效句（execute 写入 → explain 挂入归因；
+    # 只含角色 + 策略名，不含条件值——0011 不外泄细节；每轮由 plan 冲刷）
     block_reason: str  # kind=blocked：Guard 拒绝原因（不携带被拒 SQL）
     error: str  # kind=error：执行期故障描述
     handoff_reason: str  # kind=handoff（Day 48）：人工接管原因（候选链素材空）

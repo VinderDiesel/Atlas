@@ -62,6 +62,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import RunnableConfig
 from sqlglot import exp
 
 from agent.compiler import Compiler, Plan, SemanticModel
@@ -73,11 +74,18 @@ from agent.feedback import (
 )
 from agent.generator import GenerationResult, Generator, validate_plan_json
 from agent.planner import ClarificationRequest, Planner
-from agent.security.sql_guard import Budget, BudgetExceeded, UnsafeQuery, enforce
+from agent.security.sql_guard import (
+    Budget,
+    BudgetExceeded,
+    Policy,
+    UnsafeQuery,
+    enforce,
+)
 from agent.state import TurnResult, TurnState
 from agent.tools.execution_validator import ExecutionValidator
 from agent.tools.schema_linker import SchemaLinker
 from observability.otel import record_turn
+from serving.auth import AuthError, resolve_claims
 
 # 执行器同构约定（与 eval/runner.execute_sql 一致）：只读执行 guarded SQL
 Executor = Callable[[str], tuple[list[tuple[Any, ...]], list[str]]]
@@ -201,6 +209,7 @@ def build_graph(
             "path": None,
             "engine": "deterministic",
             "explanation": None,
+            "policy_effect": None,
             "block_reason": None,
             "error": None,
             "handoff_reason": None,
@@ -312,15 +321,36 @@ def build_graph(
         }
 
     # -- 节点：execute（编译→Guard→执行 的唯一通道） ------------------------
-    def node_execute(state: TurnState) -> dict[str, Any]:
+    # identity 经 invoke config 注入（每轮独立、不落 checkpoint，见 DataAgent.ask
+    # docstring）；非 None 时先 resolve_claims 渲染行级策略（与 rls-verify/demo
+    # 同机制：Policy(name, condition) → enforce 注入），谓词非法/无 join 路径
+    # 由 Guard 拒绝（blocked，不外泄细节）——graph 层不做二次校验实现。
+    def node_execute(state: TurnState, config: RunnableConfig) -> dict[str, Any]:
         plan = state.get("plan")
         if not isinstance(plan, Plan):
             return {"error": "内部状态缺失 Plan（不应到达 execute）"}
         sql = state.get("sql")
         if sql is None:  # deterministic 链：validate 未预检，现场编译
             sql, _ = compiler.compile(plan)
+        policy: Policy | None = None
+        effect: str | None = None
+        identity = (config or {}).get("configurable", {}).get("identity")
+        if identity is not None:
+            if not isinstance(identity, dict):
+                return {"error": "identity 必须为已验证 claims 字典（role + user_context）"}
+            try:
+                resolved = resolve_claims(identity)
+            except AuthError as exc:
+                # 身份不可解析 → 拒绝执行（防御：不携带被拒原因之外的细节）
+                return {"error": f"身份策略解析失败：{exc}"}
+            policy = Policy(name=resolved.policy_name, condition=resolved.condition)
+            # 生效句只含角色 + 策略名（0011 不外泄细节：条件值不出本模块）
+            effect = f"行级策略已生效（角色 {resolved.role}，策略 {resolved.policy_name}）"
         try:
-            guarded, _ = enforce(sql, budget=budget)
+            if policy is None:
+                guarded, _ = enforce(sql, budget=budget)
+            else:
+                guarded, _ = enforce(sql, policy=policy, budget=budget)
         except (UnsafeQuery, BudgetExceeded) as exc:
             # 只报拒绝类型与原因，不携带被拒 SQL（纵深防御，不外泄细节）
             return {"block_reason": f"{type(exc).__name__}: {exc}"}
@@ -339,6 +369,7 @@ def build_graph(
             "row_count": len(rows_t),
             "latency_ms": latency_ms,
             "validation_issues": issues,
+            "policy_effect": effect,
             # 冲刷会把 path 置 None（键存在），get 默认值不生效 → or 回退
             "path": state.get("path") or "deterministic",
             "engine": state.get("engine") or "deterministic",
@@ -367,6 +398,11 @@ def build_graph(
             "data_version": (snapshot_meta or {}).get("sha"),
             "data_refreshed_at": (snapshot_meta or {}).get("created_at"),
         }
+        # identity 注入可见性（ADR-0011 硬化项）：只在策略生效轮追加生效句
+        # （角色 + 策略名，条件值不外泄）；无 identity 轮零变化（不加键）
+        effect = state.get("policy_effect")
+        if effect:
+            explanation["policy_effect"] = effect
         # 回写 last_plan：本轮成功采纳的 Plan 成为下轮追问的指代基线（ADR-0014
         # ②）；失败轮（blocked/error）不进 explain，last_plan 保持上轮成功值
         return {"explanation": explanation, "last_plan": plan}
@@ -542,7 +578,13 @@ class DataAgent:
         self.snapshot_meta = snapshot_meta
         self._session_turns: dict[str, int] = {}
 
-    def ask(self, question: str, *, session_id: str | None = None) -> TurnResult:
+    def ask(
+        self,
+        question: str,
+        *,
+        session_id: str | None = None,
+        identity: dict[str, object] | None = None,
+    ) -> TurnResult:
         """问一句：同一 session_id 视为同一会话（多轮计数与事实留痕）。
 
         参数
@@ -550,15 +592,22 @@ class DataAgent:
         question   : 自然语言问句（每轮全量解析；同构残句追问走 last_plan 补全，
                      自由代词指代会反问完整重述，见 ADR-0014 ②）。
         session_id : 会话键（缺省生成随机会话，单轮）。
+        identity   : 已验证 claims 字典（verify_token 输出形态：role + user_context
+                     …，ADR-0011 硬化项）：非 None 时本轮按角色渲染行级策略并随
+                     Guard 注入。**每轮独立**——经 invoke config 传递不落 checkpoint；
+                     不传即无策略（多轮会话中由 API 层每轮显式下推，见 serving/api）。
 
         返回
         ----
         TurnResult：kind ∈ answer / clarify / blocked / error。
         """
         sid = session_id or f"session-{uuid4().hex[:8]}"
+        config: dict[str, Any] = {"configurable": {"thread_id": sid}}
+        if identity is not None:
+            config["configurable"]["identity"] = identity
         final = self._graph.invoke(
             {"question": question, "session_id": sid},
-            config={"configurable": {"thread_id": sid}},
+            config=config,
         )
         turns = self._session_turns.get(sid, 0) + 1
         self._session_turns[sid] = turns

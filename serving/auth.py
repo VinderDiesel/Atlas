@@ -183,19 +183,25 @@ class ResolvedPolicy:
         return f"[{self.role}] {self.policy_name}: {self.condition}"
 
 
-def resolve_policy(
-    token: str,
+def resolve_claims(
+    claims: dict[str, object],
     *,
-    secret: str | None = None,
     policy_path: Path = POLICY_PATH,
 ) -> ResolvedPolicy:
-    """token → (策略名, 已渲染谓词)：角色条件来自 row_policy.yml + claims。
+    """已验证 claims → (策略名, 已渲染谓词)：策略解析的纯函数内核。
 
-    渲染在服务端做（Guard 的 Policy.render 同规则：{{ user.<key> }} 占位符，
-    非法字面量由 Guard 兜底拒绝，这里不做二次实现）。
+    resolve_policy(token) 在 verify_token 之后委托本函数；DataAgent 身份注入
+    （graph.ask identity）与 rls-verify/demo 同走本内核——角色条件来自
+    row_policy.yml + claims（Git 唯一事实源，不在此复制）。
+
+    claims 须已过签名/有效期校验（verify_token 输出形态：role + user_context）；
+    本函数只做角色目录查表与占位符渲染。渲染在服务端做（Guard 的
+    Policy.render 同规则：{{ user.<key> }} 占位符，非法字面量由 Guard 兜底拒绝，
+    这里不做二次实现）。
     """
-    claims = verify_token(token, secret=secret)
-    role = str(claims["role"])
+    role = claims.get("role")
+    if not isinstance(role, str) or role not in ROLE_DIRECTORY:
+        raise AuthError(f"claims role 未注册：{role!r}（ROLE_DIRECTORY 可加）")
     policy_name, role_name, _ = ROLE_DIRECTORY[role]
     user_context = claims.get("user_context")
     if not isinstance(user_context, dict):
@@ -232,6 +238,23 @@ def resolve_policy(
     return ResolvedPolicy(
         role=role, policy_name=policy_name, condition=rendered, claims=user_context
     )
+
+
+def resolve_policy(
+    token: str,
+    *,
+    secret: str | None = None,
+    policy_path: Path = POLICY_PATH,
+) -> ResolvedPolicy:
+    """token → (策略名, 已渲染谓词)：verify_token 后委托 resolve_claims。
+
+    渲染在服务端做（Guard 的 Policy.render 同规则：{{ user.<key> }} 占位符，
+    非法字面量由 Guard 兜底拒绝，这里不做二次实现）。本函数保留原签名，
+    行为逐字符不变（拆分仅把 verify_token 之后的部分抽为 resolve_claims 纯函数，
+    供 DataAgent 身份注入复用——见 agent/graph.py）。
+    """
+    claims = verify_token(token, secret=secret)
+    return resolve_claims(claims, policy_path=policy_path)
 
 
 def _literal(value: object) -> str:

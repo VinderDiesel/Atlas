@@ -221,6 +221,93 @@ class TestDeterministicPath(unittest.TestCase):
         self.assertIsInstance(r.explanation["latency_ms"], float)
 
 
+class TestIdentityInjection(unittest.TestCase):
+    """C1 服务面硬化：DataAgent.ask(identity=…) → Guard Policy 注入（主链）。
+
+    - 无 identity 零变化（硬门）：SQL 与既有无身份断言逐字符一致，归因不加键
+    - identity 非 None：claims → resolve_claims → Policy(name, condition) →
+      enforce 注入（与 rls-verify/demo 同机制）；非法 claims → error 不执行
+    - 生效可见性：explanation 挂「行级策略已生效（角色 X，策略 Y）」——
+      只含角色 + 策略名，不含条件值（0011 不外泄细节）
+    - identity **每轮独立**：经 invoke config 传递不落 checkpoint，同会话
+      撤身份后新一轮零残留（无策略泄漏到无身份轮）
+    """
+
+    def setUp(self) -> None:
+        self.executor = FakeExecutor()
+        self.agent = DataAgent(executor=self.executor, budget=BUDGET)
+
+    @staticmethod
+    def _claims(role: str, **user_context: object) -> dict[str, object]:
+        """与 verify_token 输出同形态（sub/role/user_context…）。"""
+        return {"sub": "contract-user", "role": role, "user_context": user_context}
+
+    def test_no_identity_zero_change(self) -> None:
+        """无 identity 硬门：SQL 与既有断言逐字符一致、explanation 无策略键。"""
+        r = self.agent.ask(GOLD102_Q)
+        self.assertEqual(r.kind, "answer")
+        sql = self.executor.calls[0]
+        self.assertIn("LIMIT 5", sql)
+        self.assertIn("GROUP BY", sql)
+        self.assertIn("dim_broker.Branch", sql)
+        self.assertNotIn("1 = 1", sql)  # 无身份 = 不注入任何谓词
+        assert r.explanation is not None
+        self.assertNotIn("policy_effect", r.explanation)  # 归因零变化
+
+    def test_hq_admin_injects_full_visibility(self) -> None:
+        """identity=hq_admin：谓词 1=1 注入（无行过滤语义），生效句含角色+策略名。"""
+        r = self.agent.ask(GOLD102_Q, identity=self._claims("hq_admin"))
+        self.assertEqual(r.kind, "answer")
+        self.assertIn("1 = 1", self.executor.calls[0])  # rp_branch_visible.hq_admin
+        assert r.explanation is not None
+        effect = str(r.explanation["policy_effect"])
+        self.assertIn("行级策略已生效", effect)
+        self.assertIn("hq_admin", effect)
+        self.assertIn("rp_branch_visible", effect)
+
+    def test_branch_manager_injects_predicate_without_leaking_value(self) -> None:
+        """identity=branch_manager{east}：SQL 含分支谓词；生效句不给条件值。"""
+        r = self.agent.ask(
+            GOLD102_Q, identity=self._claims("branch_manager", branch="east")
+        )
+        self.assertEqual(r.kind, "answer")
+        sql = self.executor.calls[0]
+        self.assertIn("= 'east'", sql)  # 行级谓词已随 Guard 注入执行 SQL
+        assert r.explanation is not None
+        effect = str(r.explanation["policy_effect"])
+        self.assertIn("branch_manager", effect)
+        self.assertIn("rp_branch_visible", effect)
+        self.assertNotIn("east", effect)  # 条件值不外泄（0011 口径）
+
+    def test_invalid_identity_rejected_no_execution(self) -> None:
+        """identity 非 claims 形态（非 dict / role 未注册）→ error 且 SQL 不执行。"""
+        r = self.agent.ask(GOLD102_Q, identity="hq_admin")  # type: ignore[arg-type]
+        self.assertEqual(r.kind, "error")
+        self.assertIn("identity 必须为已验证 claims 字典", r.error or "")
+        self.assertEqual(self.executor.calls, [])
+        r2 = self.agent.ask(GOLD102_Q, identity=self._claims("ceo_omniscient"))
+        self.assertEqual(r2.kind, "error")
+        self.assertIn("身份策略解析失败", r2.error or "")
+        self.assertEqual(self.executor.calls, [])
+
+    def test_identity_per_turn_no_checkpoint_leak(self) -> None:
+        """身份每轮独立：同会话 带身份 → 撤身份，第二轮无策略残留。"""
+        sid = "sess-identity-1"
+        r1 = self.agent.ask(
+            GOLD102_Q,
+            session_id=sid,
+            identity=self._claims("branch_manager", branch="east"),
+        )
+        self.assertEqual(r1.kind, "answer")
+        self.assertIn("= 'east'", self.executor.calls[0])
+        r2 = self.agent.ask(GOLD102_Q, session_id=sid)  # 同会话但不带身份
+        self.assertEqual(r2.kind, "answer")
+        self.assertEqual(r2.turns_in_session, 2)
+        self.assertNotIn("east", self.executor.calls[1])  # 无谓词残留
+        assert r2.explanation is not None
+        self.assertNotIn("policy_effect", r2.explanation)
+
+
 class TestClarifyAcceptance(unittest.TestCase):
     """Day 44 验收：4 条歧义 gold 全部触发反问，且不执行 SQL（不猜答）。"""
 
