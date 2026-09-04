@@ -1642,7 +1642,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": [],
+                  "gold_test_cases": ["gold-156", "gold-157"],
                   "expected_value_snapshot_sha": null
                 }
               }
@@ -1673,7 +1673,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": [],
+                  "gold_test_cases": ["gold-158"],
                   "expected_value_snapshot_sha": null
                 }
               }
@@ -1704,7 +1704,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": [],
+                  "gold_test_cases": ["gold-159", "gold-160"],
                   "expected_value_snapshot_sha": null
                 }
               }
@@ -1735,7 +1735,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": [],
+                  "gold_test_cases": ["gold-161"],
                   "expected_value_snapshot_sha": null
                 }
               }
@@ -1766,7 +1766,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": [],
+                  "gold_test_cases": ["gold-162"],
                   "expected_value_snapshot_sha": null
                 }
               }

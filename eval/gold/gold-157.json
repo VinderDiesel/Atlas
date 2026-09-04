@@ -1,0 +1,34 @@
+{
+  "id": "gold-157",
+  "question": "按分支统计 2013 年平均每笔成交金额，列出前 5 名",
+  "expected_metric": "average_trade_value",
+  "expected_dimensions": [
+    "Branch"
+  ],
+  "expected_time": "2013",
+  "expected_sql": "SELECT dim_broker.Branch AS Branch, SUM(fact_trades.Quantity * fact_trades.TradePrice) / COUNT(fact_trades.TradeID) AS average_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2013 GROUP BY dim_broker.Branch ORDER BY average_trade_value DESC LIMIT 5",
+  "result_hash": null,
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "ranking",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "平均每笔成交金额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "平均每笔成交金额 = 成交金额合计 / 成交笔数，货币金额度量（派生指标口径锚定）"
+    },
+    {
+      "term": "分支",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "派生指标按分支分组 + TopN 排序组合"
+    }
+  ]
+}

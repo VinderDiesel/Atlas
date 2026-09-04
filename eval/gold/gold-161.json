@@ -1,0 +1,24 @@
+{
+  "id": "gold-161",
+  "question": "2013 年户均持仓市值是多少？",
+  "expected_metric": "average_holding_value",
+  "expected_dimensions": [],
+  "expected_time": "2013",
+  "expected_sql": "SELECT SUM(fact_holdings.CurrentValue) / COUNT(DISTINCT fact_holdings.SK_AccountID) AS average_holding_value FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2013 LIMIT 100",
+  "result_hash": null,
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "户均持仓市值",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "户均持仓市值 = 持仓总市值 / 有持仓的去重账户数（fact_holdings 域首个黄金样本，口径锚定）"
+    }
+  ]
+}

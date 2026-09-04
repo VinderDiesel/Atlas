@@ -1,0 +1,24 @@
+{
+  "id": "gold-162",
+  "question": "2013 年户均现金余额是多少？",
+  "expected_metric": "average_cash_balance",
+  "expected_dimensions": [],
+  "expected_time": "2013",
+  "expected_sql": "SELECT SUM(fact_cash_balances.Cash) / COUNT(DISTINCT fact_cash_balances.SK_AccountID) AS average_cash_balance FROM atlas.dwd.fact_cash_balances AS fact_cash_balances INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_cash_balances.SK_DateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2013 LIMIT 100",
+  "result_hash": null,
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "户均现金余额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Balance",
+      "role": "measure",
+      "note": "户均现金余额 = 现金余额合计 / 有余额的去重账户数；实测为负（透支账户拉低户均，KL #17 口径锚定，负值 = 发布口径下的正确结果）"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "gold-156",
+  "question": "2013 年平均每笔成交金额是多少？",
+  "expected_metric": "average_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "2013",
+  "expected_sql": "SELECT SUM(fact_trades.Quantity * fact_trades.TradePrice) / COUNT(fact_trades.TradeID) AS average_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2013 LIMIT 100",
+  "result_hash": null,
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "平均每笔成交金额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "平均每笔成交金额 = 成交金额合计 / 成交笔数，货币金额度量（派生指标口径锚定）"
+    }
+  ]
+}
