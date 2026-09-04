@@ -80,3 +80,33 @@ per-user identity mode 联调成本未实测——需要明确 MVP 的安全交�
   验证、行级谓词层 + 对象级组合的端到端待硬化”口径声明；
 - 恶意/绕过 SQL 用例（含视图、CTE、无 LIMIT）全拦截（tests/test_security* 与
   eval/e2e S3 blocked 场景）。
+
+---
+
+## 落地注记：服务面硬化批次（2026-09-05，沿 0005 增补口径先例，不改裁定正文）
+
+### 决策 2 的 gateway 硬化项（正文代价段「serving/auth 属后续硬化项」）已兑现
+
+- **身份注入下沉 DataAgent 主链**（commit b933e20，feat(agent)）：serving/auth.py
+  拆出 `resolve_claims(claims)` 纯函数（resolve_policy(token) 薄包装保留原签名
+  零破坏）；`DataAgent.ask(identity=claims)` 把已验证 claims 渲染为 Policy 随
+  Guard 主链注入（agent/graph.py node_execute，无身份路径零变化契约锁定）；
+  answer 的 explanation 追加「行级策略已生效（角色 X，策略 Y）」——只给角色与
+  策略名，不给条件值（与被拒路径不外泄细节同精神）。
+- **HTTP 面身份下推 + 会话指纹 + 审计 + 限流**（commit 4a547e7，feat(serving)）：
+  /ask 以 BearerClaims 为身份（/plan /compile 无执行面不注入）；session_id 绑定
+  首个 claims 指纹，同会话换身份 → 422；业务审计 JSONL 每请求一行（无 SQL）；
+  per-token 共享桶限流 429 + Retry-After。
+- **验证门证据**（commit f98470f，test）：契约测试 +17（tests/test_api_hardening.py：
+  身份路由谓词/422 冲突/429+Retry-After/审计字段集）；make test 435 全绿
+  （skipped 14）；make eval b933e20 双域零回归；make api-verify A1-A7 全绿报告
+  eval/reports/api-acceptance-4a547e7.json（A5 三角色差异 / A6 会话身份冲突 / A7
+  零售品类受限 + 跨域 Guard 拒绝）；make rls-verify 双域不回归（报告
+  rls-verify-4a547e7.json）。
+
+### 硬化边界如实收窄（README KL #28 ③ 同步）
+
+- 会话指纹/限流/审计均为进程内（uvicorn workers=1，多 worker = 多份状态）；
+- 审计 JSONL 为本地文件，非防篡改——生产需外置（README 口径不后退为「已生产」）；
+- 身份仍为本地签发 HS256 JWT（无 IdP）；「真实多租户 → gateway 认证先行」推翻
+  条件仍未触发；Doris per-user identity 透传（0011 决策 4 独立项）不在本批范围。

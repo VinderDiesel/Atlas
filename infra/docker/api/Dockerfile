@@ -8,8 +8,9 @@
 #   - uvicorn workers=1：checkpointer MemorySaver 与 DataAgent._session_turns 是
 #     进程内状态，多 worker = 会话分裂（重启即失，KL #28）
 #   - 快照身份 ATLAS_GIT_SHA：镜像无 .git（context 排除），评测绑定键由构建
-#     参数注入——GIT_SHA 默认 = 当前数据装载 commit（docker-compose.yml 注释），
-#     data/snapshots/<sha>.meta.json 随 COPY 进镜像，/ask 才可绑定快照
+#     参数注入——GIT_SHA 默认 = 最新 29 表全量数据版本（b933e20，
+#     docker-compose.yml 注释），data/snapshots/<sha>.meta.json 随 COPY
+#     进镜像，/ask 才可绑定快照
 #   - /ask 只读链不变：eval/runner.execute_sql 连 DORIS_HOST（compose 注入）
 #     + Guard 预算；写面（loader/dwd）不入本容器
 FROM python:3.11-slim
@@ -29,7 +30,7 @@ RUN uv sync --frozen --no-dev
 
 COPY . .
 
-ARG GIT_SHA=7d48dcb
+ARG GIT_SHA=b933e20
 ENV ATLAS_GIT_SHA=${GIT_SHA}
 
 EXPOSE 8000

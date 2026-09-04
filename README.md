@@ -503,7 +503,7 @@ atlas-data-platform/
 | `make test` | 全量单元 + 契约测试 |
 | `make serve` | 启动 HTTP API（uvicorn 127.0.0.1:8000，单进程，见 §9.1） |
 | `make token` | 签发本地测试 JWT（默认 ROLE=hq_admin；如 `ROLE=branch_manager CONTEXT='{"branch": "east"}'`） |
-| `make api-verify` | HTTP API 真链验收（/plan→/compile→/ask + 认证，产出 `eval/reports/api-acceptance-<sha>.json`） |
+| `make api-verify` | HTTP API 真链验收（A1-A7：全链 EX / 认证 / 三角色差异 / 会话冲突 422 / 跨域拒绝，产出 `eval/reports/api-acceptance-<sha>.json`） |
 
 ### 9.1 对外 HTTP API（v1）
 
@@ -535,20 +535,43 @@ curl -H "Authorization: Bearer $(make token)" \
 > （本机 8000 被其他服务占用，见 compose 注释）——容器 curl 请用
 > `http://127.0.0.1:8001/`。
 
+身份 → 行级策略（2026-09-05 服务面硬化批次，ADR-0011 落地注记在档）：
+`/ask` 把已认证 claims 下推为行级身份（`agent.ask(identity=claims)` → Guard
+Policy 注入；`/plan` `/compile` 无执行面不注入）。可见信号与语义：
+
+- `explanation.policy_effect` = 「行级策略已生效（角色 X，策略 Y）」——只给
+  角色与策略名，**不给条件值**（0011 不外泄细节，与 blocked 不回流 SQL 同精神）；
+- 会话 × 身份：session_id 绑定首个请求的身份指纹（全 claims）；同一会话换
+  身份 → **422「会话身份冲突，请换新 session_id」**（换身份必须换会话）；
+- 限流：per-token 共享桶（/plan /compile /ask 同桶计数），超限 → **429 +
+  Retry-After 头**（下一窗口起点秒数）；/health 公开、401 路径不计。
+
+| env | 缺省 | 说明 |
+|---|---|---|
+| `ATLAS_JWT_SECRET` | 无（N9） | JWT 签发/校验密钥（本地 `make token`） |
+| `ATLAS_AUDIT_DISABLED` | 空 = 开 | `1` 关闭业务审计 JSONL（`serving/audit/audit.jsonl`，gitignore；每业务请求一行，不含 SQL——SQL 由 OTel span 承担） |
+| `ATLAS_RATE_LIMIT_MAX` | `60` | per-token 每分钟上限（**配置占位非实测阈值**——真实容量边界需压测）；`0` = 关 |
+| `ATLAS_RATE_LIMIT_WINDOW_SECONDS` | `60` | 限流窗口秒数；`0` = 关 |
+
 容器化部署（单机，依赖 Doris 已在 compose 内）：
 
 ```bash
 docker compose up -d --build atlas-api   # 8001:8000；镜像无 .git，快照身份由
-                                         # build arg GIT_SHA 注入（默认 7d48dcb，
-                                         # 即 data/snapshots/ 活动 meta 的数据装载
-                                         # commit；数据重装后更新 .env 的 GIT_SHA）
+                                         # build arg GIT_SHA 注入（默认 b933e20，
+                                         # 即 data/snapshots/ 最新 29 表全量数据
+                                         # 版本；数据重装后更新 .env 的 GIT_SHA）
 curl http://127.0.0.1:8001/health
 ```
 
-真链验收与报告：`make api-verify`（全 HTTP 栈 + 真 Doris + 锁定快照，A1 问→编→问
-EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；最新报告
-`eval/reports/api-acceptance-8e5a64e.json`（A1 EX=557479f4a0f2 与快照一致）。
-部署前必读边界：进程内内存会话、workers=1、未做限流/审计/生产验证——见 KL #28。
+真链验收与报告：`make api-verify`（全 HTTP 栈 + 真 Doris + 锁定快照）：
+A1 问→编→问 EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活 /
+A5 三角色行级差异（gold-146 × hq_admin vs branch_manager，策略名可见且条件值
+不外泄）/ A6 会话身份冲突 422 / A7 零售品类受限（category_analyst）+ 跨域
+Guard 拒绝（region_manager × finance → blocked，0011 决策 4 真链证据）。
+最新报告 `eval/reports/api-acceptance-4a547e7.json`（A1-A7 全绿，snapshot_sha
+=b933e20）。硬化后剩余边界如实：会话/限流/身份指纹为进程内（uvicorn 必须
+workers=1）、审计本地 JSONL 非防篡改、身份为本地签发 HS256（无 IdP）、Doris
+per-user identity 透传属 0011 决策 4 独立项——见 KL #28 ③。
 
 ---
 
@@ -599,11 +622,13 @@ EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；�
     数据事实；规划原文「华东区 / 某品类」零售角色随 TPC-DS SF0.1 数据落地已实测
     ——rp_dept_visible 未落地逻辑列 region/product_category 对齐物理
     dim_store.s_state / dim_item.i_category（row_policy.yml），rls-verify 双域差异报告
-    `eval/reports/rls-verify-1d7b672.json`（finance 差异集 3；retail 差异集 2：
+    `eval/reports/rls-verify-4a547e7.json`（finance 差异集 3；retail 差异集 2：
     region_manager（州=TN）与 hq_admin 结果一致系 SF0.1 单州数据事实，如实报告，
-    差异由 category_analyst 品类受限承担）；带身份 HTTP 化实测另见 demo 集成测试
-    （tests/test_demo_e2e.py RLS 2 例，resolve_policy → Guard 注入同机制，KL #28 ③ 口径：
-    API 面本身不注入角色策略，属 0011 gateway 硬化项）
+    差异由 category_analyst 品类受限承担）；带身份 HTTP 化实测见 api-verify
+    A5-A7（`eval/reports/api-acceptance-4a547e7.json`：三角色差异 / 会话身份冲突
+    422 / 零售品类受限 + 跨域 Guard 拒绝）与 demo 集成测试
+    （tests/test_demo_e2e.py RLS 2 例——库级 resolve_policy → Guard 注入，
+    README 快速开始库级载体；HTTP 身份链路由 api-verify A5-A7 承担）
 16. **Day 27 派生指标数值背书已闭环（2026-09-04）**：5 个派生指标 gold_test_cases 与
     expected_value_snapshot_sha 已回填（gold-156~162、快照 30b8344，Plan Acc 57/57、
     EX 57/57 全绿，报告 `eval/reports/30b8344.json`）；评测先行暴露的 Planner 同义词
@@ -671,14 +696,22 @@ EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；�
     Commons 20250801）无贴切税务金额类（候选仅税务治理概念/经纪服务费，语义不贴切），
     补映射需先扩展闭包域并重跑冒烟验证，登记待办不硬补；审计方法与数字见
     `data/fibo/README.md` 覆盖审计节（2026-09-03）
-28. **HTTP API v1 边界（ADR-0012，2026-09-03）**：服务面为本地演示/集成面，非
-    生产部署——①会话是进程内内存态（MemorySaver checkpointer + 进程内轮数），
-    重启即失、无横向扩展；②uvicorn 必须 workers=1，多 worker = 会话分裂；③未做
-    限流/审计/生产化身份下推（0011 记录的 gateway 硬化项，v1 只有 JWT 认证无角色
-    策略注入，口径与 CLI 一致）；④engine=stub 确定性默认，LLM 引擎服务化属
-    Phase 2；⑤容器内 /ask 依赖构建时注入的快照身份 ATLAS_GIT_SHA（镜像无 .git）
-    且对应 meta 随仓库进入镜像——带 seed 数据的环境才可答；⑥/api 契约测试 16 例
-    （tests/test_api.py，fake 注入无 DB）+ 真链验收 make api-verify 在档
+28. **HTTP API v1 边界（ADR-0012，2026-09-03；服务面硬化批次 2026-09-05 收窄
+    ③）**：服务面为本地演示/集成面，非生产部署——①会话是进程内内存态
+    （MemorySaver checkpointer + 进程内轮数），重启即失、无横向扩展；②uvicorn
+    必须 workers=1，多 worker = 会话/限流/身份指纹多份分裂；③**身份下推/限流/
+    审计已落地（2026-09-05）**：/ask 已验证 claims → 行级策略随 Guard 注入
+    （explanation 可见信号，条件值不外泄）、per-token 共享桶限流（429 +
+    Retry-After）、业务审计 JSONL（每请求一行，不含 SQL）——绑定 api-verify
+    报告 `eval/reports/api-acceptance-4a547e7.json`（A5-A7 身份场景）；**剩余
+    边界如实**：限流为进程内固定窗口（默认 60 次/分钟是配置占位非实测阈值）、
+    审计本地 JSONL 非防篡改（生产需外置）、身份为本地签发 HS256 JWT（无 IdP，
+    0011 决策 4「真实多租户 → gateway 认证先行」推翻条件未触发）、Doris
+    per-user identity 透传属 0011 决策 4 独立项；④engine=stub 确定性默认，LLM
+    引擎服务化属 Phase 2；⑤容器内 /ask 依赖构建时注入的快照身份 ATLAS_GIT_SHA
+    （镜像无 .git）且对应 meta 随仓库进入镜像——带 seed 数据的环境才可答；
+    ⑥/api 契约测试 43 例（tests/test_api.py 26 + tests/test_api_hardening.py
+    17，fake 注入无 DB）+ 真链验收 make api-verify（A1-A7）在档
 29. **filter 不支持形态 → 澄清（不猜测）**：自由双指标比较（“佣金高于成交量的
     分支”）、维度值模糊无法命中语义层同义词、HAVING 语义度量阈值但问句未解析出
     metric（无从挂载聚合比较）均返回 ClarificationRequest；时间词不并入 filter
@@ -703,7 +736,7 @@ EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；�
 | Data Agent 状态机与工具链（LangGraph 编排 / MCP 暴露 / 防幻觉图表 / 反馈与 handoff） | 已有工程经验 | 以确定性优先落地 agent/ 状态机（8 节点）+ tools 四件套 + MCP 工具服务器 + chart + feedback；7 场景 e2e 实测（含多轮追问 S7）见 docs/e2e-acceptance.md（数字全部出自 eval/reports/e2e-acceptance.json，不另立声明） |
 | Ossie / Polaris / Iceberg / Doris | **需新建** | 单机部署、基准测试、维护 ADR（0002/0004/0005） |
 | Agent 安全执行与自动洞察 | **需新建** | 先做安全工具，再扩展规划与归因 |
-| HTTP API / 认证中间件 | 已有工程经验 | 以 FastAPI 落地 serving/api.py（ADR-0012：/health /plan /compile /ask + JWT），契约测试 16 例 + 真链验收 api-verify 在档 |
+| HTTP API / 认证中间件 | 已有工程经验 | 以 FastAPI 落地 serving/api.py（ADR-0012：/health /plan /compile /ask + JWT），/api 契约测试 43 例（+17 硬化：身份注入/会话冲突 422/限流 429/审计字段集）+ 真链验收 api-verify A1-A7 在档 |
 
 ---
 

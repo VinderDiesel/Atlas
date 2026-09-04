@@ -134,11 +134,27 @@ Bearer JWT auth (`make token`), `engine=stub` default.
 - **Multi-model routing (2026-09-05)**: request body `model` field selects the
   semantic domain — `finance` (default, backward compatible) or `retail`; unknown
   value → 422. Session keys are isolated per model.
+- **Service-face hardening (2026-09-05, ADR-0011 annotation)**: `/ask` pushes the
+  verified Bearer claims down as the row-level identity (`agent.ask(identity=…)`
+  → Guard Policy injection; `/plan` `/compile` have no execution face and stay
+  identity-free). Visible signals:
+  - `explanation.policy_effect` — 「行级策略已生效（角色 X，策略 Y）」: role and
+    policy name only, **never the condition value**;
+  - a `session_id` is bound to the first request's identity fingerprint — changing
+    identity on the same session → **422「会话身份冲突」**;
+  - per-token shared-bucket rate limit → **429 + `Retry-After`** (`/health` public
+    and 401 paths are exempt).
+- **Hardening env**: `ATLAS_AUDIT_DISABLED=1` turns the business-audit JSONL off
+  (`serving/audit/`, one line per request, no SQL); `ATLAS_RATE_LIMIT_MAX` /
+  `ATLAS_RATE_LIMIT_WINDOW_SECONDS` override the **placeholder** 60/min default
+  (0 disables). Same placeholders documented in `.env.example`.
 - `/health` is public; snapshot-meta missing → 503 on `/ask`.
-- Boundaries (KL #28): in-process sessions, uvicorn must run `workers=1`, no
-  rate-limiting/audit yet; v1 has JWT auth but no role-policy injection on the API
-  surface (CLI-consistent; the role-injection demo lives in `make rls-verify` and
-  the demo tests — same `resolve_policy → Guard` mechanism).
+- Boundaries (KL #28): sessions / identity fingerprints / rate limit are all
+  in-process — uvicorn must run `workers=1`; the audit JSONL is a local file,
+  non-tamper-proof (export before production); no IdP yet — tokens are locally
+  signed HS256 (0011 decision 4 stays open). Verified by `make api-verify`
+  A5-A7 (`eval/reports/api-acceptance-4a547e7.json`: role-difference / session
+  identity-conflict 422 / retail category restriction + cross-domain Guard block).
 
 ```bash
 make serve    # uvicorn 127.0.0.1:8000 (single process)

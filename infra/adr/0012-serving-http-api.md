@@ -85,3 +85,14 @@ docker-compose 全是第三方中间件——"如何部署对外提供服务"没
   /plan → /compile（断言只读 SQL 形态）→ /ask（EX 与快照一致）；一例歧义
   → kind=clarify；输出 eval/reports/api-acceptance-<sha>.json；`make api-verify`；
 - `make lint && make test` 全绿。
+
+## 落地注记：服务面硬化批次（2026-09-05，与 ADR-0011 落地注记同批，不改正文）
+
+正文限制「未做限流/审计」与推翻条件中的硬化项已**部分兑现**（commit 4a547e7
+feat(serving) + f98470f test）：/ask 身份下推（已验证 claims → 行级策略随 Guard
+注入，explanation 可见信号）、会话 × 身份指纹（同会话换身份 → 422）、per-token
+共享桶限流（429 + Retry-After）、业务审计 JSONL（每请求一行，不含 SQL）——绑定
+api-verify 报告 eval/reports/api-acceptance-4a547e7.json（A5 三角色差异 / A6 会话
+身份冲突 / A7 零售品类受限 + 跨域 Guard 拒绝）；契约测试现 43 例（test_api.py 26
++ test_api_hardening.py 17）。仍未兑现：生产部署验证、Doris identity mode 下推
+真实用户（ADR-0011 决策 4 独立项）；「真实多租户/外部访问」推翻条件未触发。

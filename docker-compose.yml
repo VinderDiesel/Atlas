@@ -195,8 +195,8 @@ services:
   # - 容器网络内直连 Doris 9030（execute_sql 只读封装 + Guard 预算不变；
   #   写面 loader/dwd 不入本容器）
   # - 构建参数 GIT_SHA = 快照身份：镜像无 .git，由 ARG 注入 ATLAS_GIT_SHA
-  #   （eval/runner.git_short_sha 的 env 覆盖面）。默认当前数据装载 commit
-  #   7d48dcb（data/snapshots/ 唯一活动 meta）；数据重装后改宿主 .env 的
+  #   （eval/runner.git_short_sha 的 env 覆盖面）。默认最新 29 表全量数据
+  #   版本 b933e20（data/snapshots/ 最新锁定 meta）；数据重装后改宿主 .env 的
   #   GIT_SHA 或显式 build args
   # - ATLAS_JWT_SECRET 不落盘默认值（N9）：compose 从宿主 .env 注入运行时；
   #   未设置则服务能起但签发/校验拒绝（serving/auth.py 报错提示）

@@ -127,9 +127,9 @@ token:
 	uv run --env-file .env python -c "import json, sys; from serving.auth import sign_token; print(sign_token(sys.argv[1], json.loads(sys.argv[2])))" "$(or $(ROLE),hq_admin)" "$(or $(CONTEXT),{})"
 
 # HTTP API 真链验收（eval/api_acceptance.py，ADR-0012）：全 HTTP 栈 + 真 Doris
-# + 锁定快照（7d48dcb meta，同 e2e_acceptance 数据口径）：/plan→/compile→/ask
-# 只读形态与 EX 一致性、歧义反问、401×2、/health；断言失败退出码 1
-# 产出 eval/reports/api-acceptance-<sha>.json；需 .env（ATLAS_JWT_SECRET）
+# + 锁定快照（b933e20 meta，29 表全量数据版本）：A1 全链 EX / A2 歧义反问 /
+# A3 认证 / A4 存活 / A5 三角色差异 / A6 会话冲突 422 / A7 零售受限 + 跨域拒绝
+# 断言失败退出码 1；产出 eval/reports/api-acceptance-<sha>.json；需 .env（ATLAS_JWT_SECRET）
 api-verify:
 	uv run --env-file .env python -m eval.api_acceptance
 
