@@ -1,8 +1,9 @@
 """黄金集校验：schema 结构 + FIBO 概念标注 IRI 存在性
 
-验证 eval/gold/*.json 全部符合 schema.json，且 fibo_concepts 中
-每个 concept IRI 都真实存在于锁定版本的 FIBO/Commons 闭包
-（ADR-0007：黄金集问句人工标注 FIBO 概念，标注不得引用失效概念）。
+验证 eval/gold/<domain>/*.json（目录化后按域子目录）全部符合 schema.json，
+且 fibo_concepts 中每个 concept IRI 都真实存在于锁定版本的
+FIBO/Commons 闭包（ADR-0007：黄金集问句人工标注 FIBO 概念，标注不得
+引用失效概念）。
 
 注意：本脚本只校验"标注可审计"，概念映射准确率（模型输出 vs 标注的一致率）
 由评测运行产生，与 EX / Plan Acc 分开报告。
@@ -33,7 +34,7 @@ def main() -> None:
     g = load_graph()
     classes = {c for c in g.subjects(RDF.type, OWL.Class)}
     ok = True
-    files = sorted(glob.glob(str(GOLD_DIR / "gold-*.json")))
+    files = sorted(glob.glob(str(GOLD_DIR / "*" / "gold-*.json")))
 
     for p in files:
         sample = json.loads(Path(p).read_text(encoding="utf-8"))

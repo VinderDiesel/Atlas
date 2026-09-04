@@ -75,7 +75,8 @@ def gold_templates(model: SemanticModel) -> set[str]:
     """gold 评测问句的模板集合（含逐字原文，双层防泄漏）。"""
     aliases = metric_aliases(model)
     texts = set()
-    for path in GOLD_DIR.glob("gold-*.json"):
+    # 目录化后跨 finance/ retail/ 域子目录（测试集逐字/模板双层防泄漏）
+    for path in GOLD_DIR.glob("*/gold-*.json"):
         sample: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         q = str(sample.get("question", ""))
         texts.add(q)

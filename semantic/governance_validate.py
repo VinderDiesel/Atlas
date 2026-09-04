@@ -238,11 +238,16 @@ def _load_policy_names(errors: list[str]) -> set[str] | None:
     return {p["name"] for p in doc.get("policies", [])}
 
 
+def _gold_paths() -> list[Path]:
+    """全部 gold 样本路径（目录化后跨 finance/ retail/ 两个域子目录）。"""
+    return sorted(GOLD_DIR.glob("*/gold-*.json"))
+
+
 def _load_gold_ids(errors: list[str]) -> set[str] | None:
     if not GOLD_DIR.exists():
         errors.append(f"缺少黄金集目录 {GOLD_DIR}")
         return None
-    return {p.stem for p in GOLD_DIR.glob("gold-*.json")}
+    return {p.stem for p in _gold_paths()}
 
 
 def _gold_refs_by_metric() -> dict[str, set[str]] | None:
@@ -250,7 +255,7 @@ def _gold_refs_by_metric() -> dict[str, set[str]] | None:
     if not GOLD_DIR.exists():
         return None
     refs: dict[str, set[str]] = {}
-    for p in GOLD_DIR.glob("gold-*.json"):
+    for p in _gold_paths():
         try:
             sample = json.loads(p.read_text(encoding="utf-8"))
         except json.JSONDecodeError:

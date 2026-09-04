@@ -11,16 +11,18 @@
 诚实与可复现口径（与 data/snapshots/README.md、eval/gold/README.md 绑定）：
 - 评测只认当前 HEAD：启动时以 `data/snapshot.py --check` 复核数据指纹，
   漂移（行数/snapshot id 变化）即拒绝出报告——数字必须绑定锁定快照。
-- 金融段（gold-1xx）为主评测；零售段（gold-0xx）为历史对照，跳过并计数，
-  不与金融段混报。
+- 样本按域分目录（目录即域声明）：eval/gold/finance/ 与 eval/gold/retail/，
+  各自装载对应语义模型（DOMAIN_MODELS），报告分域不混报（AGENTS.md N10 口径
+  要求：跨域数字必须分开报告）。
 - result_hash = 编译 SQL（过 Guard 后）执行结果的 sha256。gold JSON 中
   占位符（<待执行后填写>）在首次执行时锚定回填并提示 commit；此后比对即 EX。
 - 样本 SQL 必须确定性（单行聚合或带 ORDER BY）：多行无排序结果在并发
   执行下不稳定，hash 会抖动（gold 设计原则见 eval/gold/README.md）。
 
 用法（从仓库根执行）：
-    uv run python -m eval.runner           # 评测当前 HEAD（自动复核快照）
-    uv run python -m eval.runner --dry     # 只跑 Plan Acc，不执行 SQL 不写报告
+    uv run python -m eval.runner --domain finance --dry   # 只跑金融段 Plan Acc
+    uv run python -m eval.runner                          # 全域评测（自动复核快照）
+    uv run python -m eval.runner --domain retail          # 只跑零售段
 """
 
 from __future__ import annotations
@@ -45,6 +47,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GOLD_DIR = REPO_ROOT / "eval" / "gold"
 REPORT_DIR = REPO_ROOT / "eval" / "reports"
 SNAPSHOT_DIR = REPO_ROOT / "data" / "snapshots"
+
+# 域 → 语义模型（与 eval/gold/<domain>/ 目录一一对应）
+DOMAIN_MODELS = {
+    "finance": REPO_ROOT / "semantic" / "ossie" / "atlas_finance.ossie.yaml",
+    "retail": REPO_ROOT / "semantic" / "ossie" / "atlas_retail.ossie.yaml",
+}
 
 TZ = timezone(timedelta(hours=8))  # 契约要求：时间戳显式 +08:00
 # 占位符（AGENTS.md 9.3：未完成数字一律 <待填写>，评测锚定前不得编造）
@@ -93,14 +101,17 @@ def verify_snapshot() -> None:
     print(f"[snapshot] {proc.stdout.strip()}")
 
 
-def load_gold_finance() -> list[dict[str, Any]]:
-    """加载金融段样本（gold-1xx）；零售段（0xx）跳过并计数。"""
+def load_gold(domain: str) -> list[dict[str, Any]]:
+    """加载指定域目录（eval/gold/<domain>/）下的全部黄金样本。
+
+    目录即域声明（2026-09-05 目录化）：不再按 id 前缀判域；样本 id 全局唯一
+    （金融 gold-1xx、零售 gold-0xx），_file 注入供锚定回填。
+    """
     samples: list[dict[str, Any]] = []
-    for path in sorted(GOLD_DIR.glob("gold-*.json")):
+    for path in sorted((GOLD_DIR / domain).glob("gold-*.json")):
         sample: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-        if sample["id"].startswith("gold-1"):
-            sample["_file"] = str(path)
-            samples.append(sample)
+        sample["_file"] = str(path)
+        samples.append(sample)
     return samples
 
 
@@ -267,28 +278,8 @@ def evaluate(
     return result
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dry", action="store_true", help="只跑 Plan Acc，不执行 SQL 不写报告")
-    args = parser.parse_args()
-
-    if not args.dry:
-        verify_snapshot()
-    sha = git_short_sha()
-
-    model = SemanticModel()
-    planner = Planner(model)
-    compiler = Compiler(model)
-    snapshot_meta: dict[str, Any] = {}
-    if not args.dry:
-        snapshot_meta = json.loads((SNAPSHOT_DIR / f"{sha}.meta.json").read_text(encoding="utf-8"))
-    budget = build_budget(snapshot_meta) if not args.dry else Budget(dialect="doris")
-
-    samples = load_gold_finance()
-    retail_count = len(list(GOLD_DIR.glob("gold-*.json"))) - len(samples)
-    results = [evaluate(planner, compiler, g, budget, sha, args.dry) for g in samples]
-
-    # 汇总（只输出实测计数，不做任何推断）
+def summarize(results: list[dict[str, Any]]) -> dict[str, str | int]:
+    """单域汇总：Plan Acc / clarify / EX 计数（只输出实测计数，不做任何推断）。"""
     non_ambiguous = [r for r in results if not r["ambiguous"]]
     ambiguous = [r for r in results if r["ambiguous"]]
     plan_ok = sum(1 for r in non_ambiguous if r.get("plan_ok"))
@@ -297,25 +288,55 @@ def main() -> int:
     ex_fail = sum(1 for r in non_ambiguous if r.get("ex") == "fail")
     ex_anchored = sum(1 for r in non_ambiguous if r.get("ex") == "anchored")
     errors = sum(1 for r in results if "error" in r)
-
-    summary = {
-        "finance_total": len(samples),
-        "retail_skipped": retail_count,
+    return {
+        "total": len(results),
         "plan_acc": f"{plan_ok}/{len(non_ambiguous)}",
         "clarify": f"{clarify_ok}/{len(ambiguous)}",
         "ex": f"{ex_pass}/{ex_pass + ex_fail}" if ex_pass + ex_fail else "n/a(首轮锚定)",
         "ex_anchored": ex_anchored,
         "exec_errors": errors,
     }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry", action="store_true", help="只跑 Plan Acc，不执行 SQL 不写报告")
+    parser.add_argument("--domain", choices=("finance", "retail", "all"), default="all",
+                        help="评测域（默认 all：按域分节汇总，不混报）")
+    args = parser.parse_args()
+
+    if not args.dry:
+        verify_snapshot()
+    sha = git_short_sha()
+
+    domains = ("finance", "retail") if args.domain == "all" else (args.domain,)
+    snapshot_meta: dict[str, Any] = {}
+    if not args.dry:
+        snapshot_meta = json.loads((SNAPSHOT_DIR / f"{sha}.meta.json").read_text(encoding="utf-8"))
+    budget = build_budget(snapshot_meta) if not args.dry else Budget(dialect="doris")
+
+    results_all: list[dict[str, Any]] = []
+    summary: dict[str, Any] = {}
+    for domain in domains:
+        model = SemanticModel(DOMAIN_MODELS[domain])
+        planner = Planner(model)
+        compiler = Compiler(model)
+        samples = load_gold(domain)
+        results = [evaluate(planner, compiler, g, budget, sha, args.dry) for g in samples]
+        results_all.extend(results)
+        summary[domain] = summarize(results)
+
     report = {
         "sha": sha,
         "created_at": datetime.now(TZ).isoformat(timespec="seconds"),
         "dry": args.dry,
+        "domains": domains,
         "summary": summary,
-        "samples": results,
+        "samples": results_all,
         "notes": (
             "口径：Plan Acc=metric/dimensions/time 与标注一致；EX=编译 SQL（过 Guard）"
             "执行结果 sha256 与锚定 result_hash 一致；歧义样本反问=pass；"
+            "summary 按域分节（finance/retail 不混报，AGENTS.md N10）；"
             "result_hash 锚定回填 gold JSON 后需 git commit（换快照须重锚定，见 "
             "data/snapshots/README.md）。"
         ),
@@ -330,7 +351,7 @@ def main() -> int:
     target.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"[done] 报告已写入: {target.relative_to(REPO_ROOT)}")
     print(f"[summary] {json.dumps(summary, ensure_ascii=False)}")
-    anchored = [r["id"] for r in results if r.get("ex") == "anchored"]
+    anchored = [r["id"] for r in results_all if r.get("ex") == "anchored"]
     if anchored:
         print(f"[anchor] 以下样本 result_hash 已锚定（gold JSON 已回填，请 commit）: {anchored}")
     return 0

@@ -20,7 +20,11 @@ PLANNER = Planner(MODEL)
 
 
 def load_gold(gold_id: str) -> dict:
-    return json.loads((REPO / "eval" / "gold" / f"{gold_id}.json").read_text(encoding="utf-8"))
+    """按 id 段路由到域目录（gold-1xx → finance/，gold-0xx → retail/）。"""
+    domain = "finance" if gold_id.startswith("gold-1") else "retail"
+    return json.loads(
+        (REPO / "eval" / "gold" / domain / f"{gold_id}.json").read_text(encoding="utf-8")
+    )
 
 
 class TestGoldFinancePlanner(unittest.TestCase):

@@ -43,8 +43,12 @@ OUT_OF_DOMAIN_Q = "2013年各分支机构的绩效奖金总额排名"  # 域外�
 
 
 def load_gold_question(gold_id: str) -> str:
-    """gold JSON 的 question 字段（与 runner 同源，防止测试问句漂移）。"""
-    path = GOLD_DIR / f"{gold_id}.json"
+    """gold JSON 的 question 字段（与 runner 同源，防止测试问句漂移）。
+
+    目录化后按 id 段路由：gold-1xx → finance/，gold-0xx → retail/。
+    """
+    domain = "finance" if gold_id.startswith("gold-1") else "retail"
+    path = GOLD_DIR / domain / f"{gold_id}.json"
     return str(json.loads(path.read_text(encoding="utf-8"))["question"])
 
 

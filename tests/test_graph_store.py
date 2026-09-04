@@ -48,7 +48,7 @@ class TestGraphConsistencyWithGold(unittest.TestCase):
     def test_all_gold_dimension_samples_keep(self) -> None:
         """13 组已实测 gold 维度样本必须全保留（与评测集对齐，误杀即报警）。"""
         skipped = 0
-        for path in sorted((REPO / "eval" / "gold").glob("gold-1*.json")):
+        for path in sorted((REPO / "eval" / "gold" / "finance").glob("gold-1*.json")):
             sample = json.loads(path.read_text(encoding="utf-8"))
             if sample.get("ambiguous", False):
                 continue

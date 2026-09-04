@@ -29,7 +29,8 @@ def check_gold_schema() -> list[str]:
     """黄金集样本结构校验（轻量，无 FIBO 依赖）。"""
     errors: list[str] = []
     schema = json.loads(GOLD_SCHEMA.read_text(encoding="utf-8"))
-    for p in sorted(glob.glob(str(REPO / "eval" / "gold" / "gold-*.json"))):
+    # 目录化后跨 finance/ retail/ 域子目录（2026-09-05）
+    for p in sorted(glob.glob(str(REPO / "eval" / "gold" / "*" / "gold-*.json"))):
         sample = json.loads(Path(p).read_text(encoding="utf-8"))
         try:
             jsonschema.validate(sample, schema)
@@ -72,7 +73,7 @@ def main() -> int:
     if errors:
         print(f"\n[gold] 校验失败：{len(errors)} 个问题")
         return 1
-    n_gold = len(glob.glob(str(REPO / "eval" / "gold" / "gold-*.json")))
+    n_gold = len(glob.glob(str(REPO / "eval" / "gold" / "*" / "gold-*.json")))
     print(f"✅ [gold] 黄金集结构校验通过：{n_gold} 条样本")
 
     print("\nlint 全部通过")

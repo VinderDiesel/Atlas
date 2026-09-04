@@ -32,7 +32,7 @@ def _row(question: str, answer: str = PLAN_ANSWER) -> dict[str, object]:
 
 def test_gold_question_literal_rejected() -> None:
     """红线 1：approved 问句与 gold 问句逐字相同 → 拒绝。"""
-    gold_q = json.loads((ROOT / "eval/gold/gold-102.json").read_text(encoding="utf-8"))["question"]
+    gold_q = json.loads((ROOT / "eval/gold/finance/gold-102.json").read_text(encoding="utf-8"))["question"]
     stats, kept = build_pairs([_row(gold_q)], PROTECTED, ALIASES, MODEL)
     assert stats.leak_rejected == 1
     assert kept == []
