@@ -55,6 +55,9 @@
 - `1e5d35b`：双源 29 表同数据多锁（P6 双语样本批次：planner locale 化 + 英文
   样本 13 条，未动数据，指纹与 92033c9 全一致）；英文样本 13 条锚定绑定此 sha
   （eval/reports/1e5d35b.json，per-domain by_lang 分节）
+- `73b5971` / `9749fc5`：双源 29 表同数据多锁（P7 收口批次：API 多模型路由 + demo
+  集成测试，未动数据，指纹与 1e5d35b 全一致）；终验复验零回归绑定 `9749fc5`
+  （eval/reports/9749fc5.json，89 条全绿；EVAL_REPORT.md per-domain 分节绑定此 sha）
 
 换快照纪律：数据未变时 HEAD 前进仅重锁新 sha（同数据多锁先例），meta.json
 逐个保留可追溯，README 记演进即可，不需重锚历史样本。

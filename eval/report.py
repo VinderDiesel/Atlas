@@ -61,7 +61,12 @@ def _row(label: str, value: str, source: str) -> str:
 
 
 def _section_main(sha: str) -> list[str]:
-    """§1 主评测（compiler-only 基线，make eval）。"""
+    """§1 主评测（compiler-only 基线，make eval；per-domain 分节，P1/P7 目录化后结构）。
+
+    runner 报告 summary 为 {domain: {total/plan_acc/clarify/ex/ex_anchored/
+    exec_errors/by_lang}}（金融/零售各自成节不混报）；本表对每域机械转述六键 +
+    by_lang zh/en 总数（双语细目见 eval/gold/README.md）。
+    """
     name = f"{sha}.json"
     d = _load(name)
     lines = [
@@ -73,18 +78,15 @@ def _section_main(sha: str) -> list[str]:
     if d is None:
         lines.append(_row("summary", MISSING, name))
         return lines
-    s = d.get("summary", {})
-    summary: dict[str, Any] = s if isinstance(s, dict) else {}
-    for label in (
-        "finance_total",
-        "retail_skipped",
-        "plan_acc",
-        "clarify",
-        "ex",
-        "ex_anchored",
-        "exec_errors",
-    ):
-        lines.append(_row(label, str(summary.get(label, MISSING)), name))
+    summary = d.get("summary", {})
+    for domain in ("finance", "retail"):
+        lines.append(_row(f"{domain}_total", _field(summary, domain, "total"), name))
+        for key in ("plan_acc", "clarify", "ex", "ex_anchored", "exec_errors"):
+            lines.append(_row(f"{domain}_{key}", _field(summary, domain, key), name))
+        for lang in ("zh", "en"):
+            lines.append(
+                _row(f"{domain}_{lang}_total", _field(summary, domain, "by_lang", lang, "total"), name)
+            )
     lines.append("")
     lines.append(f"**评测脚本**：`eval/runner.py`（{name} `created_at`={_field(d, 'created_at')}）")
     return lines

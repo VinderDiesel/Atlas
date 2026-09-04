@@ -5,6 +5,8 @@
 > Status: **under active development**
 > 所有数字来自可复现脚本产物，不是营销断言。见 `EVAL_REPORT.md`。
 > v0.1 发布说明与已知边界：`docs/release-notes-v0.1.md`
+>
+> English: [README.en.md](README.en.md)（快速开始 / 架构 / 评测复现 / 双域说明 / 已知限制摘要）
 
 ---
 
@@ -239,9 +241,11 @@ Apache Ossie Core Spec（semantic_model / datasets / fields / relationships / me
 挂载 31 条 FIBO 概念映射（8 datasets 全覆盖 + 19/20 metrics；total_trade_tax 待办见 `data/fibo/README.md` 审计节），
 见 `data/fibo/README.md`；指标审核发布记录见 `semantic/migrations/`）；
 `atlas_retail.ossie.yaml` 自 2026-09-04 起转正为第二主评测域：TPC-DS SF0.1 数据已装载
-（`make seed-retail`，4 表入 dwd），gold 样本 14 条已锚定（快照 92033c9，见
-eval/gold/README.md 零售段）；此前“不再扩展”裁定基于无数据前提，已废除（P7 文档
-收口记录裁定推翻流程）
+（`make seed-retail`，4 表入 dwd），gold 样本 19 条全锚定（14 中文含 1 歧义 + 5 英文，
+锚定快照 1e5d35b，终验复验零回归报告 9749fc5——见 eval/gold/README.md 零售段与
+EVAL_REPORT.md）；serving 已双模型路由（§9.1 请求体 `model` 字段）+ demo 集成测试
+（`make demo`，双语 12 + RLS 身份 2）；此前“不再新增”裁定基于无数据前提，已废除
+（裁定推翻注记见 eval/gold/README.md，沿 ADR 推翻条件记录流程）
 
 ```yaml
 version: "0.2.0.dev0"
@@ -510,9 +514,13 @@ Atlas 的服务面（ADR-0012，落地 [serving/api.py](serving/api.py)）：同
 | 端点 | 认证 | 请求 | 响应 |
 |---|---|---|---|
 | `GET /health` | 公开 | — | `{status, head_sha, snapshot_sha\|None}`（存活 + 快照绑定状态） |
-| `POST /plan` | Bearer | `{question}`（≤500 字符） | `{kind: "plan", plan}` 或 `{kind: "clarify", clarification}`（歧义 200，CLI exit 1 语义的 HTTP 化） |
-| `POST /compile` | Bearer | Plan JSON（`metric/dimensions/time/filters/order_by/limit`） | `{sql}`（Doris 只读方言）；结构非法/编译失败 422 |
-| `POST /ask` | Bearer | `{question, session_id?}` | TurnResult 全集（kind ∈ answer/clarify/blocked/error；rows 的 Decimal→str 保精度、datetime→ISO8601）；快照 meta 缺失 503 |
+| `POST /plan` | Bearer | `{question, model?}`（≤500 字符） | `{kind: "plan", plan}` 或 `{kind: "clarify", clarification}`（歧义 200，CLI exit 1 语义的 HTTP 化） |
+| `POST /compile` | Bearer | Plan JSON（`metric/dimensions/time/filters/order_by/limit`，含 `model?`） | `{sql}`（Doris 只读方言）；结构非法/编译失败 422 |
+| `POST /ask` | Bearer | `{question, session_id?, model?}` | TurnResult 全集（kind ∈ answer/clarify/blocked/error；rows 的 Decimal→str 保精度、datetime→ISO8601）；快照 meta 缺失 503 |
+
+多模型路由（P7）：`model` 字段选语义模型域（`finance` 缺省——向后兼容，旧请求体
+零变化 / `retail`），未知值 422；会话键（session_id）按模型隔离，跨模型不续接
+（finance/retail 各一 Agent 单例，uvicorn 仍须 workers=1，见 KL #28）。
 
 认证：JWT（HS256）复用 `serving/auth.py`，密钥走 env `ATLAS_JWT_SECRET`（N9，
 无默认值）。本地签发测试 token：
@@ -593,7 +601,9 @@ EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；�
     dim_store.s_state / dim_item.i_category（row_policy.yml），rls-verify 双域差异报告
     `eval/reports/rls-verify-1d7b672.json`（finance 差异集 3；retail 差异集 2：
     region_manager（州=TN）与 hq_admin 结果一致系 SF0.1 单州数据事实，如实报告，
-    差异由 category_analyst 品类受限承担）
+    差异由 category_analyst 品类受限承担）；带身份 HTTP 化实测另见 demo 集成测试
+    （tests/test_demo_e2e.py RLS 2 例，resolve_policy → Guard 注入同机制，KL #28 ③ 口径：
+    API 面本身不注入角色策略，属 0011 gateway 硬化项）
 16. **Day 27 派生指标数值背书已闭环（2026-09-04）**：5 个派生指标 gold_test_cases 与
     expected_value_snapshot_sha 已回填（gold-156~162、快照 30b8344，Plan Acc 57/57、
     EX 57/57 全绿，报告 `eval/reports/30b8344.json`）；评测先行暴露的 Planner 同义词

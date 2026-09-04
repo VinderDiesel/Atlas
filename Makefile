@@ -25,6 +25,8 @@ help:
 	@echo ""
 	@echo "  评测"
 	@echo "    make eval            跑黄金集（Plan Acc + EX，自动复核数据快照）"
+	@echo "    make demo            端到端演示测试（双语 12 + RLS 身份 2，需 Doris + 锁定快照）"
+	@echo "    make rls-verify      行级权限回归（双域：finance 差异集 3；retail 州/品类档）"
 	@echo "    make e2e             Data Agent 端到端验收门禁：5 场景+handoff（Day 48）"
 	@echo "    make train           用确认后的失败样本训练 SQL LoRA"
 	@echo "    make report          生成 EVAL_REPORT.md"
@@ -188,6 +190,15 @@ report:
 
 test:
 	$(PYTHON) -m unittest discover -s tests -v
+
+# ---- 端到端演示（P7：demo = 集成测试形态，非花哨脚本）----
+# tests/test_demo_e2e.py：中英问句 12 条全链路（plan→compile→guard→execute，双域各一
+#   DataAgent）+ 带身份 2 条（region_manager/category_analyst，rls-verify 同机制）
+# 环境：Doris 可达 + 当前 HEAD 已锁快照（缺任一 skip）；带身份 2 例另需 .env 的
+#   ATLAS_JWT_SECRET（缺省时这两例单独 skip，不阻塞无密钥环境）
+demo:
+	uv run --env-file .env python -m unittest tests.test_demo_e2e -v
+	@echo "demo 通过（双语 12 + RLS 身份 2，真 Doris 集成）"
 
 # ---- 权限回归验证（.env 需有 ATLAS_JWT_SECRET / POLARIS_RBAC_CLIENT_*）----
 # rls-verify：双域行级下推（SQL 谓词层，serving/rls_verify.py，默认 --domain all
