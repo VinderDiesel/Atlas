@@ -5,8 +5,10 @@ name: eval-regression
 # 设计约束（诚实边界）：
 # - 公共 runner 无 TPC-DI 数据源与 Doris 数据环境 → EX（执行一致率）无法在 CI 跑；
 #   CI 回归 = 语义 lint + 契约测试 + Plan Acc 回归（eval.runner --dry，无数据库）。
-# - Plan Acc 回归门槛 = dry 报告自洽（plan_acc+clarify 覆盖 finance_total 且
-#   exec_errors=0）；跨提交数值变化由 step summary 人工评审（不硬编码基线防腐化）。
+# - Plan Acc 回归门槛 = dry 报告逐域自洽（各域 plan_acc+clarify 覆盖该域 total 且
+#   exec_errors=0）；2026-09-05 起 summary 按域分节不混报（AGENTS.md N10，
+#   finance_total 等平铺键已不存在）；跨提交数值变化由 step summary 人工评审
+#   （不硬编码基线防腐化）。
 # - 完整数据评测（EX）保留为手动触发 job：eval-data，需自托管/数据环境后使用
 #   （先 make up && make seed && make dwd）。
 
@@ -64,43 +66,55 @@ jobs:
 
       - name: Plan Acc regression (eval.runner --dry, no DB)
         # dry 模式 = Planner/Compiler 确定性回归（语义层与提示词变更的主信号）；
-        # 产出 JSON 到文件，后续步骤机械转述（不手写数字）
+        # 产出 JSON 到文件，后续步骤机械转述（不手写数字）。
+        # 门槛按 report["domains"] 逐域校验：域级 total = plan_acc 分母 + clarify 分母
+        # （歧义样本不进 plan_acc，进 clarify 反问计数）
         run: |
           .venv/bin/python -m eval.runner --dry > /tmp/dry-report.json
           .venv/bin/python - <<'PY'
           import json
           report = json.load(open("/tmp/dry-report.json", encoding="utf-8"))
-          s = report["summary"]
-          assert s["exec_errors"] == 0, f"dry 回归出现执行错误: {s}"
-          plan_ok = int(s["plan_acc"].split("/")[0])
-          total = int(s["plan_acc"].split("/")[1])
-          clarify_ok = int(s["clarify"].split("/")[0])
-          amb = int(s["clarify"].split("/")[1])
-          # 自洽门槛：非歧义全命中 + 歧义全反问 + 无错误，即确定性链无回归
-          assert total > 0
-          assert plan_ok == total, f"Plan Acc 回归: {s['plan_acc']}"
-          assert clarify_ok == amb, f"歧义反问回归: {s['clarify']}"
-          assert s["finance_total"] == total + amb
-          print("dry 回归门槛通过：", json.dumps(s, ensure_ascii=False))
+          summary = report["summary"]
+          errs: list[str] = []
+          for d in report["domains"]:
+              s = summary[d]
+              # 逐域自洽门槛：非歧义全命中 + 歧义全反问 + 无执行错误，即确定性链无回归
+              if s["exec_errors"] != 0:
+                  errs.append(f"{d}: exec_errors={s['exec_errors']}")
+              plan_ok, total = (int(x) for x in s["plan_acc"].split("/"))
+              clarify_ok, amb = (int(x) for x in s["clarify"].split("/"))
+              if total <= 0 or plan_ok != total:
+                  errs.append(f"{d}: Plan Acc 回归 {s['plan_acc']}")
+              if clarify_ok != amb:
+                  errs.append(f"{d}: 歧义反问回归 {s['clarify']}")
+              if s["total"] != total + amb:
+                  errs.append(f"{d}: total 自洽失败 {s['total']} != {total} + {amb}")
+          assert not errs, "dry 回归门槛失败：\n" + "\n".join(errs)
+          view = {d: {k: summary[d][k] for k in ("total", "plan_acc", "clarify", "exec_errors")}
+                  for d in report["domains"]}
+          print("dry 回归门槛通过：", json.dumps(view, ensure_ascii=False))
           PY
 
       - name: Publish summary
-        # 机械转述 dry 摘要到 PR/commit 摘要（数字来自 eval.runner 输出）
+        # 机械转述 dry 摘要到 PR/commit 摘要（数字来自 eval.runner 输出，
+        # 按域分节不混报，AGENTS.md N10）
         run: |
           .venv/bin/python - <<'PY'
           import json
           report = json.load(open("/tmp/dry-report.json", encoding="utf-8"))
-          s = report["summary"]
+          summary = report["summary"]
           lines = [
               "## Plan Acc 回归（eval.runner --dry，绑定 sha `" + report["sha"] + "`）",
               "",
-              "| 指标 | 值 |",
-              "|---|---|",
+              "| 域 | total | plan_acc | clarify | exec_errors |",
+              "|---|---|---|---|---|",
           ]
-          for k, v in s.items():
-              lines.append(f"| {k} | {v} |")
+          for d in report["domains"]:
+              s = summary[d]
+              lines.append(f"| {d} | {s['total']} | {s['plan_acc']} | {s['clarify']} | {s['exec_errors']} |")
           lines.append("")
-          lines.append("口径：dry 模式不执行 SQL（EX 需数据环境，见 eval-data job）。")
+          lines.append("口径：dry 模式不执行 SQL（EX 需数据环境，见 eval-data job）；"
+                       "summary 按域分节，by_lang 明细见报告 samples。")
           with open("summary.txt", "w", encoding="utf-8") as f:
               f.write("\n".join(lines))
           PY
