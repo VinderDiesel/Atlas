@@ -2,6 +2,9 @@
 
 覆盖 check_supersedes_chains 的全部规则：取代目标存在、非自身、
 版本号严格递增（天然防环）、被取代者不得仍为 active、治理记录不得重名。
+另覆盖 check_snapshot_anchor（expected_value_snapshot_sha 数值背书快照
+锚定校验，KL #16 收口）：已回填值必须指向已锁定快照，占位是机制未启用
+状态的如实声明。
 
 口径说明：指标演进一律采用**新名 + supersedes 指向旧名**（同名指标在
 ossie_validate 已被全局唯一约束拦截，不存在同名两代共存的合法形态）。
@@ -15,7 +18,9 @@ from __future__ import annotations
 import unittest
 
 from semantic.governance_validate import (
+    PLACEHOLDER_SNAPSHOT_SHA,
     MetricGovernance,
+    check_snapshot_anchor,
     check_supersedes_chains,
 )
 
@@ -148,6 +153,33 @@ class TestSupersedesChainInvalid(unittest.TestCase):
             any("必须严格大于" in e for e in errors),
             msg=f"预期版本不递增错误，实际：{errors}",
         )
+
+
+class TestSnapshotAnchor(unittest.TestCase):
+    """expected_value_snapshot_sha 锚定校验（KL #16 收口，2026-09-04）。"""
+
+    def test_locked_sha_with_cases_passes(self) -> None:
+        # 金融段现状：有用例 + 已锁定快照（如 30b8344）→ 通过
+        errors = check_snapshot_anchor({"gold-156"}, "30b8344", {"30b8344", "a207284"}, "m")
+        self.assertEqual(errors, [])
+
+    def test_unlocked_sha_rejected(self) -> None:
+        # 回填值指向未锁定快照（占位漂移 / 手滑 / 快照被删后遗留）→ 拒绝
+        errors = check_snapshot_anchor({"gold-156"}, "deadbeef", {"30b8344"}, "m")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("不是已锁定快照", errors[0])
+        self.assertIn("deadbeef", errors[0])
+
+    def test_placeholder_allowed_when_mechanism_not_enabled(self) -> None:
+        # 零售模型现状：有用例但数据未装载、无可锚快照 → 占位是如实声明，允许
+        for sha in (None, "", PLACEHOLDER_SNAPSHOT_SHA):
+            errors = check_snapshot_anchor({"gold-001"}, sha, {"30b8344"}, "m")
+            self.assertEqual(errors, [])
+
+    def test_no_cases_no_constraint(self) -> None:
+        # 无用例指标不强制锚定（无论占位还是已锁值都不报）
+        self.assertEqual(check_snapshot_anchor(set(), None, {"30b8344"}, "m"), [])
+        self.assertEqual(check_snapshot_anchor(set(), "ghost", {"30b8344"}, "m"), [])
 
 
 if __name__ == "__main__":

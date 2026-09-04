@@ -14,6 +14,11 @@
    新版本号必须严格大于被取代版本（版本号递增天然防环）；
    被取代指标不得仍为 active（发布新版本前须先把旧指标置为 deprecated，
    呼应 AGENTS.md N8 的禁止同名 active 口径）。
+7. **expected_value_snapshot_sha 锚定校验**（KL #16 收口，2026-09-04）：
+   有黄金用例（gold_test_cases 非空）的指标，若已回填数值背书快照则必须
+   指向 `data/snapshots/` 已锁定的快照 sha（防占位漂移/指向未锁快照）；
+   占位 `<待填写>` 是机制未启用状态（如零售模型数据未装载）的如实声明，
+   允许保留。
 
 用法：.venv/bin/python -m semantic.governance_validate semantic/ossie/*.ossie.yaml
 """
@@ -35,6 +40,8 @@ SCHEMA_PATH = REPO / "semantic" / "governance" / "atlas_governance.schema.json"
 REGISTRY_PATH = REPO / "data" / "fibo" / "iri_registry.json"
 POLICY_PATH = REPO / "semantic" / "policies" / "row_policy.yml"
 GOLD_DIR = REPO / "eval" / "gold"
+SNAPSHOT_DIR = REPO / "data" / "snapshots"
+PLACEHOLDER_SNAPSHOT_SHA = "<待填写>"
 
 
 @dataclass(frozen=True)
@@ -91,19 +98,65 @@ def load_governance_payloads(path: Path) -> list[tuple[str, dict[str, Any]]]:
     ]
 
 
+def check_snapshot_anchor(
+    declared_cases: set[str],
+    expected_sha: Any,
+    locked_shas: set[str],
+    prefix: str,
+) -> list[str]:
+    """数值背书快照锚定校验（KL #16 收口，2026-09-04）。
+
+    gold_test_cases 非空的指标，若 expected_value_snapshot_sha 已回填（非占位）
+    则必须指向 data/snapshots 已锁定快照（防占位漂移、防指向未锁快照）；
+    占位 `<待填写>`/null/空是机制未启用状态的如实声明（如零售模型数据未装载，
+    无可锚快照），允许保留。gold_test_cases 为空同样不强制。
+
+    返回错误消息列表（空 = 通过）。纯函数，供契约测试直接调用。
+    """
+    if not declared_cases:
+        return []
+    if expected_sha in (None, "", PLACEHOLDER_SNAPSHOT_SHA):
+        return []
+    if expected_sha not in locked_shas:
+        return [
+            f"{prefix}: expected_value_snapshot_sha={expected_sha}"
+            f" 不是已锁定快照（{SNAPSHOT_DIR.name} 下无对应 .meta.json）"
+        ]
+    return []
+
+
+def _load_locked_snapshots(errors: list[str]) -> set[str] | None:
+    """已锁定快照 sha 集合（data/snapshots/*.meta.json 文件名去 .meta.json 后缀）。"""
+    if not SNAPSHOT_DIR.exists():
+        errors.append(f"缺少快照目录 {SNAPSHOT_DIR}")
+        return None
+    # 不能用 Path.stem：`30b8344.meta.json` 的 stem 是 `30b8344.meta`（双后缀）
+    return {p.name.removesuffix(".meta.json") for p in SNAPSHOT_DIR.glob("*.meta.json")}
+
+
 def validate_file(path: Path, schema: dict[str, Any], errors: list[str]) -> None:
     """校验单个文件的所有治理扩展（模型级 + 指标级 payload）。"""
     registry = _load_registry(errors)
     policy_names = _load_policy_names(errors)
     gold_ids = _load_gold_ids(errors)
     gold_refs = _gold_refs_by_metric()
+    locked_shas = _load_locked_snapshots(errors)
 
     for prefix, data, metric_name in iter_payloads(path):
         if "_parse_error" in data:
             errors.append(f"{prefix}: custom_extensions.data 不是合法 JSON：{data['_parse_error']}")
             continue
         _check_payload(
-            prefix, data, metric_name, schema, registry, policy_names, gold_ids, gold_refs, errors
+            prefix,
+            data,
+            metric_name,
+            schema,
+            registry,
+            policy_names,
+            gold_ids,
+            gold_refs,
+            locked_shas,
+            errors,
         )
 
 
@@ -116,6 +169,7 @@ def _check_payload(
     policy_names: set[str] | None,
     gold_ids: set[str] | None,
     gold_refs: dict[str, set[str]] | None,
+    locked_shas: set[str] | None,
     errors: list[str],
 ) -> None:
     """校验单个 ATLAS payload 的 schema 与各类引用（模型级 metric_name=None）。"""
@@ -156,6 +210,16 @@ def _check_payload(
                 f"{prefix}: gold_test_cases 与 eval/gold 引用双向不一致"
                 f"（gold 引用 {sorted(refs)}，YAML 声明 {sorted(declared)}）"
             )
+    # 数值背书快照锚定（KL #16 收口，2026-09-04）：有用例的指标必须锚已锁快照
+    if locked_shas is not None:
+        errors.extend(
+            check_snapshot_anchor(
+                declared,
+                data.get("quality", {}).get("expected_value_snapshot_sha"),
+                locked_shas,
+                prefix,
+            )
+        )
 
 
 def _load_registry(errors: list[str]) -> set[str] | None:

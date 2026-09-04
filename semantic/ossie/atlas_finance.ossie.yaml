@@ -1173,7 +1173,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-101", "gold-116", "gold-123", "gold-124", "gold-141", "gold-146", "gold-152"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1205,7 +1205,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-102", "gold-119", "gold-127", "gold-140", "gold-149", "gold-151", "gold-153", "gold-154"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1237,7 +1237,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-103", "gold-134", "gold-142"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1269,7 +1269,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-114", "gold-139", "gold-143"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1301,7 +1301,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-115", "gold-133", "gold-145"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1333,7 +1333,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-120", "gold-132"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1364,7 +1364,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-105", "gold-117", "gold-125", "gold-126", "gold-144", "gold-150"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1395,7 +1395,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-106", "gold-118", "gold-128", "gold-147"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1426,7 +1426,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-107", "gold-130"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1457,7 +1457,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-108", "gold-131"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1488,7 +1488,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-109", "gold-135"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1518,7 +1518,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-110", "gold-136"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1549,7 +1549,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-111", "gold-137"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1580,7 +1580,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-112", "gold-138"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1611,7 +1611,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-113", "gold-129"],
-                  "expected_value_snapshot_sha": "<待填写>"
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1643,7 +1643,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-156", "gold-157"],
-                  "expected_value_snapshot_sha": null
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1674,7 +1674,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-158"],
-                  "expected_value_snapshot_sha": null
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1705,7 +1705,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-159", "gold-160"],
-                  "expected_value_snapshot_sha": null
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1736,7 +1736,7 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-161"],
-                  "expected_value_snapshot_sha": null
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
 
@@ -1767,6 +1767,6 @@ semantic_model:
                 },
                 "quality": {
                   "gold_test_cases": ["gold-162"],
-                  "expected_value_snapshot_sha": null
+                  "expected_value_snapshot_sha": "30b8344"
                 }
               }
