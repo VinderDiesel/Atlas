@@ -1,0 +1,24 @@
+{
+  "id": "gold-059",
+  "question": "只看城市 Midway 的 2000 年销售额是多少？",
+  "expected_metric": "total_sales_price",
+  "expected_dimensions": [],
+  "expected_time": "2000",
+  "expected_filters": [
+    {
+      "column": "s_city",
+      "op": "=",
+      "value": "Midway"
+    }
+  ],
+  "expected_sql": "SELECT SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk INNER JOIN atlas.dwd.dim_store AS dim_store ON store_sales.ss_store_sk = dim_store.s_store_sk WHERE dim_date.d_year = 2000 AND dim_store.s_city = 'Midway' LIMIT 100",
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "equality_filter",
+    "filter",
+    "time_range"
+  ],
+  "ambiguous": false
+}

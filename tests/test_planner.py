@@ -17,6 +17,10 @@ from agent.planner import ClarificationRequest, Planner
 REPO = Path(__file__).resolve().parent.parent
 MODEL = SemanticModel()
 PLANNER = Planner(MODEL)
+RETAIL_MODEL = SemanticModel(
+    REPO / "semantic" / "ossie" / "atlas_retail.ossie.yaml"
+)
+RETAIL_PLANNER = Planner(RETAIL_MODEL)
 
 
 def load_gold(gold_id: str) -> dict:
@@ -63,6 +67,103 @@ class TestGoldFinancePlanner(unittest.TestCase):
         """歧义问句必须返回 ClarificationRequest，而不是猜一个 Plan。"""
         result = PLANNER.plan("最近交易情况怎么样？")
         self.assertIsInstance(result, ClarificationRequest)
+
+
+class TestRetailGoldPlanner(unittest.TestCase):
+    """零售黄金集 retail/gold-001~062 的 Plan 解析（P4 落库，2026-09-04）。
+
+    覆盖中文问句全形态：无时间基础聚合（001）、绝对时间四粒度（051/061/062）、
+    分组（品类 056 / 门店城市 057）、TopN（058）、维度等值 filter（059）、
+    度量阈值 HAVING filter（060）、相对时间反问（047）。
+    """
+
+    def assert_plan(self, question: str, gold_id: str) -> Plan:
+        plan = RETAIL_PLANNER.plan(question)
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)  # 供类型收窄（unittest 断言不改变类型）
+        gold = load_gold(gold_id)
+        self.assertEqual(plan.metric, gold["expected_metric"])
+        return plan
+
+    def test_gold_001_no_time_total_sales(self) -> None:
+        plan = self.assert_plan("总销售额是多少？", "gold-001")
+        self.assertEqual(plan.dimensions, ())
+        self.assertIsNone(plan.time)
+        self.assertEqual(plan.filters, ())
+
+    def test_gold_051_year_total_sales(self) -> None:
+        plan = self.assert_plan("2000 年总销售额是多少？", "gold-051")
+        self.assertEqual(plan.time, TimeSpec("year", 2000))
+        self.assertEqual(plan.dimensions, ())
+
+    def test_gold_054_year_avg_order_value(self) -> None:
+        # 派生指标同义词「客单价」唯一命中，不得歧义反问
+        plan = self.assert_plan("2000 年客单价是多少？", "gold-054")
+        self.assertEqual(plan.time, TimeSpec("year", 2000))
+        self.assertEqual(plan.dimensions, ())
+
+    def test_gold_056_year_by_category(self) -> None:
+        plan = self.assert_plan(
+            "2000 年按品类统计的销售额是多少？", "gold-056"
+        )
+        self.assertEqual(plan.time, TimeSpec("year", 2000))
+        self.assertEqual(plan.dimensions, ("i_category",))
+
+    def test_gold_057_year_by_city(self) -> None:
+        # 州维度降级城市（SF0.1 全库单州，见 eval/gold/retail/data-profile.md）
+        plan = self.assert_plan(
+            "2000 年按门店城市统计的销售额是多少？", "gold-057"
+        )
+        self.assertEqual(plan.dimensions, ("s_city",))
+
+    def test_gold_058_top3_categories(self) -> None:
+        plan = self.assert_plan(
+            "2000 年按品类统计销售额，列出前 3 名", "gold-058"
+        )
+        self.assertEqual(plan.dimensions, ("i_category",))
+        self.assertEqual(plan.order_by, (OrderSpec("total_sales_price", desc=True),))
+        self.assertEqual(plan.limit, 3)
+
+    def test_gold_059_city_equality_filter(self) -> None:
+        plan = self.assert_plan(
+            "只看城市 Midway 的 2000 年销售额是多少？", "gold-059"
+        )
+        self.assertEqual(
+            plan.filters, (Filter("s_city", "=", "Midway"),)
+        )
+
+    def test_gold_060_threshold_having_filter(self) -> None:
+        plan = self.assert_plan(
+            "2000 年按品类统计销售额超过 900 万的品类有哪些？", "gold-060"
+        )
+        self.assertEqual(plan.dimensions, ("i_category",))
+        self.assertEqual(
+            plan.filters, (Filter("total_sales_price", ">", 9000000),)
+        )
+
+    def test_gold_061_quarter(self) -> None:
+        plan = self.assert_plan(
+            "1999 年第一季度销售额是多少？", "gold-061"
+        )
+        self.assertEqual(plan.time, TimeSpec("quarter", "1999Q1"))
+
+    def test_gold_062_month(self) -> None:
+        plan = self.assert_plan(
+            "2000 年 5 月的销售额是多少？", "gold-062"
+        )
+        self.assertEqual(plan.time, TimeSpec("month", 200005))
+
+    def test_gold_047_relative_time_clarifies(self) -> None:
+        """「最近卖得怎么样」→ 反问（零售歧义样本，与金融 gold-104 对称）。
+
+        实测路径：口语「卖得怎么样」不命中任何指标同义词 → metric 步骤先于时间
+        检查返回 unmatched（反问文案见 gold-047.clarification，覆盖口径/时间/维度
+        三问）；runner 对歧义样本只检查 ClarificationRequest，不区分 kind。
+        """
+        result = RETAIL_PLANNER.plan("最近卖得怎么样？")
+        self.assertIsInstance(result, ClarificationRequest)
+        assert isinstance(result, ClarificationRequest)
+        self.assertEqual(result.kind, "unmatched")
 
 
 class TestDerivedMetricDisambiguation(unittest.TestCase):

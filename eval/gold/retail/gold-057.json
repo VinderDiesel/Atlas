@@ -1,0 +1,19 @@
+{
+  "id": "gold-057",
+  "question": "2000 年按门店城市统计的销售额是多少？",
+  "expected_metric": "total_sales_price",
+  "expected_dimensions": [
+    "s_city"
+  ],
+  "expected_time": "2000",
+  "expected_filters": null,
+  "expected_sql": "SELECT dim_store.s_city AS s_city, SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk INNER JOIN atlas.dwd.dim_store AS dim_store ON store_sales.ss_store_sk = dim_store.s_store_sk WHERE dim_date.d_year = 2000 GROUP BY dim_store.s_city LIMIT 100",
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "time_range"
+  ],
+  "ambiguous": false
+}

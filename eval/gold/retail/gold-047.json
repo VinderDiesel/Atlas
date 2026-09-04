@@ -7,7 +7,10 @@
   "expected_sql": null,
   "result_hash": null,
   "snapshot_sha": "<待锁定后填写>",
-  "tags": ["ambiguous", "clarification"],
+  "tags": [
+    "ambiguous",
+    "clarification"
+  ],
   "ambiguous": true,
-  "clarification": "需要澄清：①「卖得怎么样」指 GMV 还是订单量？②「最近」是近 7 天还是近 30 天？③需要按什么维度拆分吗？"
+  "clarification": "需要澄清：①「卖得怎么样」指销售额、销量还是净利润？②「最近」指哪个时间范围（评测快照固定为 1998~2002 年销售窗口，请给出绝对年份）？③需要按品类/门店等维度拆分吗？"
 }

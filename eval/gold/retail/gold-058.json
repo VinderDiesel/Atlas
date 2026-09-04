@@ -1,0 +1,20 @@
+{
+  "id": "gold-058",
+  "question": "2000 年按品类统计销售额，列出前 3 名",
+  "expected_metric": "total_sales_price",
+  "expected_dimensions": [
+    "i_category"
+  ],
+  "expected_time": "2000",
+  "expected_filters": null,
+  "expected_sql": "SELECT dim_item.i_category AS i_category, SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk INNER JOIN atlas.dwd.dim_item AS dim_item ON store_sales.ss_item_sk = dim_item.i_item_sk WHERE dim_date.d_year = 2000 GROUP BY dim_item.i_category ORDER BY total_sales_price DESC LIMIT 3",
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "ranking",
+    "time_range"
+  ],
+  "ambiguous": false
+}

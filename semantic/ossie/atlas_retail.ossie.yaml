@@ -466,7 +466,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-001"],
+                  "gold_test_cases": ["gold-001", "gold-051", "gold-056", "gold-057", "gold-058", "gold-059", "gold-060", "gold-061", "gold-062"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }

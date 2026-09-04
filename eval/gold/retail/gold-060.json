@@ -1,0 +1,27 @@
+{
+  "id": "gold-060",
+  "question": "2000 年按品类统计销售额超过 900 万的品类有哪些？",
+  "expected_metric": "total_sales_price",
+  "expected_dimensions": [
+    "i_category"
+  ],
+  "expected_time": "2000",
+  "expected_filters": [
+    {
+      "column": "total_sales_price",
+      "op": ">",
+      "value": 9000000
+    }
+  ],
+  "expected_sql": "SELECT dim_item.i_category AS i_category, SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk INNER JOIN atlas.dwd.dim_item AS dim_item ON store_sales.ss_item_sk = dim_item.i_item_sk WHERE dim_date.d_year = 2000 GROUP BY dim_item.i_category HAVING SUM(store_sales.ss_ext_sales_price) > 9000000 LIMIT 100",
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "filter",
+    "metric_threshold",
+    "time_range"
+  ],
+  "ambiguous": false
+}

@@ -1,12 +1,15 @@
 {
   "id": "gold-001",
-  "question": "华东地区上个月的 GMV 是多少？",
-  "expected_metric": "gmv",
-  "expected_dimensions": ["region"],
-  "expected_time": "last_month",
-  "expected_sql": "SELECT sum(amount) AS gmv FROM dwd.fact_order_line WHERE order_status = 'PAID' AND region = '华东' AND order_date >= toStartOfMonth(addMonths(today(), -1)) AND order_date < toStartOfMonth(today())",
+  "question": "总销售额是多少？",
+  "expected_metric": "total_sales_price",
+  "expected_dimensions": [],
+  "expected_time": null,
+  "expected_filters": null,
+  "expected_sql": "SELECT SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales LIMIT 100",
   "result_hash": "<待执行后填写>",
   "snapshot_sha": "<待锁定后填写>",
-  "tags": ["aggregation", "region_filter", "time_range"],
+  "tags": [
+    "aggregation"
+  ],
   "ambiguous": false
 }

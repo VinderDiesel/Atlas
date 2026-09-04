@@ -1,0 +1,16 @@
+{
+  "id": "gold-052",
+  "question": "2000 年总销售件数是多少？",
+  "expected_metric": "total_quantity",
+  "expected_dimensions": [],
+  "expected_time": "2000",
+  "expected_filters": null,
+  "expected_sql": "SELECT SUM(store_sales.ss_quantity) AS total_quantity FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk WHERE dim_date.d_year = 2000 LIMIT 100",
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "time_range"
+  ],
+  "ambiguous": false
+}
