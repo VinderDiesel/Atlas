@@ -75,22 +75,42 @@ class _ReportFixture(unittest.TestCase):
             f"{sha}.json": {
                 "created_at": "2026-09-03T10:00:00+08:00",
                 "summary": {
-                    "finance_total": 48,
-                    "retail_skipped": 2,
-                    "plan_acc": "44/44",
-                    "clarify": "4/4",
-                    "ex": "44/44",
-                    "ex_anchored": 0,
-                    "exec_errors": 0,
+                    # 2026-09-05 起 runner 报告 summary 按域分节（finance/retail 不混报），
+                    # finance_total/retail_skipped 平铺键已不存在
+                    "finance": {
+                        "total": 48,
+                        "plan_acc": "44/44",
+                        "clarify": "4/4",
+                        "ex": "44/44",
+                        "ex_anchored": 0,
+                        "exec_errors": 0,
+                    },
+                    "retail": {
+                        "total": 2,
+                        "plan_acc": "2/2",
+                        "clarify": "0/0",
+                        "ex": "2/2",
+                        "ex_anchored": 0,
+                        "exec_errors": 0,
+                    },
                 },
             },
             f"baseline-compiler-{sha}.json": {
                 "analysis": {
-                    "deterministic_coverage": "40/44",
-                    "plan_hit": "40/44",
-                    "clarify": "4/4",
-                    "ex": "44/44",
-                    "exec_errors": 0,
+                    "finance": {
+                        "deterministic_coverage": "48/48",
+                        "plan_hit": "44/44",
+                        "clarify": "4/4",
+                        "ex": "44/44",
+                        "exec_errors": 0,
+                    },
+                    "retail": {
+                        "deterministic_coverage": "2/2",
+                        "plan_hit": "2/2",
+                        "clarify": "0/0",
+                        "ex": "2/2",
+                        "exec_errors": 0,
+                    },
                 },
                 "conclusion": "确定性链覆盖全部非歧义样本",
             },

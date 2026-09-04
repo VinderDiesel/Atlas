@@ -93,21 +93,32 @@ def _section_main(sha: str) -> list[str]:
 
 
 def _section_baseline(sha: str) -> list[str]:
-    """§2 确定性链覆盖分析（make baseline）。"""
+    """§2 确定性链覆盖分析（make baseline；per-domain 分节，2026-09-05 起）。
+
+    baseline 报告 analysis 为 {domain: {deterministic_coverage/plan_hit/clarify/ex/
+    exec_errors}}（与主评测 summary 同口径分域，不混报）；旧平铺结构报告缺域键
+    时逐域整组占位，不推断。
+    """
     name = f"baseline-compiler-{sha}.json"
     d = _load(name)
     lines = ["## 2. 确定性链覆盖分析（`make baseline`）", ""]
     if d is None:
         lines.append(_row("analysis", MISSING, name))
         return lines
-    lines.append(
-        _row("deterministic_coverage", _field(d, "analysis", "deterministic_coverage"), name)
-    )
-    lines.append(_row("plan_hit", _field(d, "analysis", "plan_hit"), name))
-    lines.append(_row("clarify", _field(d, "analysis", "clarify"), name))
-    lines.append(_row("ex", _field(d, "analysis", "ex"), name))
-    lines.append(_row("exec_errors", _field(d, "analysis", "exec_errors"), name))
-    lines.append("")
+    analysis = d.get("analysis", {})
+    for domain in ("finance", "retail"):
+        values = [
+            _row(f"{domain}_{label}", _field(analysis, domain, label), name)
+            for label in ("deterministic_coverage", "plan_hit", "clarify", "ex", "exec_errors")
+        ]
+        if all(MISSING in v for v in values):
+            continue
+        lines.append(f"### {domain} 域")
+        lines.append("")
+        lines.append("| 指标 | 值 | source |")
+        lines.append("|---|---|---|")
+        lines.extend(values)
+        lines.append("")
     lines.append(f"> 结论（转述 `conclusion` 字段）：{_field(d, 'conclusion')}")
     return lines
 

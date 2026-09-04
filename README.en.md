@@ -118,13 +118,15 @@ clarification question instead of a guess.
 - Reports: `eval/reports/<sha>.json`, per-domain sections; `EVAL_REPORT.md` is
   machine-generated from them (`make report`) — no hand-written numbers, every cell
   has a `source` column (AGENTS.md N1).
-- Latest terminal verification (snapshot `9749fc5`, re-verification round, zero
-  regression): finance 70 — zh 57/57 Plan Acc + 5/5 clarify, en 8/8; retail 19 —
-  zh 13/13 + 1/1 clarify, en 5/5; EX re-check 65/65 + 18/18, 0 execution errors.
-- Deterministic-coverage analysis: within the registered semantic domain the
-  deterministic chain covers 48/48 zero-LLM samples (see
+- Latest terminal verification (snapshot `b933e20`, full run, zero regression):
+  finance 70 — zh 57/57 Plan Acc + 5/5 clarify, en 8/8; retail 19 — zh 13/13 +
+  1/1 clarify, en 5/5; EX 65/65 + 18/18, 0 execution errors. Report:
+  `eval/reports/b933e20.json` (per-domain sections, not mixed).
+- Deterministic-coverage analysis: zero-LLM coverage per domain — finance 70/70,
+  retail 19/19 (report `eval/reports/baseline-compiler-b933e20.json`, see
   [docs/baseline-compiler.md](docs/baseline-compiler.md)); the RAG+LLM strategy
-  measured identical 44/44 but with token cost (report `rag-llm-openai-7d48dcb.json`).
+  measured 44/44 identical in the gold-50 era (report `rag-llm-openai-7d48dcb.json`,
+  historical comparison, not mixed with the current run).
 
 ## 6. Serving API (v1)
 

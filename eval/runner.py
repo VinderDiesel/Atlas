@@ -328,6 +328,10 @@ def main() -> int:
         compiler = Compiler(model)
         samples = load_gold(domain)
         results = [evaluate(planner, compiler, g, budget, sha, args.dry) for g in samples]
+        # 样本自描述域（目录即域声明的落盘体现）：报告 samples 跨域混排后仍可
+        # 还原域归属，下游（baseline_compiler 等）无需再按 id 前缀推断
+        for r in results:
+            r["domain"] = domain
         results_all.extend(results)
         summary[domain] = summarize(results)
         # zh/en 分节计数（P6 双语样本：语言 = tags lang_en，分语言不混报）

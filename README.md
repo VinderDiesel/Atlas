@@ -388,7 +388,7 @@ eval/
 - 评测只认当前 HEAD：启动时复核 `data/snapshots/<sha>.meta.json` 数据指纹，漂移即拒绝出报告
 - 首轮执行自动锚定：gold JSON 的 `result_hash` 占位符回填为实测 sha256（`snapshot_sha` 同步绑定），此后比对即 EX
 - 歧义样本（`ambiguous: true`）要求返回澄清反问；反问命中 = pass，不猜
-- 产出：`eval/reports/<git sha>.json`（当前 `7d48dcb`：金融段 48 例，Plan Acc 44/44、反问 4/4、EX 44/44，跨 sha 锚定 hash 未漂移；基线分析 `eval/reports/baseline-compiler-7d48dcb.json` 与 `docs/baseline-compiler.md`——注册语义域内确定性链零 LLM 覆盖 48/48；域外问题由 RAG+LLM（已实测 44/44 持平，`rag-llm-openai-7d48dcb.json`）/LoRA（blocked）策略对照承接）
+- 产出：`eval/reports/<git sha>.json`（当前 `b933e20`：金融域 70 例（65 可解析 + 5 歧义）Plan Acc 65/65、反问 5/5、EX 65/65；零售域 19 例（18 + 1）Plan Acc 18/18、反问 1/1、EX 18/18——29 表全量快照，锚定 hash 未漂移，按域分节不混报；基线分析 `eval/reports/baseline-compiler-b933e20.json` 与 `docs/baseline-compiler.md`——注册语义域内确定性链零 LLM 覆盖：金融 70/70、零售 19/19；域外问题由 RAG+LLM（gold-50 时代实测 44/44 持平，`rag-llm-openai-7d48dcb.json`，历史对照不混报）/LoRA（blocked）策略对照承接）
 - 闭环（Day 39-42 后）：`make report` → `eval/report.py` 机械转述生成 `EVAL_REPORT.md`（八节，无手写数字，每格带 source 列）；CI 回归 `.github/workflows/eval.yml`（dry Plan Acc 自洽断言；完整 EX 需数据环境，手动触发）；失败样本 `eval/failure_collect.py` 自动归类 → 人工确认 → `lora.flywheel` 五阶段进 SFT（answer 形态 = 合法 Plan JSON，ADR-0008）；LLM 实测后仍 0 失败（缺陷在评测侧修复归零），飞轮空转与 LoRA 训练（无 GPU）如实登记
 
 ### 5.4 准确率提升手段（按优先级）
