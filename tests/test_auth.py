@@ -102,5 +102,52 @@ class TestResolvePolicy(unittest.TestCase):
                     self.assertEqual(policy_name, "rp_dept_visible")
 
 
+class TestRetailPolicyRender(unittest.TestCase):
+    """零售档 rp_dept_visible 物理列对齐（P5，2026-09-04）：逻辑列 region /
+    product_category → dim_store.s_state / dim_item.i_category；categories 列表
+    经 sql_in 过滤器渲染（非标量值不进标量替换路径）。
+    """
+
+    def _resolve(self, role: str, claims: dict) -> ResolvedPolicy:
+        token = sign_token(role, claims, secret=SECRET)
+        return resolve_policy(token, secret=SECRET, policy_path=POLICY_PATH)
+
+    def test_region_manager_physical_column(self) -> None:
+        policy = self._resolve("region_manager", {"region": "TN"})
+        self.assertEqual(policy.policy_name, "rp_dept_visible")
+        self.assertIn("dim_store.s_state = 'TN'", policy.condition)
+
+    def test_category_analyst_sql_in(self) -> None:
+        policy = self._resolve(
+            "category_analyst",
+            {"region": "TN", "categories": ["Shoes", "Electronics"]},
+        )
+        self.assertEqual(policy.policy_name, "rp_dept_visible")
+        self.assertIn("dim_store.s_state = 'TN'", policy.condition)
+        self.assertIn("dim_item.i_category IN ('Shoes', 'Electronics')", policy.condition)
+
+    def test_sql_in_empty_list_rejected(self) -> None:
+        with self.assertRaises(AuthError):
+            self._resolve("category_analyst", {"region": "TN", "categories": []})
+
+    def test_sql_in_illegal_item_rejected(self) -> None:
+        with self.assertRaises(AuthError):
+            self._resolve(
+                "category_analyst", {"region": "TN", "categories": ["A;DROP"]}
+            )
+
+    def test_sql_in_scalar_value_rejected(self) -> None:
+        # categories 标量（非列表）不满足 sql_in 渲染要求 → 拒绝，防注入
+        with self.assertRaises(AuthError):
+            self._resolve("category_analyst", {"region": "TN", "categories": "Shoes"})
+
+    def test_retail_roles_not_in_branch_policy(self) -> None:
+        """零售角色必须绑定 rp_dept_visible（防跨策略误绑）。"""
+        for role in ("region_manager", "category_analyst"):
+            with self.subTest(role=role):
+                policy_name = ROLE_DIRECTORY[role][0]
+                self.assertEqual(policy_name, "rp_dept_visible")
+
+
 if __name__ == "__main__":
     unittest.main()

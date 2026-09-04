@@ -4,19 +4,26 @@
 # 变更：2026-09-02 Day 25——谓词列名对齐真实 DDL（Doris 列小写：
 #   branch / brokerid / tier），compliance_auditor 条件方向改为
 #   tier <= max_tier（与描述“仅能看低敏感层”一致，原 >= min_tier 矛盾）
+# 变更：2026-09-04 P5——rp_dept_visible 条件列对齐物理（TPC-DS 数据落地）：
+#   未落地逻辑列 region/product_category 改为 dim_store.s_state /
+#   dim_item.i_category（物理裸名与编译 SQL 表名一致；谓词表不在查询时由
+#   Guard 沿语义 join 图自动补 LEFT JOIN）。条件表名 dim_store/dim_item 即
+#   物理表（atlas.dwd.dim_store / dim_item），auth.sql_in 渲染列表值。
 
 policies:
   - name: rp_dept_visible
-    description: 零售模型：用户只能看到自己所属大区的数据
+    description: 零售模型（TPC-DS）：用户只能看到自己所属州/品类的数据（region → dim_store.s_state、product_category → dim_item.i_category，2026-09-04 P5 对齐物理）
     roles:
       - name: hq_admin
         condition: "1=1"
         columns: "*"
       - name: region_manager
-        condition: "region = '{{ user.region }}'"
+        description: 大区（州）经理：仅见本州门店数据（SF0.1 实测单州 TN）
+        condition: "dim_store.s_state = '{{ user.region }}'"
         columns: "*"
       - name: category_analyst
-        condition: "region = '{{ user.region }}' AND product_category IN ({{ user.categories | sql_in }})"
+        description: 品类分析师：本州 + 指定品类（列表由 auth sql_in 渲染）
+        condition: "dim_store.s_state = '{{ user.region }}' AND dim_item.i_category IN ({{ user.categories | sql_in }})"
         columns: "*"
     default_deny: true
 

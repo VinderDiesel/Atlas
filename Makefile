@@ -189,7 +189,9 @@ test:
 	$(PYTHON) -m unittest discover -s tests -v
 
 # ---- 权限回归验证（.env 需有 ATLAS_JWT_SECRET / POLARIS_RBAC_CLIENT_*）----
-# rls-verify：gold-146 问句三角色行级下推（SQL 谓词层，serving/rls_verify.py）
+# rls-verify：双域行级下推（SQL 谓词层，serving/rls_verify.py，默认 --domain all
+#   分节报告不混报）：金融 gold-146 载体三角色（branch_manager/compliance_auditor）
+#   + 零售 TPC-DS 载体三角色（region_manager/category_analyst，rp_dept_visible 物理列）
 # rbac-verify：Polaris 层对象级 RBAC 验证（--ensure 幂等建 principal/roles/grants）
 # 语义层/策略/授权变更后运行，确认权限边界仍生效；脚本自动绑定当前 git sha，
 # 产出 eval/reports/*.json 与 docs/screenshots/*.html

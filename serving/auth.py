@@ -5,8 +5,10 @@
 - 当前数据域是 TPC-DI 金融 dwd（数据已在 Doris 且绑定快照）：gold-146
   「按分支和客户等级统计 2015 年交易额 Top5」同一 SQL 下，hq_admin /
   branch_manager / compliance_auditor 三角色注入不同谓词 → 结果不同。
-- 零售域（rp_dept_visible：region / product_category）角色同构已注册，
-  但 TPC-DI 快照无零售数据，待零售数据落地后换绑策略即可，机制不变。
+- 零售域（rp_dept_visible）角色同构已注册；2026-09-04 TPC-DS SF0.1 零售
+  数据落地后，region/product_category 未落地逻辑列对齐物理 dim_store.s_state /
+  dim_item.i_category（P5），category_analyst 列表值经 sql_in 过滤器渲染，
+  rls-verify 零售档实测（详见 eval/reports/rls-verify-<sha>.json）。
 - 规划原文的「华东区 / 华东区只读某品类」对应零售角色；金融 dwd 的
   dim_broker.Branch 是 TPC-DI 随机变造值（实测无地理语义），故本地
   角色取金融域真实口径（详见 README §3.3 Day 25 勾选与 KL #15）。
@@ -26,6 +28,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,16 +60,18 @@ ROLE_DIRECTORY: dict[str, tuple[str, str, str]] = {
         "compliance_auditor",
         "合规审计：仅见低敏感客户档（dim_customer.tier <= 上限）",
     ),
-    # 零售域（rp_dept_visible）：注册待数据落地（无 TPC-DI 零售快照）
+    # 零售域（rp_dept_visible）：region/product_category 逻辑列已对齐物理
+    # （dim_store.s_state / dim_item.i_category，2026-09-04 P5 实测，见
+    # eval/reports/rls-verify-<sha>.json）；claims：region + categories（sql_in）
     "region_manager": (
         "rp_dept_visible",
         "region_manager",
-        "大区经理：仅见本大区（region = 本人区域，零售域，待数据）",
+        "大区（州）经理：仅见本州门店数据（dim_store.s_state = 本人州）",
     ),
     "category_analyst": (
         "rp_dept_visible",
         "category_analyst",
-        "品类分析师：本大区 + 指定品类（零售域，待数据）",
+        "品类分析师：本州 + 指定品类（dim_item.i_category IN 本人品类集）",
     ),
 }
 
@@ -207,7 +212,21 @@ def resolve_policy(
         raise AuthError(f"策略 {policy_name!r} 中找不到角色 {role_name!r}（{policy_path}）")
     rendered = condition
     for key, value in user_context.items():
+        if isinstance(value, (list, tuple)):
+            continue  # 列表值仅由下方 sql_in 过滤器渲染（_literal 拒非标量）
         rendered = rendered.replace(f"{{{{ user.{key} }}}}", _literal(value))
+    # sql_in 过滤器：列表值 → ('a','b')（单项仍过 _literal 安全校验后包引号，
+    # 不引入引号逃逸；值须为非空列表，防注入与空集语义陷阱）
+    for match in re.finditer(
+        r"\{\{ user\.([A-Za-z_][A-Za-z0-9_]*) \| sql_in \}\}", rendered
+    ):
+        key = match.group(1)
+        values = user_context.get(key)
+        if not isinstance(values, (list, tuple)) or not values:
+            raise AuthError(f"claim {key!r} 需为非空列表（sql_in 渲染）：{values!r}")
+        rendered = rendered.replace(
+            match.group(0), ", ".join(f"'{_literal(v)}'" for v in values)
+        )
     if "{{" in rendered:
         raise AuthError(f"角色 {role!r} 条件存在未渲染占位符：{rendered}")
     return ResolvedPolicy(
