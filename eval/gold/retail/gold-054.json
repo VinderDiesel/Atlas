@@ -6,8 +6,8 @@
   "expected_time": "2000",
   "expected_filters": null,
   "expected_sql": "SELECT SUM(store_sales.ss_ext_sales_price) / NULLIF(COUNT(DISTINCT store_sales.ss_ticket_number), 0) AS avg_order_value FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk WHERE dim_date.d_year = 2000 LIMIT 100",
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "31c50d1e9d802f2b11df371a1816bd302b489d50e2b621c21475c1a5622147e6",
+  "snapshot_sha": "92033c9",
   "tags": [
     "aggregation",
     "time_range"

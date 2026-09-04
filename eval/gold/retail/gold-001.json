@@ -6,8 +6,8 @@
   "expected_time": null,
   "expected_filters": null,
   "expected_sql": "SELECT SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales LIMIT 100",
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "84354765c801c68cf9a101988e8fc5a77efa31835fbcf907d76f8ebbdf9c9081",
+  "snapshot_sha": "92033c9",
   "tags": [
     "aggregation"
   ],

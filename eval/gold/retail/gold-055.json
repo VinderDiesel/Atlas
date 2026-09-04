@@ -6,8 +6,8 @@
   "expected_time": "2000",
   "expected_filters": null,
   "expected_sql": "SELECT COUNT(DISTINCT store_sales.ss_ticket_number) AS order_count FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk WHERE dim_date.d_year = 2000 LIMIT 100",
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "7e607909fd879bbc20d8fd5bdd9320cb2fee95e312e51983d062aba2c0e3da52",
+  "snapshot_sha": "92033c9",
   "tags": [
     "aggregation",
     "time_range"

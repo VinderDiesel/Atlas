@@ -6,7 +6,7 @@
   "expected_time": null,
   "expected_sql": null,
   "result_hash": null,
-  "snapshot_sha": "<待锁定后填写>",
+  "snapshot_sha": "92033c9",
   "tags": [
     "ambiguous",
     "clarification"

@@ -6,8 +6,8 @@
   "expected_time": "2000",
   "expected_filters": null,
   "expected_sql": "SELECT SUM(store_sales.ss_net_profit) AS net_profit FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk WHERE dim_date.d_year = 2000 LIMIT 100",
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "7f8c8b0dc633b3d5e5502a2c72e68a05cda085e0d72158916c6fab7bb2db2b76",
+  "snapshot_sha": "92033c9",
   "tags": [
     "aggregation",
     "time_range"

@@ -6,8 +6,8 @@
   "expected_time": "2000",
   "expected_filters": null,
   "expected_sql": "SELECT SUM(store_sales.ss_quantity) AS total_quantity FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk WHERE dim_date.d_year = 2000 LIMIT 100",
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "ed0240b91bd4d214c0786083786723f2cec4527fb14499578d05f195459ec4cd",
+  "snapshot_sha": "92033c9",
   "tags": [
     "aggregation",
     "time_range"
