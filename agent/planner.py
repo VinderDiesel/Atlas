@@ -12,6 +12,10 @@
   非时间字段同义词；"账户/佣金/年"等通用词在无显式结构时不触发维度（避免误分组）
 - 相对时间（"上个月/最近"）不支持，返回 ClarificationRequest
   （固定快照评测下相对时间会漂移，见 eval/gold/README.md；ADR-0014 ③ 设计性不支持）
+- 指标匹配：同义词子串命中必须唯一；派生指标同义词常含基础指标词
+  （"平均每笔成交金额" ⊃ "成交金额"）→ 按**最长命中**取更具体口径
+  （gold-156~162 派生指标补洞评测先行发现的真实缺陷，2026-09-04 修复）；
+  互不为子串的多命中（gold-122/148 双指标问句）仍歧义反问
 - filter 解析（ADR-0014 ①）：支持维度值等值（"只看/仅统计 X"）、排除
   （"排除/不含 X"）、度量阈值（"超过/低于 N"，HAVING 语义）；值含中文或
   过滤短语无法归属维度字段时不产生 filter（仅当维度词命中而**值**模糊时才
@@ -106,11 +110,23 @@ class Planner:
     def plan(self, question: str) -> Plan | ClarificationRequest:
         """解析问句。返回 Plan；无法唯一确定时返回 ClarificationRequest。"""
         # 1. 指标匹配（同义词子串命中，必须唯一）
-        metric_hits = [
-            name
-            for name, syns in self.model.metric_synonyms.items()
-            if any(s in question for s in syns)
-        ]
+        # 子串包含消歧：派生指标同义词含基础指标词（"平均每笔成交金额" ⊃
+        # "成交金额"）时，长命中是更具体口径（派生），短命中是冗余命中——
+        # 丢弃被其他命中词真包含的命中词；互不为子串的多命中仍保留（真歧义）。
+        metric_hits = sorted(
+            {
+                name
+                for name, syns in self.model.metric_synonyms.items()
+                for syn in syns
+                if syn in question
+                and not any(
+                    syn in other and syn != other
+                    for other_name, other_syns in self.model.metric_synonyms.items()
+                    for other in other_syns
+                    if other in question
+                )
+            }
+        )
         if not metric_hits:
             return ClarificationRequest(
                 question,

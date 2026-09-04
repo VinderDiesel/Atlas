@@ -61,6 +61,78 @@ class TestGoldFinancePlanner(unittest.TestCase):
         self.assertIsInstance(result, ClarificationRequest)
 
 
+class TestDerivedMetricDisambiguation(unittest.TestCase):
+    """派生指标 vs 基础指标同义词子串歧义消解（gold-156~162 评测先行发现，2026-09-04）。
+
+    派生指标同义词含基础指标词（"平均每笔成交金额" ⊃ "成交金额"、"佣金率" ⊃
+    "佣金"）时按最长命中取更具体口径；互不为子串的多命中（gold-122/148 双指标
+    问句）仍是真歧义，必须反问。
+    """
+
+    def test_gold_156_average_trade_value_year(self) -> None:
+        plan = PLANNER.plan("2013 年平均每笔成交金额是多少？")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.metric, "average_trade_value")
+        self.assertEqual(plan.time, TimeSpec("year", 2013))
+
+    def test_gold_157_derived_topn_by_branch(self) -> None:
+        plan = PLANNER.plan("按分支统计 2013 年平均每笔成交金额，列出前 5 名")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.metric, "average_trade_value")
+        self.assertEqual(plan.dimensions, ("Branch",))
+        self.assertEqual(plan.limit, 5)
+
+    def test_gold_158_average_commission_per_trade(self) -> None:
+        # 句内含冗余基础词 "佣金"（commission_revenue 命中），须消解为派生口径
+        plan = PLANNER.plan("2013 年平均每笔佣金是多少？")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.metric, "average_commission_per_trade")
+
+    def test_gold_159_commission_rate(self) -> None:
+        # "佣金率" ⊃ "佣金"：取长命中 commission_rate，而非歧义反问
+        plan = PLANNER.plan("2013 年佣金率是多少？")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.metric, "commission_rate")
+
+    def test_gold_160_commission_rate_topn(self) -> None:
+        plan = PLANNER.plan("按分支统计 2013 年佣金率，列出前 5 名")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.metric, "commission_rate")
+        self.assertEqual(plan.dimensions, ("Branch",))
+        self.assertEqual(plan.limit, 5)
+
+    def test_gold_161_average_holding_value(self) -> None:
+        plan = PLANNER.plan("2013 年户均持仓市值是多少？")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.metric, "average_holding_value")
+
+    def test_gold_162_average_cash_balance(self) -> None:
+        plan = PLANNER.plan("2013 年户均现金余额是多少？")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.metric, "average_cash_balance")
+
+    def test_true_dual_metric_ambiguity_still_clarifies(self) -> None:
+        # gold-122："成交量"与"交易额"互不为子串 → 真歧义保持反问（不猜测）
+        plan = PLANNER.plan("2013 年成交量和交易额分别是多少？")
+        self.assertIsInstance(plan, ClarificationRequest)
+        assert isinstance(plan, ClarificationRequest)
+        self.assertIn("指标口径歧义", plan.reasons[0])
+
+    def test_base_metric_phrase_unaffected(self) -> None:
+        # 基础词单独出现仍解析基础指标（消歧只处理包含关系，不改变既有行为）
+        plan = PLANNER.plan("2013 年成交金额是多少？")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.metric, "total_trade_value")
+
+
 class TestPlannerDeterminism(unittest.TestCase):
     """确定性错误与边界：不猜测、不降级。"""
 
