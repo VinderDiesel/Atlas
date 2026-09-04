@@ -421,5 +421,332 @@ class TestFollowupParsing(unittest.TestCase):
         self.assertEqual(merged.dimensions, ("Branch",))
 
 
+class TestEnglishPlanner(unittest.TestCase):
+    """英文形态契约（P6 locale 化，2026-09-05）：形态词表/正则按 locale 分片。
+
+    时间语序（quarter 两向/月份名/ISO date 共享/裸年介词约束）、分组 by/
+    grouped by、TopN top/best + 后短语提维度、过滤 only/excluding（含实体复数
+    后缀裁剪）、阈值 over/under + million/K 量级、相对时间反问、指代追问
+    what about/instead、歧义仍反问、双语隔离——与中文同构，中文零回归。
+    """
+
+    BRANCH_X = "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"  # gold-149 既有实测值
+
+    def assert_plan(self, planner: Planner, question: str, **expected) -> Plan:
+        plan = planner.plan(question, locale="en")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        if "metric" in expected:
+            self.assertEqual(plan.metric, expected["metric"])
+        if "time" in expected:
+            self.assertEqual(plan.time, TimeSpec(*expected["time"]))
+        if "dims" in expected:
+            self.assertEqual(plan.dimensions, tuple(expected["dims"]))
+        if "filters" in expected:
+            self.assertEqual(plan.filters, tuple(expected["filters"]))
+        if "limit" in expected:
+            self.assertEqual(plan.limit, expected["limit"])
+        return plan
+
+    # -- 时间语序（4）----------------------------------------------------
+
+    def test_en_year_preposition(self) -> None:
+        plan = self.assert_plan(
+            PLANNER, "What was the total trade value in 2015?",
+            metric="total_trade_value", time=("year", 2015),
+        )
+        self.assertEqual(plan.dimensions, ())
+
+    def test_en_quarter_word_order_a(self) -> None:
+        """语序 A：Q2 2013（quarter 在年前）。"""
+        self.assert_plan(
+            PLANNER, "What was the total trade value in Q2 2013?",
+            metric="total_trade_value", time=("quarter", "2013Q2"),
+        )
+
+    def test_en_quarter_word_order_b(self) -> None:
+        """语序 B：2013 Q2（年在前）与 A 同值。"""
+        self.assert_plan(
+            PLANNER, "What was the total trade value in 2013 Q2?",
+            metric="total_trade_value", time=("quarter", "2013Q2"),
+        )
+
+    def test_en_month_name(self) -> None:
+        """月份名 May 2014 → month 编码 201405（与中文"2014 年 5 月"同值）。"""
+        self.assert_plan(
+            PLANNER, "How many trades were there in May 2014?",
+            metric="trade_count", time=("month", 201405),
+        )
+
+    def test_en_iso_date_shared(self) -> None:
+        """ISO date 语言无关，与 zh 共享同一正则。"""
+        self.assert_plan(
+            PLANNER, "What was the total cash balance on 2014-03-31?",
+            metric="cash_balance", time=("date", "2014-03-31"),
+        )
+
+    # -- 分组形态（3）----------------------------------------------------
+
+    def test_en_group_by_branch(self) -> None:
+        self.assert_plan(
+            PLANNER, "Show commission revenue by branch in 2013",
+            metric="commission_revenue", dims=("Branch",), time=("year", 2013),
+        )
+
+    def test_en_group_by_category_retail(self) -> None:
+        self.assert_plan(
+            RETAIL_PLANNER, "What were the total sales by category in 1999?",
+            metric="total_sales_price", dims=("i_category",), time=("year", 1999),
+        )
+
+    def test_en_grouped_by_variant(self) -> None:
+        """grouped by 长形（与 by 同构）。"""
+        self.assert_plan(
+            PLANNER, "What was the commission revenue grouped by branch in 2013?",
+            metric="commission_revenue", dims=("Branch",), time=("year", 2013),
+        )
+
+    # -- TopN（2）--------------------------------------------------------
+
+    def test_en_top_n_word(self) -> None:
+        """top N + by 分组（直译中文"列出前 5 名"形态）。"""
+        plan = self.assert_plan(
+            PLANNER,
+            "Show commission revenue by branch in 2013 and list the top 5 branches",
+            metric="commission_revenue", dims=("Branch",),
+            time=("year", 2013), limit=5,
+        )
+        self.assertEqual(
+            plan.order_by, (OrderSpec("commission_revenue", desc=True),)
+        )
+
+    def test_en_best_n_phrase_lifts_dimension(self) -> None:
+        """best/top N 后短语提维度（top 3 categories by sales → i_category）。"""
+        plan = self.assert_plan(
+            RETAIL_PLANNER, "What were the top 3 categories by sales in 1999?",
+            metric="total_sales_price", dims=("i_category",),
+            time=("year", 1999), limit=3,
+        )
+        self.assertEqual(plan.order_by, (OrderSpec("total_sales_price", desc=True),))
+
+    # -- 过滤（2+，only/excluding/修饰反问）-------------------------------
+
+    def test_en_only_for_branch(self) -> None:
+        self.assert_plan(
+            PLANNER,
+            f"What was the commission revenue only for branch {self.BRANCH_X} in 2013?",
+            metric="commission_revenue", time=("year", 2013),
+            filters=(Filter("Branch", "=", self.BRANCH_X),),
+        )
+
+    def test_en_only_entity_suffix_cropped(self) -> None:
+        """值后裸实体复数词作后缀裁剪：only for tier 3 customers → Tier=3。"""
+        self.assert_plan(
+            PLANNER,
+            "Show commission revenue by branch in 2014, only for tier 3 customers, "
+            "list the top 5",
+            metric="commission_revenue", dims=("Branch",), time=("year", 2014),
+            filters=(Filter("Tier", "=", 3),), limit=5,
+        )
+
+    def test_en_excluding_branch(self) -> None:
+        self.assert_plan(
+            PLANNER,
+            "What was the total trade quantity excluding branch "
+            f"{self.BRANCH_X} in 2013?",
+            metric="total_trade_quantity", time=("year", 2013),
+            filters=(Filter("Branch", "!=", self.BRANCH_X),),
+        )
+
+    def test_en_only_qualified_value_clarifies(self) -> None:
+        """only the main branch：维度词前带修饰 → 反问（与中文 gold-155 同构）。"""
+        result = PLANNER.plan(
+            "What was the commission revenue only for the main branch in 2013?",
+            locale="en",
+        )
+        self.assertIsInstance(result, ClarificationRequest)
+
+    def test_en_emphasis_only_no_filter(self) -> None:
+        """强调语 only（短语无维度词）不产生 filter（与中文"只看"同构）。"""
+        plan = PLANNER.plan("Only show commission revenue in 2013", locale="en")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.filters, ())
+
+    # -- 阈值（2+）-------------------------------------------------------
+
+    def test_en_threshold_over_million(self) -> None:
+        """over 10 million → 10000000（量级词换算，HAVING 语义）。"""
+        self.assert_plan(
+            PLANNER,
+            "List the top 5 branches by commission revenue over 10 million in 2013",
+            metric="commission_revenue", dims=("Branch",), time=("year", 2013),
+            filters=(Filter("commission_revenue", ">", 10000000),), limit=5,
+        )
+
+    def test_en_threshold_under_million(self) -> None:
+        self.assert_plan(
+            PLANNER,
+            "commission revenue by branch under 5 million in 2014, top 5 branches",
+            metric="commission_revenue", dims=("Branch",), time=("year", 2014),
+            filters=(Filter("commission_revenue", "<", 5000000),), limit=5,
+        )
+
+    def test_en_threshold_4digit_not_read_as_year(self) -> None:
+        """4 位阈值数字不误读成年份：over 5000 in 2000 → year=2000 且 filter>5000。"""
+        self.assert_plan(
+            RETAIL_PLANNER, "Show sales by category over 5000 in 2000",
+            metric="total_sales_price", dims=("i_category",), time=("year", 2000),
+            filters=(Filter("total_sales_price", ">", 5000),),
+        )
+
+    def test_en_bare_year_without_threshold_word(self) -> None:
+        """无介词裸年兑底：句内无阈值词时 1999 可作年份。"""
+        self.assert_plan(
+            RETAIL_PLANNER, "What were total sales 1999?",
+            metric="total_sales_price", time=("year", 1999),
+        )
+
+    # -- 相对时间反问（2）------------------------------------------------
+
+    def test_en_relative_time_clarifies(self) -> None:
+        result = PLANNER.plan(
+            "What was the commission revenue last month?", locale="en"
+        )
+        self.assertIsInstance(result, ClarificationRequest)
+        assert isinstance(result, ClarificationRequest)
+        self.assertEqual(result.kind, "relative_time")
+
+    def test_en_recent_clarifies(self) -> None:
+        result = RETAIL_PLANNER.plan("How were total sales recently?", locale="en")
+        self.assertIsInstance(result, ClarificationRequest)
+        assert isinstance(result, ClarificationRequest)
+        self.assertEqual(result.kind, "relative_time")
+
+    # -- 指代追问 en（4）-------------------------------------------------
+
+    PREV = Plan(
+        metric="commission_revenue",
+        dimensions=("Branch",),
+        time=TimeSpec("year", 2013),
+        order_by=(OrderSpec("commission_revenue", desc=True),),
+        limit=5,
+    )
+    PREV_FILTER = Plan(
+        metric="commission_revenue",
+        time=TimeSpec("year", 2013),
+        filters=(Filter("Branch", "=", BRANCH_X),),
+    )
+
+    def test_en_followup_what_about_time(self) -> None:
+        """what about 2014? → 同 metric/维度/排序，仅换时间。"""
+        merged = PLANNER.followup("what about 2014?", self.PREV, locale="en")
+        self.assertIsInstance(merged, Plan)
+        assert isinstance(merged, Plan)
+        self.assertEqual(merged.time, TimeSpec("year", 2014))
+        self.assertEqual(merged.dimensions, ("Branch",))
+        self.assertEqual(merged.limit, 5)
+
+    def test_en_followup_how_about_dimension(self) -> None:
+        """how about by tier? → 替换分组维度（时间保持）。"""
+        merged = PLANNER.followup("how about by tier?", self.PREV, locale="en")
+        self.assertIsInstance(merged, Plan)
+        assert isinstance(merged, Plan)
+        self.assertEqual(merged.dimensions, ("Tier",))
+        self.assertEqual(merged.time, TimeSpec("year", 2013))
+
+    def test_en_followup_instead_swap(self) -> None:
+        """by office instead? → 换维壳 instead 形态。"""
+        merged = PLANNER.followup("by office instead?", self.PREV, locale="en")
+        self.assertIsInstance(merged, Plan)
+        assert isinstance(merged, Plan)
+        self.assertEqual(merged.dimensions, ("Office",))
+
+    def test_en_followup_relative_clarifies(self) -> None:
+        """what about last year? → 透传 relative_time 反问。"""
+        result = PLANNER.followup("what about last year?", self.PREV, locale="en")
+        self.assertIsInstance(result, ClarificationRequest)
+        assert isinstance(result, ClarificationRequest)
+        self.assertEqual(result.kind, "relative_time")
+
+    def test_en_followup_free_pronoun_clarifies(self) -> None:
+        """what about those?（自由代词）→ 反问不猜。"""
+        result = PLANNER.followup("what about those?", self.PREV, locale="en")
+        self.assertIsInstance(result, ClarificationRequest)
+
+    def test_en_followup_no_shell_returns_none(self) -> None:
+        self.assertIsNone(PLANNER.followup("Show me trades", self.PREV, locale="en"))
+
+    def test_en_followup_change_dim_with_prev_filter_clarifies(self) -> None:
+        """换维 + 上轮带维度值过滤 → 作用域二义反问（与中文同构）。"""
+        result = PLANNER.followup(
+            "what about by tier?", self.PREV_FILTER, locale="en"
+        )
+        self.assertIsInstance(result, ClarificationRequest)
+
+    # -- 歧义仍反问（2）/ 双语隔离（2）/ 防漂移（1）------------------------
+
+    def test_en_dual_metric_ambiguity_clarifies(self) -> None:
+        result = PLANNER.plan(
+            "What were the trade value and commission revenue in 2013?", locale="en"
+        )
+        self.assertIsInstance(result, ClarificationRequest)
+        assert isinstance(result, ClarificationRequest)
+        self.assertIn("指标口径歧义", result.reasons[0])
+
+    def test_en_unmatched_clarifies(self) -> None:
+        result = PLANNER.plan("What is the weather today?", locale="en")
+        self.assertIsInstance(result, ClarificationRequest)
+        assert isinstance(result, ClarificationRequest)
+        self.assertEqual(result.kind, "unmatched")
+
+    def test_auto_detection_zh_en(self) -> None:
+        """无 locale → 中文字符启发式：纯英文问句自动 en，中文问句自动 zh。"""
+        plan_en = PLANNER.plan("What was the total trade value in 2015?")
+        self.assertIsInstance(plan_en, Plan)
+        assert isinstance(plan_en, Plan)
+        self.assertEqual(plan_en.metric, "total_trade_value")
+        plan_zh = PLANNER.plan("2015 年总交易额是多少？")
+        self.assertIsInstance(plan_zh, Plan)
+        assert isinstance(plan_zh, Plan)
+        self.assertEqual(plan_zh.metric, "total_trade_value")
+
+    def test_zh_never_uses_en_forms(self) -> None:
+        """双语隔离：中文问句带英文值词不误入 en 形态；英文句显式 zh 不命中。"""
+        plan = PLANNER.plan("只看分支 IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD 的 2013 年佣金收入是多少？")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(
+            plan.filters, (Filter("Branch", "=", self.BRANCH_X),)
+        )
+        result = PLANNER.plan("What was the total trade value in 2015?", locale="zh")
+        self.assertIsInstance(result, ClarificationRequest)
+        assert isinstance(result, ClarificationRequest)
+        self.assertEqual(result.kind, "unmatched")
+
+    def test_en_synonym_keys_within_model(self) -> None:
+        """en 注册表键须在语义模型中存在（防 YAML 改名后漂移；金融∪零售）。"""
+        from agent.planner import _EN_DIM_SYNONYMS, _EN_METRIC_SYNONYMS
+
+        finance_keys = set(MODEL.metric_synonyms) | set(MODEL.dimension_synonyms)
+        retail_keys = (
+            set(RETAIL_MODEL.metric_synonyms) | set(RETAIL_MODEL.dimension_synonyms)
+        )
+        for name in _EN_METRIC_SYNONYMS:
+            self.assertIn(name, finance_keys | retail_keys)
+        for name in _EN_DIM_SYNONYMS:
+            self.assertIn(name, finance_keys | retail_keys)
+        # 零售键必须挂在零售模型（金融键挂在金融模型）
+        for name in ("total_sales_price", "total_quantity", "net_profit",
+                     "avg_order_value", "order_count"):
+            self.assertIn(name, RETAIL_MODEL.metric_synonyms)
+        for name in ("i_category", "i_brand", "s_state", "s_city"):
+            self.assertIn(name, RETAIL_MODEL.dimension_synonyms)
+
+    def test_invalid_locale_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            PLANNER.plan("whatever", locale="fr")
+
+
 if __name__ == "__main__":
     unittest.main()

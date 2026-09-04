@@ -12,6 +12,14 @@
   非时间字段同义词；"账户/佣金/年"等通用词在无显式结构时不触发维度（避免误分组）
 - 相对时间（"上个月/最近"）不支持，返回 ClarificationRequest
   （固定快照评测下相对时间会漂移，见 eval/gold/README.md；ADR-0014 ③ 设计性不支持）
+- 语言（P6 locale 化，2026-09-05）：形态词表/正则按 locale 分片（zh/en），
+  语言自动检测（句中含任意中文字符 → zh，否则 → en），CLI/API 无需显式参数；
+  评测 runner 按样本 tags lang_en 显式传 locale（确定性优先）。英文同义词
+  注册在代码层 _EN_METRIC_SYNONYMS/_EN_DIM_SYNONYMS（键与语义模型对齐，
+  YAML ai_context 是中文注记域，英文措辞属解析器形态层）
+- 英文 filter 边界：值须为**精确值**（"only for branch X"），裸实体复数词
+  （customers/branches 等）作值后缀裁剪；无维度词短语（强调语）不产生 filter，
+  与中文同构（见 _EN_ONLY_RE/_EN_EXCL_RE）
 - 指标匹配：同义词子串命中必须唯一；派生指标同义词常含基础指标词
   （"平均每笔成交金额" ⊃ "成交金额"）→ 按**最长命中**取更具体口径
   （gold-156~162 派生指标补洞评测先行发现的真实缺陷，2026-09-04 修复）；
@@ -34,6 +42,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from agent.compiler import Filter, OrderSpec, Plan, SemanticModel, TimeSpec
+
+# ---------------------------------------------------------------------------
+# 中文形态（zh，P6 locale 化后仍为主路径；行为与 2026-09-04 前逐字一致）
+# ---------------------------------------------------------------------------
 
 # 中文数字 → 阿拉伯数字（季度编号）
 _CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4}
@@ -84,6 +96,124 @@ _FOLLOWUP_DIM_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# 英文形态（en，P6 locale 化，2026-09-05）：与中文词表互斥分片，正则独立成族。
+# 时间语序：quarter 两向（Q2 2013 / 2013 Q2）、月份名（May 2014）、ISO date
+# （与 zh 共享 _ISO_DATE_RE/_ISO_QUARTER_RE）；裸年份须介词引导，无介词兜底仅
+# 在句内无阈值词时启用（防 "over 5000" 之类阈值数字被误读成年份）。
+# ---------------------------------------------------------------------------
+
+_EN_MONTHS = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+_EN_MONTH_NUM = {name.lower(): i + 1 for i, name in enumerate(_EN_MONTHS)}
+_EN_QUARTER_RE = re.compile(r"(?:([Qq][1-4])\s+(\d{4})|(\d{4})\s+([Qq][1-4]))")
+_EN_MONTH_RE = re.compile(
+    r"\b(" + "|".join(_EN_MONTHS) + r")\s*,?\s+(\d{4})\b", re.IGNORECASE
+)
+_EN_YEAR_PREP_RE = re.compile(r"\b(?:in|for|during|of|from)\s+(\d{4})\b")
+_EN_YEAR_BARE_RE = re.compile(r"\b(\d{4})\b")
+# 阈值词：裸年兜底封锁表（句中含任意阈值词时不启用无介词年份解析）
+_EN_THRESHOLD_WORDS = (
+    "over", "above", "more than", "greater than", "exceeding",
+    "under", "below", "less than", "fewer than",
+)
+_EN_RELATIVE_TIME = (
+    "last month", "last quarter", "last year", "last week",
+    "this month", "this quarter", "this year", "this week",
+    "recent", "yesterday", "today",
+)
+# 显式分组结构词（by/grouped by/group by/broken down by + 短语；截到时间介词/连词）
+_EN_GROUP_RE = re.compile(
+    r"\b(?:grouped by|group by|broken down by|by)\s+(.+?)"
+    r"(?=\s+(?:in|for|during|of|on|over|under|above|below|with|and)\b|$)"
+)
+_EN_TOP_N_RE = re.compile(r"\b(?:top|best)\s+(\d+)\b")
+# TopN 后短语提维度（"top 3 categories by sales in 1999" → categories），
+# 截到排序词 by / 时间介词 / 连词（与中文"前 N 名"只给数字不同，英文名词后置）
+_EN_TOP_N_DIM_RE = re.compile(
+    r"\b(?:top|best)\s+\d+\s+(.+?)"
+    r"(?=\s+(?:by|in|for|during|of|on|over|under|above|below|with|and)\b|$)"
+)
+# filter 触发结构（en）：only/排除 + 值短语；值后裸实体复数词（tier 3 customers）
+# 作后缀裁剪；介词 for/of/from 剥除；lookahead 防值吞掉时间/分组短语
+_EN_ONLY_RE = re.compile(
+    r"\bonly\s+(?:for|of|from)?\s*(.+?)"
+    r"(?=\s+(?:in|for|during|of|on|over|under|above|below|with|by|and)\b|"
+    r"\s+(?:the\s+)?(?:customers|branches|accounts|securities|holdings|"
+    r"clients|trades|orders|products|items)\b|$)"
+)
+_EN_EXCL_RE = re.compile(
+    r"\b(?:excluding|except)\s+(.+?)"
+    r"(?=\s+(?:in|for|during|of|on|over|under|above|below|with|by|and)\b|$)"
+)
+# 度量阈值（HAVING 语义）：over/above/more than… + 数值 + 可选英文量级词/K-M-B 后缀
+_EN_THRESHOLD_GT_RE = re.compile(
+    r"\b(?:over|above|more than|greater than)\s+([\d.]+)"
+    r"\s*(billion|million|thousand|[KMB])?"
+)
+_EN_THRESHOLD_LT_RE = re.compile(
+    r"\b(?:under|below|less than|fewer than)\s+([\d.]+)"
+    r"\s*(billion|million|thousand|[KMB])?"
+)
+_EN_UNIT = {
+    "billion": 1_000_000_000, "million": 1_000_000, "thousand": 1_000,
+    "B": 1_000_000_000, "M": 1_000_000, "K": 1_000,
+}
+# 指代追问（en）：what about / how about X？与 by X instead（换维壳）；
+# 与中文同构：自由代词与无法归属的碎片 → 反问完整重述
+_EN_FOLLOWUP_WHAT_RE = re.compile(r"(?:what|how)\s+about\s+(.+?)\??\s*$")
+_EN_FOLLOWUP_INSTEAD_RE = re.compile(r"(.+?)\s+instead\??\s*$")
+
+# 英文同义词注册表（locale=en 时与模型中文同义词联合；键须与语义模型
+# dimension_synonyms/metric_synonyms 对齐，契约测试兜底防漂移）
+_EN_METRIC_SYNONYMS: dict[str, tuple[str, ...]] = {
+    # 金融
+    "total_trade_value": ("trade value", "total trade value", "transaction value"),
+    "commission_revenue": ("commission revenue", "commission income"),
+    "trade_count": ("trades", "number of trades", "trade count"),
+    "cash_balance": ("cash balance",),
+    "total_trade_quantity": ("trade quantity", "total trade quantity"),
+    "total_trade_tax": ("trade tax",),
+    "holdings_value": ("holdings value", "portfolio value"),
+    "holdings_quantity": ("holdings quantity",),
+    "average_trade_value": (
+        "average trade value", "avg trade value", "average value per trade",
+    ),
+    "average_commission_per_trade": (
+        "average commission per trade", "avg commission per trade",
+    ),
+    "commission_rate": ("commission rate",),
+    "avg_trade_price": ("average trade price", "avg trade price"),
+    # 零售
+    "total_sales_price": ("total sales", "sales", "sales amount", "revenue"),
+    "total_quantity": ("quantity", "total quantity", "units sold", "items sold"),
+    "net_profit": ("profit", "net profit", "gross profit"),
+    "avg_order_value": ("average order value", "avg order value", "AOV"),
+    "order_count": ("orders", "number of orders", "order count"),
+}
+_EN_DIM_SYNONYMS: dict[str, tuple[str, ...]] = {
+    # 金融（dim_* 表非时间字段；复数/词干形态按需注册）
+    "Branch": ("branch",),
+    "Office": ("office",),
+    "Tier": ("customer tier", "tier", "client tier"),
+    "TaxStatus": ("tax status",),
+    "Status": ("account status",),
+    "Gender": ("gender",),
+    "ExchangeID": ("exchange",),
+    "Issue": ("security type", "issue type"),
+    "Symbol": ("symbol", "ticker"),
+    "NetWorth": ("net worth",),
+    "CreditRating": ("credit rating",),
+    # 零售
+    "i_category": ("category", "categories", "product category"),
+    "i_brand": ("brand",),
+    "s_state": ("state", "store state"),
+    "s_city": ("city", "cities", "store city"),
+}
+
+
 @dataclass(frozen=True)
 class ClarificationRequest:
     """歧义澄清请求：Planner 无法确定性解析时返回，Agent 应反问而不是猜（gold-104）。
@@ -107,21 +237,30 @@ class Planner:
     def __init__(self, model: SemanticModel) -> None:
         self.model = model
 
-    def plan(self, question: str) -> Plan | ClarificationRequest:
-        """解析问句。返回 Plan；无法唯一确定时返回 ClarificationRequest。"""
+    def plan(
+        self, question: str, locale: str | None = None
+    ) -> Plan | ClarificationRequest:
+        """解析问句。返回 Plan；无法唯一确定时返回 ClarificationRequest。
+
+        locale："zh"/"en" 显式指定（评测 runner 按样本 tags lang_en 传，确定性
+        优先）；缺省 None → 自动检测（句中含任意中文字符 → zh，否则 → en，
+        CLI/API 便利）。
+        """
+        locale = self._resolve_locale(question, locale)
         # 1. 指标匹配（同义词子串命中，必须唯一）
         # 子串包含消歧：派生指标同义词含基础指标词（"平均每笔成交金额" ⊃
         # "成交金额"）时，长命中是更具体口径（派生），短命中是冗余命中——
         # 丢弃被其他命中词真包含的命中词；互不为子串的多命中仍保留（真歧义）。
+        synsets = self._metric_synsets(locale)
         metric_hits = sorted(
             {
                 name
-                for name, syns in self.model.metric_synonyms.items()
+                for name, syns in synsets.items()
                 for syn in syns
                 if syn in question
                 and not any(
                     syn in other and syn != other
-                    for other_name, other_syns in self.model.metric_synonyms.items()
+                    for other_name, other_syns in synsets.items()
                     for other in other_syns
                     if other in question
                 )
@@ -140,20 +279,20 @@ class Planner:
         metric = metric_hits[0]
 
         # 2. 时间解析（相对时间 → 澄清）
-        time = self._parse_time(question)
+        time = self._parse_time(question, locale)
         if isinstance(time, ClarificationRequest):
             return time
 
         # 3. 维度解析（显式分组结构 + 维度表同义词）
-        dimensions = self._parse_dimensions(question)
+        dimensions = self._parse_dimensions(question, locale)
 
         # 4. filter 解析（ADR-0014 ①）；值模糊 → 反问
-        filters = self._parse_filters(question, metric)
+        filters = self._parse_filters(question, metric, locale)
         if isinstance(filters, ClarificationRequest):
             return filters
 
         # 5. "前 N 名" → 按指标降序 + limit
-        order_by, limit = self._parse_top_n(question, metric)
+        order_by, limit = self._parse_top_n(question, metric, locale)
 
         return Plan(
             metric=metric,
@@ -165,27 +304,37 @@ class Planner:
         )
 
     def followup(
-        self, question: str, prev: Plan
+        self, question: str, prev: Plan, locale: str | None = None
     ) -> Plan | ClarificationRequest | None:
         """指代追问补全（ADR-0014 ②）：残句无指标词 → 复用上轮 Plan 结构。
 
         仅处理**同构追问**（调用方保证：planner.plan 已 unmatched——句内无指标
-        词，且 prev 为同会话上轮成功采纳的 Plan）：命中链接词形态（"那 X 呢 / 换成
-        X / 按 X 统计"等）时，继承 prev 的 metric/维度/过滤/排序，只替换本轮新
-        解析出的时间/维度片段。返回 None = 非链接形态（调用方维持原 unmatched
-        流程）；ClarificationRequest = 补全歧义/相对时间（不猜，反问完整重述）。
+        词，且 prev 为同会话上轮成功采纳的 Plan）：命中链接词形态（中文"那 X 呢 /
+        换成 X / 按 X 统计"；英文"what about X / how about X / by X instead"）
+        时，继承 prev 的 metric/维度/过滤/排序，只替换本轮新解析出的时间/维度
+        片段。返回 None = 非链接形态（调用方维持原 unmatched 流程）；
+        ClarificationRequest = 补全歧义/相对时间（不猜，反问完整重述）。
 
-        确定性边界（不猜测）：
-        - 自由代词（"那它呢/这些呢"）与剥壳后无片段 → 反问
-        - 相对时间（"那去年呢"）→ 透传 relative_time 反问
+        确定性边界（不猜测，zh/en 同构）：
+        - 自由代词（"那它呢/这些呢"；"what about those"）与剥壳后无片段 → 反问
+        - 相对时间（"那去年呢"；"what about last year"）→ 透传 relative_time 反问
         - 换维且上轮带维度值过滤 → 口径作用域二义（保留=子集，去掉=改口径）→ 反问
         """
+        locale = self._resolve_locale(question, locale)
+        if locale == "zh":
+            return self._followup_zh(question, prev)
+        return self._followup_en(question, prev)
+
+    def _followup_zh(
+        self, question: str, prev: Plan
+    ) -> Plan | ClarificationRequest | None:
+        """中文指代追问（原实现，2026-09-04 前逐字一致）。"""
         text = question.strip().strip("？?。!！，, ")
         # 链接词开头或"呢"结尾才算口语残句（否则维持原 unmatched 流程）
         if not (text.startswith(_FOLLOWUP_PREFIXES) or text.endswith("呢")):
             return None
         # 时间片段：壳词不影响既有时间正则；相对时间 → 透传澄清
-        time = self._parse_time(text)
+        time = self._parse_time(text, "zh")
         if isinstance(time, ClarificationRequest):
             return time
         # 维度片段：换维壳命中后做维度字段子串匹配（多命中全取，与分组解析同风格）；
@@ -193,7 +342,7 @@ class Planner:
         new_dims: tuple[str, ...] = ()
         m = _FOLLOWUP_DIM_RE.search(text)
         if m:
-            new_dims = self._dim_hits(m.group(1))
+            new_dims = self._dim_hits(m.group(1), "zh")
             if new_dims and prev.filters:
                 return ClarificationRequest(
                     question,
@@ -216,10 +365,93 @@ class Planner:
             limit=prev.limit,
         )
 
+    def _followup_en(
+        self, question: str, prev: Plan
+    ) -> Plan | ClarificationRequest | None:
+        """英文指代追问：what about X / how about X / by X instead（与中文同构）。"""
+        text = question.strip().strip("？?。!！，, ")
+        m = _EN_FOLLOWUP_WHAT_RE.search(text)
+        if m:
+            inner = m.group(1).strip()
+        else:
+            m = _EN_FOLLOWUP_INSTEAD_RE.search(text)
+            if not m or not m.group(1).strip():
+                return None
+            inner = m.group(1).strip()
+        # 时间片段（inner 内解析；相对时间 → 透传澄清）
+        time = self._parse_time(inner, "en")
+        if isinstance(time, ClarificationRequest):
+            return time
+        # 维度片段：换维壳短语内做维度字段子串匹配（多命中全取）
+        new_dims: tuple[str, ...] = ()
+        mg = _EN_GROUP_RE.search(inner)
+        if mg:
+            new_dims = self._dim_hits(mg.group(1), "en")
+            if new_dims and prev.filters:
+                return ClarificationRequest(
+                    question,
+                    (f"Follow-up 「{text}」 changes the grouping dimension but the "
+                     "previous question had a dimension-value filter (filter scope "
+                     "ambiguous); please restate the full question",),
+                )
+        # 无任何可替换片段（自由代词）→ 反问不猜
+        if time is None and not new_dims:
+            return ClarificationRequest(
+                question,
+                (f"Follow-up 「{text}」 has no replaceable time/dimension fragment "
+                 "(free pronouns are not supported); please restate the full question",),
+            )
+        return Plan(
+            metric=prev.metric,
+            dimensions=new_dims if new_dims else prev.dimensions,
+            time=time if isinstance(time, TimeSpec) else prev.time,
+            filters=prev.filters,
+            order_by=prev.order_by,
+            limit=prev.limit,
+        )
+
     # -- 内部实现 ----------------------------------------------------------
 
-    def _parse_time(self, question: str) -> TimeSpec | None | ClarificationRequest:
-        """绝对时间解析；相对时间返回 ClarificationRequest。"""
+    @staticmethod
+    def _resolve_locale(question: str, locale: str | None) -> str:
+        """locale 解析：显式 zh/en 白名单；None → 中文字符启发式检测。"""
+        if locale is not None:
+            if locale not in ("zh", "en"):
+                raise ValueError(f"locale 必须是 'zh' 或 'en'：{locale!r}")
+            return locale
+        return (
+            "en"
+            if not any("\u4e00" <= ch <= "\u9fff" for ch in question)
+            else "zh"
+        )
+
+    def _metric_synsets(self, locale: str) -> dict[str, tuple[str, ...]]:
+        """指标同义词集：zh=模型中文注记；en=模型 ∪ 代码层英文注册表。
+
+        en 并集而非替换：模型同义词为中文，纯英文问句不可能命中，并集恒安全
+        （zh 不并入 en——中文问句含英文维度值词时防误命中）。
+        """
+        if locale == "zh":
+            return dict(self.model.metric_synonyms)
+        return {
+            name: syns + _EN_METRIC_SYNONYMS.get(name, ())
+            for name, syns in self.model.metric_synonyms.items()
+        }
+
+    def _dim_synsets(self, locale: str) -> dict[str, tuple[str, ...]]:
+        """维度字段同义词集（与 _metric_synsets 同构）。"""
+        if locale == "zh":
+            return dict(self.model.dimension_synonyms)
+        return {
+            name: syns + _EN_DIM_SYNONYMS.get(name, ())
+            for name, syns in self.model.dimension_synonyms.items()
+        }
+    def _parse_time(
+        self, question: str, locale: str
+    ) -> TimeSpec | None | ClarificationRequest:
+        """绝对时间解析（zh/en 分片）；相对时间返回 ClarificationRequest。"""
+        if locale == "en":
+            return self._parse_time_en(question)
         if any(t in question for t in _RELATIVE_TIME):
             return ClarificationRequest(
                 question,
@@ -246,23 +478,71 @@ class Planner:
             return TimeSpec("year", int(m.group(1)))
         return None
 
-    def _parse_dimensions(self, question: str) -> tuple[str, ...]:
-        """显式分组结构（"按X统计/分组"）内的维度表字段匹配。"""
+    def _parse_time_en(
+        self, question: str
+    ) -> TimeSpec | None | ClarificationRequest:
+        """英文绝对时间解析（语序：ISO date → quarter 两向 → 月份名 → 裸年）。"""
+        lowered = question.lower()
+        if any(t in lowered for t in _EN_RELATIVE_TIME):
+            return ClarificationRequest(
+                question,
+                ("Relative time is not supported (it drifts under frozen-snapshot "
+                 "evaluation); please use an absolute date",),
+                kind="relative_time",
+            )
+        m = _ISO_DATE_RE.search(question)
+        if m:
+            return TimeSpec("date", m.group(0))
+        m = _EN_QUARTER_RE.search(question)
+        if m:
+            # 语序 A：Q2 2013 → group(2)；语序 B：2013 Q2 → group(3)/(4)
+            if m.group(1):
+                return TimeSpec("quarter", f"{m.group(2)}Q{m.group(1)[-1]}")
+            return TimeSpec("quarter", f"{m.group(3)}Q{m.group(4)[-1]}")
+        m = _ISO_QUARTER_RE.search(question)
+        if m:
+            return TimeSpec("quarter", f"{m.group(1)}Q{m.group(2)}")
+        m = _EN_MONTH_RE.search(question)
+        if m:
+            month = _EN_MONTH_NUM[m.group(1).lower()]
+            return TimeSpec("month", int(m.group(2)) * 100 + month)
+        m = _EN_YEAR_PREP_RE.search(question)
+        if m:
+            return TimeSpec("year", int(m.group(1)))
+        # 无介词裸年兑底：句中含阈值词时不启用（防 "over 5000" 误读成年份）
+        if not any(w in lowered for w in _EN_THRESHOLD_WORDS):
+            m = _EN_YEAR_BARE_RE.search(question)
+            if m:
+                return TimeSpec("year", int(m.group(1)))
+        return None
+
+    def _parse_dimensions(self, question: str, locale: str) -> tuple[str, ...]:
+        """显式分组结构内的维度表字段匹配（zh：按X统计/分组；en：by/grouped by）。"""
+        dims: tuple[str, ...] = ()
+        if locale == "en":
+            m = _EN_GROUP_RE.search(question)
+            if m:
+                dims = self._dim_hits(m.group(1), "en")
+            # TopN 后短语提维度（"top 3 categories by sales" → categories）
+            m = _EN_TOP_N_DIM_RE.search(question)
+            if m:
+                dims = tuple(dict.fromkeys(dims + self._dim_hits(m.group(1), "en")))
+            return dims
         m = _GROUP_RE.search(question)
         if not m:
             return ()
-        return self._dim_hits(m.group(1))
+        return self._dim_hits(m.group(1), "zh")
 
-    def _dim_hits(self, phrase: str) -> tuple[str, ...]:
+    def _dim_hits(self, phrase: str, locale: str) -> tuple[str, ...]:
         """短语内命中的维度字段（dim_* 非时间字段同义词子串，多命中全取）。"""
         return tuple(
             name
-            for name, syns in self.model.dimension_synonyms.items()
+            for name, syns in self._dim_synsets(locale).items()
             if any(s in phrase for s in syns)
         )
 
     def _parse_filters(
-        self, question: str, metric: str
+        self, question: str, metric: str, locale: str
     ) -> tuple[Filter, ...] | ClarificationRequest:
         """filter 解析（ADR-0014 ①）。返回顺序固定：度量阈值在前，维度值在后。
 
@@ -270,6 +550,8 @@ class Planner:
         过滤短语整体无法归属任何维度字段时不产生 filter（"只看/仅"等前缀
         也可能是强调语，不做过度澄清）——两类不猜测边界见模块 docstring。
         """
+        if locale == "en":
+            return self._parse_filters_en(question, metric)
         filters: list[Filter] = []
         m = _THRESHOLD_GT_RE.search(question)
         if m:
@@ -281,7 +563,7 @@ class Planner:
             m = prefix_re.search(question)
             if not m:
                 continue
-            matched = self._match_dim_value(m.group(1))
+            matched = self._match_dim_value(m.group(1), "zh")
             if matched is None:
                 continue
             field, raw_value, has_prefix = matched
@@ -307,7 +589,61 @@ class Planner:
             filters.append(Filter(field, op, value))
         return tuple(filters)
 
-    def _match_dim_value(self, phrase: str) -> tuple[str, str, bool] | None:
+    def _parse_filters_en(
+        self, question: str, metric: str
+    ) -> tuple[Filter, ...] | ClarificationRequest:
+        """英文 filter 解析（only/excluding + 维度值；over/under… + 量级词）。
+
+        与中文同构：阈值在前、维度值在后；修饰词（"only the main branch"）与
+        无维度词短语（强调语）边界同 docstring 的 zh 说明。
+        """
+        filters: list[Filter] = []
+        for regex, op, unit_map in (
+            (_EN_THRESHOLD_GT_RE, ">", _EN_UNIT),
+            (_EN_THRESHOLD_LT_RE, "<", _EN_UNIT),
+        ):
+            m = regex.search(question)
+            if m:
+                value = float(m.group(1)) * (unit_map[m.group(2)] if m.group(2) else 1)
+                filters.append(
+                    Filter(metric, op, int(value) if value.is_integer() else value)
+                )
+        for prefix_re, op in ((_EN_ONLY_RE, "="), (_EN_EXCL_RE, "!=")):
+            m = prefix_re.search(question)
+            if not m:
+                continue
+            matched = self._match_dim_value(m.group(1), "en")
+            if matched is None:
+                continue
+            field, raw_value, has_prefix = matched
+            if has_prefix:
+                return ClarificationRequest(
+                    question,
+                    (f"The value of 「{m.group(1)}」 cannot be uniquely determined "
+                     "(the dimension word has a qualifier; please give the exact value)",),
+                )
+            if raw_value == "":
+                return ClarificationRequest(
+                    question,
+                    (f"Filter target has no value: {m.group(1)!r}; please give the "
+                     "exact value",),
+                )
+            if any("\u4e00" <= ch <= "\u9fff" for ch in raw_value):
+                return ClarificationRequest(
+                    question,
+                    (f"「{raw_value}」 does not map to a registered value/synonym of "
+                     f"{field} (Chinese dimension values are not supported; please "
+                     "give the exact value)",),
+                )
+            value: str | int = raw_value
+            if re.fullmatch(r"\d+", raw_value):
+                value = int(raw_value)
+            filters.append(Filter(field, op, value))
+        return tuple(filters)
+
+    def _match_dim_value(
+        self, phrase: str, locale: str
+    ) -> tuple[str, str, bool] | None:
         """过滤短语 → (维度字段名, 取值原文, 维度词前是否有修饰)。
 
         返回 None = 短语不含任何维度词（"只看/仅"可能是强调语，不产生 filter）；
@@ -315,8 +651,9 @@ class Planner:
         定语，值无法确定性确认（gold-155 反问载体），由调用方澄清。
         多 syn 命中取最长（"客户等级" 优先 "客户"）。
         """
+        synsets = self._dim_synsets(locale)
         best: tuple[int, str, str, int] | None = None  # (syn 长, 字段名, 命中 syn, 位置)
-        for field, syns in self.model.dimension_synonyms.items():
+        for field, syns in synsets.items():
             for syn in syns:
                 pos = phrase.find(syn)
                 if pos >= 0 and (best is None or len(syn) > best[0]):
@@ -332,9 +669,15 @@ class Planner:
         value = float(num) * (_CN_UNIT[unit] if unit else 1)
         return int(value) if value.is_integer() else value
 
-    def _parse_top_n(self, question: str, metric: str) -> tuple[tuple[OrderSpec, ...], int]:
-        """ "前 N 名" → 按指标降序 + limit=N；未命中则默认 limit=100。"""
-        m = _TOP_N_RE.search(question)
+    def _parse_top_n(
+        self, question: str, metric: str, locale: str
+    ) -> tuple[tuple[OrderSpec, ...], int]:
+        """TopN → 按指标降序 + limit（zh：前 N 名；en：top N / best N）。
+
+        未命中则默认 limit=100。
+        """
+        regex = _EN_TOP_N_RE if locale == "en" else _TOP_N_RE
+        m = regex.search(question)
         if not m:
             return (), 100
         return (OrderSpec(metric, desc=True),), int(m.group(1))
