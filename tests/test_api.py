@@ -36,13 +36,21 @@ _META = json.loads((REPO / "data/snapshots" / "7d48dcb.meta.json").read_text(enc
 ALLOWED = frozenset(
     f"atlas.{ns}.{table}" for ns, tables in _META["row_counts"].items() for table in tables
 )
+# 7d48dcb 是 TPC-DI 单源历史快照（无零售表）；P7 多模型路由测试需要零售域
+# SQL 过 Guard（白名单语义不变，仅补零售 4 物理表模拟双源快照，与 1e5d35b
+# 一致：零售时间维物理表名 date_dim——语义名 dim_date，见 gold-051 SQL）
+ALLOWED |= frozenset(
+    {"atlas.dwd.store_sales", "atlas.dwd.date_dim", "atlas.dwd.dim_item", "atlas.dwd.dim_store"}
+)
 BUDGET = Budget(dialect="doris", max_rows=10_000, allowed_tables=ALLOWED)
 MODEL = SemanticModel()
+RETAIL_MODEL = SemanticModel(REPO / "semantic" / "ossie" / "atlas_retail.ossie.yaml")
 
 SECRET = "api-contract-test-secret"
 
 GOLD102_Q = "按分支统计 2013 年佣金收入，列出前 5 名"
 AMBIGUOUS_Q = "最近交易情况怎么样？"  # gold-104：相对时间 → 反问
+RETAIL_Q = "2000 年总销售额是多少？"  # gold-051：零售 year 聚合
 
 # gold-102 的 Plan JSON（/plan 响应的同构输入，见 agent/cli.py docstring）
 PLAN_102 = {
@@ -51,6 +59,11 @@ PLAN_102 = {
     "time": {"granularity": "year", "value": 2013},
     "order_by": [{"column": "commission_revenue", "desc": True}],
     "limit": 5,
+}
+# 零售 year 聚合 Plan JSON（compile model=retail 输入）
+PLAN_RETAIL = {
+    "metric": "total_sales_price",
+    "time": {"granularity": "year", "value": 2000},
 }
 
 
@@ -72,13 +85,23 @@ class FakeExecutor:
 
 
 class ApiContractTest(unittest.TestCase):
-    """共享注入面：真实确定性 Agent + fake 执行器（每例独立，防会话计数串扰）。"""
+    """共享注入面：真实确定性 Agent + fake 执行器（每例独立，防会话计数串扰）。
+
+    agent_factory 按域返回：finance=默认 self.agent、retail=self.retail_agent
+    （P7 多模型路由注入面）；各域 fake 执行器独立记录，路由断言靠 SQL 落盘区分。
+    """
 
     def setUp(self) -> None:
         os.environ["ATLAS_JWT_SECRET"] = SECRET
         self.executor = FakeExecutor()
+        self.retail_executor = FakeExecutor()
         self.agent = DataAgent(executor=self.executor, budget=BUDGET)
-        self.client = TestClient(create_app(agent_factory=lambda: self.agent))
+        self.retail_agent = DataAgent(model=RETAIL_MODEL, executor=self.retail_executor, budget=BUDGET)
+
+        def factory(model_name: str) -> DataAgent:
+            return self.retail_agent if model_name == "retail" else self.agent
+
+        self.client = TestClient(create_app(agent_factory=factory))
 
     def tearDown(self) -> None:
         self.client.close()
@@ -190,7 +213,7 @@ class ApiContractTest(unittest.TestCase):
             dialect="doris", max_rows=10_000, allowed_tables=frozenset({"atlas.dwd.other"})
         )
         agent = DataAgent(executor=self.executor, budget=deny_budget)
-        client = TestClient(create_app(agent_factory=lambda: agent))
+        client = TestClient(create_app(agent_factory=lambda _domain: agent))
         try:
             resp = client.post("/ask", json={"question": GOLD102_Q}, headers=self._auth())
         finally:
@@ -266,7 +289,7 @@ class ApiContractTest(unittest.TestCase):
     def test_ask_snapshot_unavailable_503(self) -> None:
         """agent_factory 抛 SnapshotUnavailable → 503（CLI SystemExit 语义的 HTTP 化）。"""
 
-        def raiser() -> DataAgent:
+        def raiser(_domain: str) -> DataAgent:
             raise SnapshotUnavailable("当前 HEAD 无锁定快照 meta（测试）")
 
         client = TestClient(create_app(agent_factory=raiser))
@@ -276,6 +299,119 @@ class ApiContractTest(unittest.TestCase):
             client.close()
         self.assertEqual(resp.status_code, 503)
         self.assertIn("快照不可用", resp.json()["detail"])
+
+    # ---- 多模型路由（P7，2026-09-05）----
+
+    def test_plan_model_retail_chinese(self) -> None:
+        """model=retail：中文零售问句命中零售指标（gold-051 问句形态）。"""
+        resp = self.client.post(
+            "/plan", json={"question": RETAIL_Q, "model": "retail"}, headers=self._auth()
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["kind"], "plan")
+        plan = body["plan"]
+        self.assertEqual(plan["metric"], "total_sales_price")
+        self.assertEqual(plan["time"], {"granularity": "year", "value": 2000})
+
+    def test_plan_model_retail_english_auto_locale(self) -> None:
+        """model=retail + 英文问句：语言自动检测（P6 locale 化，无需显式参数）。"""
+        resp = self.client.post(
+            "/plan",
+            json={"question": "What were total sales in 1999?", "model": "retail"},
+            headers=self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["kind"], "plan")
+        self.assertEqual(body["plan"]["metric"], "total_sales_price")
+        self.assertEqual(body["plan"]["time"], {"granularity": "year", "value": 1999})
+
+    def test_plan_default_finance_isolates_domains(self) -> None:
+        """域隔离：零售问句在缺省 finance 模型 → clarify（不跨域猜测）。"""
+        resp = self.client.post("/plan", json={"question": RETAIL_Q}, headers=self._auth())
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["kind"], "clarify")
+        self.assertIsNone(body["plan"])
+
+    def test_plan_model_retail_question_mismatch_clarifies(self) -> None:
+        """反向隔离：金融问句在 retail 模型 → clarify。"""
+        resp = self.client.post(
+            "/plan", json={"question": GOLD102_Q, "model": "retail"}, headers=self._auth()
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["kind"], "clarify")
+
+    def test_plan_unknown_model_422(self) -> None:
+        """model 不在白名单 → 422（不落到语义层）。"""
+        resp = self.client.post(
+            "/plan",
+            json={"question": GOLD102_Q, "model": "no_such_domain"},
+            headers=self._auth(),
+        )
+        self.assertEqual(resp.status_code, 422)
+        self.assertIn("未知模型", resp.json()["detail"])
+
+    def test_compile_model_retail_sql_references_retail_tables(self) -> None:
+        """model=retail：Plan JSON → 零售事实表 SQL（store_sales/dim_date）。"""
+        resp = self.client.post(
+            "/compile", json=dict(PLAN_RETAIL, model="retail"), headers=self._auth()
+        )
+        self.assertEqual(resp.status_code, 200)
+        sql = resp.json()["sql"]
+        self.assertIn("store_sales", sql)
+        self.assertIn("dim_date", sql)
+
+    def test_compile_retail_metric_on_finance_422(self) -> None:
+        """零售指标 Plan 落在缺省 finance 模型 → 编译失败 422（路由先于编译）。"""
+        resp = self.client.post(
+            "/compile", json=dict(PLAN_RETAIL), headers=self._auth()
+        )
+        self.assertEqual(resp.status_code, 422)
+        self.assertIn("编译失败", resp.json()["detail"])
+
+    def test_ask_model_retail_routes_to_retail_agent(self) -> None:
+        """/ask model=retail → 零售 Agent 单例：SQL 落零售 executor，金融 executor 零调用。"""
+        resp = self.client.post(
+            "/ask", json={"question": RETAIL_Q, "model": "retail"}, headers=self._auth()
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["kind"], "answer")
+        self.assertEqual(body["metric"], "total_sales_price")
+        self.assertTrue(self.retail_executor.calls, "零售问句必须到达零售 Agent 的执行器")
+        self.assertIn("store_sales", self.retail_executor.calls[0])
+        self.assertEqual(self.executor.calls, [], "零售问句不得落到金融 Agent")
+
+    def test_ask_model_finance_default_backward_compat(self) -> None:
+        """/ask 缺省（无 model）= finance：既有行为零变化（显式 finance 同路径）。"""
+        for payload in ({"question": GOLD102_Q}, {"question": GOLD102_Q, "model": "finance"}):
+            with self.subTest(model=payload.get("model", "<default>")):
+                self.executor.calls.clear()
+                resp = self.client.post("/ask", json=payload, headers=self._auth())
+                self.assertEqual(resp.status_code, 200)
+                self.assertEqual(resp.json()["kind"], "answer")
+                self.assertTrue(self.executor.calls)
+                self.assertEqual(self.retail_executor.calls, [])
+
+    def test_ask_session_scoped_per_model(self) -> None:
+        """session_id 按模型隔离：同键 finance/retail 各自独立会话计数。"""
+        sid = "model-scoped-sess"
+        r1 = self.client.post(
+            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
+        )
+        r2 = self.client.post(
+            "/ask",
+            json={"question": RETAIL_Q, "session_id": sid, "model": "retail"},
+            headers=self._auth(),
+        )
+        self.assertEqual(r1.json()["turns_in_session"], 1)
+        self.assertEqual(r2.json()["turns_in_session"], 1)  # retail 会话首轮
+        r3 = self.client.post(
+            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
+        )
+        self.assertEqual(r3.json()["turns_in_session"], 2)  # finance 会话续接
 
 
 if __name__ == "__main__":

@@ -7,8 +7,14 @@
 - 会话语义与 CLI 一致：Agent 在进程内懒建**单例**（MemorySaver checkpointer 与
   _session_turns 是实例态，每请求新建 = 会话断裂）；uvicorn 必须 workers=1
   （多 worker = 多份进程内状态，README KL #28）。
+- 多模型路由（P7，2026-09-05）：/plan /compile /ask 请求体带 `model` 字段
+  （finance|retail，缺省 finance——向后兼容，旧请求体零变化）；/plan /compile
+  按域构造语义模型（无状态，与 v1 同构），/ask 按域懒建独立 Agent 单例
+  （finance/retail 各一）——会话键（session_id）按模型隔离，跨模型不续接。
 - 认证复用 serving/auth.py：verify_token 走 env ATLAS_JWT_SECRET（N9，无默认
-  密钥）；v1 不注入行级角色策略（与 CLI 同口径，角色注入属 0011 gateway 硬化项）。
+  密钥）；v1 不注入行级角色策略（与 CLI 同口径，角色注入属 0011 gateway 硬化项，
+  README KL #28 ③；零售角色的带身份实测载体 = rls-verify 零售档 + demo 集成
+  测试，同机制：resolve_policy → Guard Policy 注入）。
 - 序列化：Decimal → str（保精度，不进浮点）、datetime/date → ISO8601、Enum →
   value、tuple → list——FastAPI 的 jsonable_encoder 会把 Decimal 转 float 丢精度，
   故 rows 值必须在此先行转换（确定性文本不经浮点）。
@@ -22,25 +28,54 @@ from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from agent.compiler import CompileError, Compiler, Filter, OrderSpec, Plan, SemanticModel, TimeSpec
+from agent.compiler import (
+    FINANCE_MODEL,
+    CompileError,
+    Compiler,
+    Filter,
+    OrderSpec,
+    Plan,
+    SemanticModel,
+    TimeSpec,
+)
 from agent.factory import SnapshotUnavailable, create_live_agent
 from agent.graph import DataAgent
 from agent.planner import ClarificationRequest, Planner
 from agent.state import TurnResult
 from serving.auth import AuthError, verify_token
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+# 域 → 语义模型 YAML（与 eval/runner.DOMAIN_MODELS 同路径；模型选择白名单）
+DOMAIN_MODEL_PATHS: dict[str, Path] = {
+    "finance": FINANCE_MODEL,
+    "retail": REPO_ROOT / "semantic" / "ossie" / "atlas_retail.ossie.yaml",
+}
+
 # ---------------------------------------------------------------------------
 # 请求/响应模型（HTTP 面粗约束；细约束在 Guard/Planner，不在此复制）
 # ---------------------------------------------------------------------------
 
+# 模型选择：P7 多模型路由（缺省 finance 向后兼容；未知模型 → 422）
+
+
+def _model_name(model: str) -> str:
+    """校验 model 字段 ∈ 域白名单（未知模型 → 422，不落到语义层）。"""
+    if model not in DOMAIN_MODEL_PATHS:
+        raise HTTPException(
+            status_code=422, detail=f"未知模型：{model!r}（可选 finance|retail）"
+        )
+    return model
+
 
 class QuestionBody(BaseModel):
     question: str = Field(min_length=1, max_length=500, description="自然语言问句")
+    model: str = Field(default="finance", description="语义模型域：finance（缺省）| retail")
 
 
 class AskBody(QuestionBody):
@@ -74,6 +109,7 @@ class CompileBody(BaseModel):
     filters: list[CompileFilterSpec] = []
     order_by: list[CompileOrderSpec] = []
     limit: int = Field(default=100, ge=1, le=10_000)
+    model: str = Field(default="finance", description="语义模型域：finance（缺省）| retail")
 
 
 # ---------------------------------------------------------------------------
@@ -199,33 +235,45 @@ BearerClaims = Annotated[dict[str, object], Depends(require_bearer)]
 # ---------------------------------------------------------------------------
 
 
-def create_app(agent_factory: Callable[[], DataAgent] | None = None) -> FastAPI:
+def create_app(
+    agent_factory: Callable[[str], DataAgent] | None = None,
+) -> FastAPI:
     """构造 API 应用。
 
     agent_factory 注入点：测试传 fake（无 DB，仿 tests/test_graph.py FakeExecutor
-    注入模式）；缺省 create_live_agent（真 Doris + 锁定快照，CLI ask 同约束）。
-    Agent 懒建单例：快照缺失在首个 /ask 暴露（503），meta 就绪后自动恢复。
+    注入模式），签名 (model_name) -> DataAgent（按域返回，finance/retail 各自）；
+    缺省 _live_agent（真 Doris + 锁定快照，CLI ask 同约束，模型路径按域选择）。
+    Agent 按域懒建单例：快照缺失在首个 /ask 暴露（503），meta 就绪后自动恢复。
     """
 
-    factory = agent_factory or create_live_agent
+    def _live_agent(model_name: str) -> DataAgent:
+        """生产 agent：按域加载语义模型（P7 双模型；快照预算绑定与 CLI 同源）。"""
+        return create_live_agent(model_path=DOMAIN_MODEL_PATHS[model_name])
+
+    factory = agent_factory or _live_agent
     app = FastAPI(
         title="Atlas Serving API",
         version="0.1.0",
         description="Atlas 可信 AI 问数平台 HTTP 服务面 v1（ADR-0012）："
-        "/health 公开；/plan /compile /ask 需 Bearer JWT（make token 签发）",
+        "/health 公开；/plan /compile /ask 需 Bearer JWT（make token 签发）；"
+        "请求体 model 字段选择语义模型域（finance|retail，缺省 finance）",
     )
-    holder: dict[str, DataAgent | None] = {"agent": None}
+    # 按域懒建单例（finance/retail 各一；会话状态按模型隔离）
+    holder: dict[str, dict[str, DataAgent | None]] = {
+        "agents": {name: None for name in DOMAIN_MODEL_PATHS}
+    }
 
-    def _agent() -> DataAgent:
-        agent = holder["agent"]
+    def _agent(model_name: str) -> DataAgent:
+        agents = holder["agents"]
+        agent = agents[model_name]
         if agent is None:
             try:
-                agent = factory()
+                agent = factory(model_name)
             except SnapshotUnavailable as exc:
                 raise HTTPException(
                     status_code=503, detail=f"快照不可用，无法绑定评测数据：{exc}"
                 ) from exc
-            holder["agent"] = agent
+            agents[model_name] = agent
         return agent
 
     @app.get("/health")
@@ -238,36 +286,46 @@ def create_app(agent_factory: Callable[[], DataAgent] | None = None) -> FastAPI:
         snapshot_sha = sha if (SNAPSHOT_DIR / f"{sha}.meta.json").is_file() else None
         return {"status": "ok", "head_sha": sha, "snapshot_sha": snapshot_sha}
 
-    @app.post("/plan", summary="问句 → Plan（歧义返回 kind=clarify）")
+    @app.post("/plan", summary="问句 → Plan（歧义返回 kind=clarify；model 选域）")
     def plan(
         body: QuestionBody,
         _claims: BearerClaims,
     ) -> dict[str, Any]:
         """问句 → 结构化 Plan；无法确定性解析时 200 + kind=clarify（CLI exit 1 语义）。"""
-        result = Planner(SemanticModel()).plan(body.question)
+        model_name = _model_name(body.model)
+        model = SemanticModel(DOMAIN_MODEL_PATHS[model_name])
+        result = Planner(model).plan(body.question)
         if isinstance(result, ClarificationRequest):
             return {"kind": "clarify", "plan": None, "clarification": _clarify_payload(result)}
         return {"kind": "plan", "plan": _plan_payload(result), "clarification": None}
 
-    @app.post("/compile", summary="Plan JSON → 只读 SQL（Doris 方言）")
+    @app.post("/compile", summary="Plan JSON → 只读 SQL（Doris 方言；model 选域）")
     def compile_plan(
         body: CompileBody,
         _claims: BearerClaims,
     ) -> dict[str, Any]:
         """Plan 结构非法 → 422（pydantic）；编译失败（字段不在语义层）→ 422。"""
+        model_name = _model_name(body.model)
+        model = SemanticModel(DOMAIN_MODEL_PATHS[model_name])
         try:
-            sql, _ = Compiler(SemanticModel()).compile(_compile_plan(body))
+            sql, _ = Compiler(model).compile(_compile_plan(body))
         except CompileError as exc:
             raise HTTPException(status_code=422, detail=f"编译失败：{exc}") from exc
         return {"sql": sql}
 
-    @app.post("/ask", summary="问数会话（真实 Doris + 锁定快照；单轮/多轮）")
+    @app.post("/ask", summary="问数会话（真实 Doris + 锁定快照；model 选域；单轮/多轮）")
     def ask(
         body: AskBody,
         _claims: BearerClaims,
     ) -> dict[str, Any]:
-        """单轮问答；session_id 复用即多轮续接（进程内内存态，重启即失）。"""
-        return _turn_payload(_agent().ask(body.question, session_id=body.session_id))
+        """单轮问答；session_id 复用即多轮续接（进程内内存态，重启即失）。
+
+        model 缺省 finance：旧请求体向后兼容；session_id 按模型隔离——同键跨
+        模型请求是两个独立会话（finance/retail Agent 各自单例）。
+        """
+        model_name = _model_name(body.model)
+        agent = _agent(model_name)
+        return _turn_payload(agent.ask(body.question, session_id=body.session_id))
 
     return app
 

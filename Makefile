@@ -114,7 +114,8 @@ ask:
 # ---- HTTP API 服务面（ADR-0012，serving/api.py）----
 # serve：uvicorn 单进程（默认 workers=1——checkpointer MemorySaver 与 _session_turns
 #   是进程内状态，多 worker = 会话分裂，README KL #28）；工作目录必须为仓库根
-#   （SemanticModel 加载语义层 YAML 依赖 cwd）；Ctrl-C 停止
+#   （SemanticModel 加载语义层 YAML 依赖 cwd）；Ctrl-C 停止；P7 起 /plan /compile
+#   /ask 请求体 model 字段选择语义域（finance|retail，缺省 finance，双 Agent 懒建）
 # token：签发本地测试 JWT（serving/auth.sign_token，需 .env ATLAS_JWT_SECRET）
 #   默认 ROLE=hq_admin；如 ROLE=branch_manager CONTEXT='{"branch": "east"}' 可覆盖
 serve:
