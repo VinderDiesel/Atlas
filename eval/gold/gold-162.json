@@ -5,8 +5,8 @@
   "expected_dimensions": [],
   "expected_time": "2013",
   "expected_sql": "SELECT SUM(fact_cash_balances.Cash) / COUNT(DISTINCT fact_cash_balances.SK_AccountID) AS average_cash_balance FROM atlas.dwd.fact_cash_balances AS fact_cash_balances INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_cash_balances.SK_DateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2013 LIMIT 100",
-  "result_hash": null,
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "d8c5ada44b8864ff5304c6029c167938e66287069951d38ef7c7a27319488457",
+  "snapshot_sha": "30b8344",
   "tags": [
     "aggregation",
     "time_range",

@@ -5,8 +5,8 @@
   "expected_dimensions": [],
   "expected_time": "2013",
   "expected_sql": "SELECT SUM(fact_trades.Commission) / COUNT(fact_trades.TradeID) AS average_commission_per_trade FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2013 LIMIT 100",
-  "result_hash": null,
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "85ca75d4c4a2de0be27da0782d50a2907d5dadbbf523fdd890b4bbfa54af8701",
+  "snapshot_sha": "30b8344",
   "tags": [
     "aggregation",
     "time_range",

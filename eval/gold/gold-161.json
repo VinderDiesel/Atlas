@@ -5,8 +5,8 @@
   "expected_dimensions": [],
   "expected_time": "2013",
   "expected_sql": "SELECT SUM(fact_holdings.CurrentValue) / COUNT(DISTINCT fact_holdings.SK_AccountID) AS average_holding_value FROM atlas.dwd.fact_holdings AS fact_holdings INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_holdings.SK_DateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2013 LIMIT 100",
-  "result_hash": null,
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "f66f9d3f21a26907a07c1657f502824a8556804b95ac86f04f07ca5ad6f154d8",
+  "snapshot_sha": "30b8344",
   "tags": [
     "aggregation",
     "time_range",

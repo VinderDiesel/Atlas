@@ -5,8 +5,8 @@
   "expected_dimensions": [],
   "expected_time": "2013",
   "expected_sql": "SELECT SUM(fact_trades.Quantity * fact_trades.TradePrice) / COUNT(fact_trades.TradeID) AS average_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2013 LIMIT 100",
-  "result_hash": null,
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "f8ea1e1fbc64151152c435034537364eab765f71b05ace1052ba2c8be3f66bb1",
+  "snapshot_sha": "30b8344",
   "tags": [
     "aggregation",
     "time_range",
