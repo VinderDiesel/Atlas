@@ -92,6 +92,9 @@ class ApiContractTest(unittest.TestCase):
     """
 
     def setUp(self) -> None:
+        # 记住外层环境原值，tearDown 按原状态恢复（不污染同进程后续测试，如 demo RLS）
+        self._secret_was_set = "ATLAS_JWT_SECRET" in os.environ
+        self._secret_orig = os.environ.get("ATLAS_JWT_SECRET")
         os.environ["ATLAS_JWT_SECRET"] = SECRET
         self.executor = FakeExecutor()
         self.retail_executor = FakeExecutor()
@@ -105,7 +108,10 @@ class ApiContractTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
-        os.environ.pop("ATLAS_JWT_SECRET", None)
+        if self._secret_was_set:
+            os.environ["ATLAS_JWT_SECRET"] = self._secret_orig or ""
+        else:
+            os.environ.pop("ATLAS_JWT_SECRET", None)
 
     def _auth(self, secret: str = SECRET) -> dict[str, str]:
         return {"Authorization": f"Bearer {sign_token('hq_admin', {}, secret=secret)}"}
