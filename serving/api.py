@@ -11,10 +11,22 @@
   （finance|retail，缺省 finance——向后兼容，旧请求体零变化）；/plan /compile
   按域构造语义模型（无状态，与 v1 同构），/ask 按域懒建独立 Agent 单例
   （finance/retail 各一）——会话键（session_id）按模型隔离，跨模型不续接。
+- 服务面硬化（2026-09-05 批次 C2）：
+  - /ask 把已验证 claims 下推为身份（agent.ask(identity=…) → 行级策略随
+    Guard 注入，见 agent/graph.py）；/plan /compile 无执行面不注入。
+  - 会话 × 身份：session_id 绑定首个 claims 指纹（全 claims JSON 序列化）；
+    同会话不同指纹 → 422「会话身份冲突，请换新 session_id」（换身份必须换
+    会话——进程内指纹表随 Agent 懒建同生命周期，workers=1）。
+  - 业务审计 JSONL（serving/audit.py）：/plan /compile /ask 每请求一行 +
+    429/422 业务拒绝，不含 SQL（OTel span 承担），claims 只取 role/sub；
+    ATLAS_AUDIT_DISABLED=1 关闭。
+  - 限流（serving/ratelimit.py）：per-token 共享桶（全业务端点），429 +
+    Retry-After；默认 60 次/分钟为配置占位非实测阈值（env 覆盖，0=关）；
+    /health 公开、401 路径不限流。
 - 认证复用 serving/auth.py：verify_token 走 env ATLAS_JWT_SECRET（N9，无默认
-  密钥）；v1 不注入行级角色策略（与 CLI 同口径，角色注入属 0011 gateway 硬化项，
-  README KL #28 ③；零售角色的带身份实测载体 = rls-verify 零售档 + demo 集成
-  测试，同机制：resolve_policy → Guard Policy 注入）。
+  密钥）；claims 服务端已验证（用户不可伪造 role/user_context——0011 决策 2
+  硬化项兑现；零售角色的带身份实测载体 = rls-verify 零售档 + demo 集成测试
+  同机制，api-verify A5-A7 为 HTTP 面载体）。
 - 序列化：Decimal → str（保精度，不进浮点）、datetime/date → ISO8601、Enum →
   value、tuple → list——FastAPI 的 jsonable_encoder 会把 Decimal 转 float 丢精度，
   故 rows 值必须在此先行转换（确定性文本不经浮点）。
@@ -24,6 +36,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
@@ -31,7 +44,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agent.compiler import (
@@ -48,7 +61,9 @@ from agent.factory import SnapshotUnavailable, create_live_agent
 from agent.graph import DataAgent
 from agent.planner import ClarificationRequest, Planner
 from agent.state import TurnResult
+from serving.audit import AuditLog
 from serving.auth import AuthError, verify_token
+from serving.ratelimit import RateLimiter
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # 域 → 语义模型 YAML（与 eval/runner.DOMAIN_MODELS 同路径；模型选择白名单）
@@ -209,6 +224,15 @@ def _compile_plan(body: CompileBody) -> Plan:
     )
 
 
+def _claims_fingerprint(claims: dict[str, object]) -> str:
+    """会话身份指纹 = 全 claims JSON 序列化（绑定首个请求的身份形态）。
+
+    全量含 iat/exp：重签 token（新签发时间）视为新身份——换令牌必须换会话，
+    与「换身份必须换 session_id」同语义（硬化口径偏严不偏松）。
+    """
+    return json.dumps(claims, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
 # ---------------------------------------------------------------------------
 # 认证依赖
 # ---------------------------------------------------------------------------
@@ -237,6 +261,9 @@ BearerClaims = Annotated[dict[str, object], Depends(require_bearer)]
 
 def create_app(
     agent_factory: Callable[[str], DataAgent] | None = None,
+    *,
+    audit: AuditLog | None = None,
+    rate_limiter: RateLimiter | None = None,
 ) -> FastAPI:
     """构造 API 应用。
 
@@ -244,6 +271,10 @@ def create_app(
     注入模式），签名 (model_name) -> DataAgent（按域返回，finance/retail 各自）；
     缺省 _live_agent（真 Doris + 锁定快照，CLI ask 同约束，模型路径按域选择）。
     Agent 按域懒建单例：快照缺失在首个 /ask 暴露（503），meta 就绪后自动恢复。
+
+    audit / rate_limiter 注入点：测试传 tmp 目录 AuditLog / 小窗口 RateLimiter
+    （不碰真实 .env 与仓库目录）；缺省按 env 构造（审计默认开可关；限流占位
+    默认 60 次/分钟，见 serving/audit.py 与 serving/ratelimit.py）。
     """
 
     def _live_agent(model_name: str) -> DataAgent:
@@ -259,9 +290,36 @@ def create_app(
         "请求体 model 字段选择语义模型域（finance|retail，缺省 finance）",
     )
     # 按域懒建单例（finance/retail 各一；会话状态按模型隔离）
-    holder: dict[str, dict[str, DataAgent | None]] = {
-        "agents": {name: None for name in DOMAIN_MODEL_PATHS}
+    holder: dict[str, dict[str, Any]] = {
+        "agents": {name: None for name in DOMAIN_MODEL_PATHS},
+        # 会话 × 身份：键 (model, session_id) → claims 指纹（C2 硬化；进程内，
+        # 随 app 生命周期——workers=1 声明，见 README KL #28 ③ 收窄）
+        "sessions": {},
     }
+    # 审计/限流注入（测试传 tmp/小窗口；缺省按 env 构造——默认开、占位阈值）
+    audit_log = audit if audit is not None else AuditLog()
+    limiter = rate_limiter if rate_limiter is not None else RateLimiter.from_env()
+
+    def _require_rate_limit(request: Request, claims: BearerClaims) -> None:
+        """业务端点限流依赖：per-token 单维共享桶；429 命中也是审计事件。
+
+        /health 不声明本依赖（公开面不限流）；401 无有效 claims 在 require_bearer
+        先拒（限流只对已认证请求计数——不放大无效请求成本）。
+        """
+        key = str(claims.get("sub") or claims.get("role") or "anonymous")
+        allowed, retry_after = limiter.check(key)
+        if not allowed:
+            audit_log.record(
+                endpoint=request.url.path,
+                claims=claims,
+                kind="rate_limited",
+                status=429,
+            )
+            raise HTTPException(
+                status_code=429,
+                detail="请求过于频繁，请稍后再试",
+                headers={"Retry-After": str(retry_after)},
+            )
 
     def _agent(model_name: str) -> DataAgent:
         agents = holder["agents"]
@@ -290,19 +348,23 @@ def create_app(
     def plan(
         body: QuestionBody,
         _claims: BearerClaims,
+        _rl: None = Depends(_require_rate_limit),
     ) -> dict[str, Any]:
         """问句 → 结构化 Plan；无法确定性解析时 200 + kind=clarify（CLI exit 1 语义）。"""
         model_name = _model_name(body.model)
         model = SemanticModel(DOMAIN_MODEL_PATHS[model_name])
         result = Planner(model).plan(body.question)
         if isinstance(result, ClarificationRequest):
+            audit_log.record(endpoint="/plan", claims=_claims, kind="clarify")
             return {"kind": "clarify", "plan": None, "clarification": _clarify_payload(result)}
+        audit_log.record(endpoint="/plan", claims=_claims, kind="plan")
         return {"kind": "plan", "plan": _plan_payload(result), "clarification": None}
 
     @app.post("/compile", summary="Plan JSON → 只读 SQL（Doris 方言；model 选域）")
     def compile_plan(
         body: CompileBody,
         _claims: BearerClaims,
+        _rl: None = Depends(_require_rate_limit),
     ) -> dict[str, Any]:
         """Plan 结构非法 → 422（pydantic）；编译失败（字段不在语义层）→ 422。"""
         model_name = _model_name(body.model)
@@ -310,22 +372,58 @@ def create_app(
         try:
             sql, _ = Compiler(model).compile(_compile_plan(body))
         except CompileError as exc:
+            audit_log.record(
+                endpoint="/compile", claims=_claims, kind="compile_error", status=422
+            )
             raise HTTPException(status_code=422, detail=f"编译失败：{exc}") from exc
+        audit_log.record(endpoint="/compile", claims=_claims, kind="compiled")
         return {"sql": sql}
 
     @app.post("/ask", summary="问数会话（真实 Doris + 锁定快照；model 选域；单轮/多轮）")
     def ask(
         body: AskBody,
         _claims: BearerClaims,
+        _rl: None = Depends(_require_rate_limit),
     ) -> dict[str, Any]:
         """单轮问答；session_id 复用即多轮续接（进程内内存态，重启即失）。
 
         model 缺省 finance：旧请求体向后兼容；session_id 按模型隔离——同键跨
         模型请求是两个独立会话（finance/retail Agent 各自单例）。
+
+        身份下推（C2 硬化）：已验证 claims 即本轮身份 → agent.ask(identity=…)
+        行级策略随 Guard 注入；显式 session_id 绑定首个 claims 指纹，同会话换
+        身份（含重签 token）→ 422 冲突（换身份必须换 session_id）。
         """
         model_name = _model_name(body.model)
         agent = _agent(model_name)
-        return _turn_payload(agent.ask(body.question, session_id=body.session_id))
+        sid = body.session_id
+        if sid is not None:
+            key = (model_name, sid)
+            fingerprint = _claims_fingerprint(_claims)
+            bound = holder["sessions"].get(key)
+            if bound is None:
+                holder["sessions"][key] = fingerprint
+            elif bound != fingerprint:
+                audit_log.record(
+                    endpoint="/ask",
+                    claims=_claims,
+                    session_id=sid,
+                    kind="conflict",
+                    status=422,
+                )
+                raise HTTPException(status_code=422, detail="会话身份冲突，请换新 session_id")
+        result = agent.ask(body.question, session_id=sid, identity=_claims)
+        audit_log.record(
+            endpoint="/ask",
+            claims=_claims,
+            session_id=result.session_id,
+            kind=result.kind,
+            # row_count/latency_ms 只在 answer 轮有语义（执行过 SQL）；
+            # clarify/blocked/error/handoff 无值即 null（字段全集恒定）
+            row_count=result.row_count if result.kind == "answer" else None,
+            latency_ms=result.latency_ms if result.kind == "answer" else None,
+        )
+        return _turn_payload(result)
 
     return app
 

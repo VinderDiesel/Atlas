@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
@@ -27,6 +28,7 @@ from agent.factory import SnapshotUnavailable
 from agent.graph import DataAgent
 from agent.security.sql_guard import Budget
 from serving.api import create_app
+from serving.audit import AuditLog
 from serving.auth import sign_token
 
 REPO = Path(__file__).resolve().parent.parent
@@ -100,14 +102,18 @@ class ApiContractTest(unittest.TestCase):
         self.retail_executor = FakeExecutor()
         self.agent = DataAgent(executor=self.executor, budget=BUDGET)
         self.retail_agent = DataAgent(model=RETAIL_MODEL, executor=self.retail_executor, budget=BUDGET)
+        # 审计注入 tmp 目录（C2 起每业务请求一行；测试不碰仓库 serving/audit/）
+        self._audit_tmp = tempfile.TemporaryDirectory(prefix="atlas-audit-")
+        self.audit = AuditLog(Path(self._audit_tmp.name))
 
         def factory(model_name: str) -> DataAgent:
             return self.retail_agent if model_name == "retail" else self.agent
 
-        self.client = TestClient(create_app(agent_factory=factory))
+        self.client = TestClient(create_app(agent_factory=factory, audit=self.audit))
 
     def tearDown(self) -> None:
         self.client.close()
+        self._audit_tmp.cleanup()
         if self._secret_was_set:
             os.environ["ATLAS_JWT_SECRET"] = self._secret_orig or ""
         else:
@@ -219,7 +225,7 @@ class ApiContractTest(unittest.TestCase):
             dialect="doris", max_rows=10_000, allowed_tables=frozenset({"atlas.dwd.other"})
         )
         agent = DataAgent(executor=self.executor, budget=deny_budget)
-        client = TestClient(create_app(agent_factory=lambda _domain: agent))
+        client = TestClient(create_app(agent_factory=lambda _domain: agent, audit=self.audit))
         try:
             resp = client.post("/ask", json={"question": GOLD102_Q}, headers=self._auth())
         finally:
@@ -243,13 +249,18 @@ class ApiContractTest(unittest.TestCase):
         self.assertNotEqual(sid1, sid2)
 
     def test_ask_multi_turn_session_continues(self) -> None:
-        """同 session_id 多轮：turns_in_session 递增（进程内内存态，与 CLI 一致）。"""
+        """同 session_id 多轮：turns_in_session 递增（进程内内存态，与 CLI 一致）。
+
+        会话绑定首个 claims 指纹（C2 硬化）：多轮请求必须复用同一 token
+        （换 token = 新身份 = 需新 session_id，见 422 冲突测试）。
+        """
         sid = "api-sess-1"
+        headers = self._auth()  # 同一 bearer 复用于同会话（指纹稳定）
         r1 = self.client.post(
-            "/ask", json={"question": AMBIGUOUS_Q, "session_id": sid}, headers=self._auth()
+            "/ask", json={"question": AMBIGUOUS_Q, "session_id": sid}, headers=headers
         )
         r2 = self.client.post(
-            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
+            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=headers
         )
         self.assertEqual(r1.json()["kind"], "clarify")
         self.assertEqual(r1.json()["turns_in_session"], 1)
@@ -298,7 +309,7 @@ class ApiContractTest(unittest.TestCase):
         def raiser(_domain: str) -> DataAgent:
             raise SnapshotUnavailable("当前 HEAD 无锁定快照 meta（测试）")
 
-        client = TestClient(create_app(agent_factory=raiser))
+        client = TestClient(create_app(agent_factory=raiser, audit=self.audit))
         try:
             resp = client.post("/ask", json={"question": GOLD102_Q}, headers=self._auth())
         finally:
@@ -402,10 +413,14 @@ class ApiContractTest(unittest.TestCase):
                 self.assertEqual(self.retail_executor.calls, [])
 
     def test_ask_session_scoped_per_model(self) -> None:
-        """session_id 按模型隔离：同键 finance/retail 各自独立会话计数。"""
+        """session_id 按模型隔离：同键 finance/retail 各自独立会话计数。
+
+        每模型会话绑定各自首个 token 指纹（键含 model，跨模型不串指纹）。
+        """
         sid = "model-scoped-sess"
+        finance_headers = self._auth()  # finance 会话两轮复用同一 token
         r1 = self.client.post(
-            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
+            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=finance_headers
         )
         r2 = self.client.post(
             "/ask",
@@ -415,7 +430,7 @@ class ApiContractTest(unittest.TestCase):
         self.assertEqual(r1.json()["turns_in_session"], 1)
         self.assertEqual(r2.json()["turns_in_session"], 1)  # retail 会话首轮
         r3 = self.client.post(
-            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
+            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=finance_headers
         )
         self.assertEqual(r3.json()["turns_in_session"], 2)  # finance 会话续接
 
