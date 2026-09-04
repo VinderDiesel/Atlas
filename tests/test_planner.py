@@ -748,5 +748,131 @@ class TestEnglishPlanner(unittest.TestCase):
             PLANNER.plan("whatever", locale="fr")
 
 
+class TestEnglishGoldPlanner(unittest.TestCase):
+    """英文黄金集（P6 双语样本 13 条，2026-09-05）Plan 解析对照。
+
+    全部为既有中文锚定样本的机械直译（同 Plan → 同 SQL → 同 result_hash
+    可预期）：金融 gold-163~170（←123/101/101/115/114/102/149/151）与
+    零售 gold-063~067（←051/056/058/061/059，年份 1999）。评测 runner 按
+    tags lang_en 显式传 locale="en"，此处与 runner 同口径对照 load_gold
+    标注（Plan Acc 评测载体，与 TestRetailGoldPlanner 中文侧对称）。
+    """
+
+    def assert_plan(self, planner: Planner, question: str, gold_id: str) -> Plan:
+        """locale=en 解析并与 gold 标注逐项对照（口径同 eval/runner.plan_acc）。"""
+        gold = load_gold(gold_id)
+        plan = planner.plan(question, locale="en")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)  # 供类型收窄（unittest 断言不改变类型）
+        self.assertEqual(plan.metric, gold["expected_metric"])
+        self.assertEqual(plan.dimensions, tuple(gold["expected_dimensions"]))
+        expected_time = gold.get("expected_time")
+        if expected_time is None:
+            self.assertIsNone(plan.time)
+        else:
+            self.assertIsNotNone(plan.time)
+            assert plan.time is not None
+            self.assertEqual(str(plan.time.value), expected_time)
+        expected_filters = gold.get("expected_filters")
+        if expected_filters is not None:
+            actual = [
+                {"column": f.column, "op": f.op, "value": f.value}
+                for f in plan.filters
+            ]
+            self.assertEqual(actual, expected_filters)
+        return plan
+
+    # -- 金融 8 条（gold-163~170）----------------------------------------
+
+    def test_gold_163_year_total_trade_value(self) -> None:
+        self.assert_plan(
+            PLANNER, "What was the total trade value in 2015?", "gold-163"
+        )
+
+    def test_gold_164_quarter_q_before_year(self) -> None:
+        """Q2 2013 语序（←gold-101 中文样本直译）。"""
+        self.assert_plan(
+            PLANNER, "What was the total trade value in Q2 2013?", "gold-164"
+        )
+
+    def test_gold_165_quarter_year_before_q(self) -> None:
+        """2013 Q2 语序两向与 164 同值（expected_time 均为 2013Q2）。"""
+        self.assert_plan(
+            PLANNER, "What was the total trade value in 2013 Q2?", "gold-165"
+        )
+
+    def test_gold_166_month_name_trade_count(self) -> None:
+        self.assert_plan(
+            PLANNER, "How many trades were there in May 2014?", "gold-166"
+        )
+
+    def test_gold_167_iso_date_cash_balance(self) -> None:
+        self.assert_plan(
+            PLANNER, "What was the total cash balance on 2014-03-31?", "gold-167"
+        )
+
+    def test_gold_168_commission_by_branch_top5(self) -> None:
+        plan = self.assert_plan(
+            PLANNER,
+            "Show commission revenue by branch in 2013 and list the top 5 branches",
+            "gold-168",
+        )
+        self.assertEqual(
+            plan.order_by, (OrderSpec("commission_revenue", desc=True),)
+        )
+        self.assertEqual(plan.limit, 5)
+
+    def test_gold_169_only_for_branch(self) -> None:
+        plan = self.assert_plan(
+            PLANNER,
+            "What was the commission revenue only for branch "
+            "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD in 2013?",
+            "gold-169",
+        )
+        self.assertEqual(
+            plan.filters, (Filter("Branch", "=", "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"),)
+        )
+
+    def test_gold_170_top5_over_threshold(self) -> None:
+        self.assert_plan(
+            PLANNER,
+            "List the top 5 branches by commission revenue over 10 million in 2013",
+            "gold-170",
+        )
+
+    # -- 零售 5 条（gold-063~067，SF0.1 窗口 1999~2002 实测值域）---------
+
+    def test_gold_063_year_total_sales(self) -> None:
+        self.assert_plan(
+            RETAIL_PLANNER, "What were total sales in 1999?", "gold-063"
+        )
+
+    def test_gold_064_year_by_category(self) -> None:
+        self.assert_plan(
+            RETAIL_PLANNER,
+            "What were the total sales by category in 1999?", "gold-064"
+        )
+
+    def test_gold_065_top3_categories(self) -> None:
+        plan = self.assert_plan(
+            RETAIL_PLANNER,
+            "What were the top 3 categories by sales in 1999?", "gold-065"
+        )
+        self.assertEqual(plan.limit, 3)
+
+    def test_gold_066_quarter_q1_1999(self) -> None:
+        self.assert_plan(
+            RETAIL_PLANNER, "What were the total sales in Q1 1999?", "gold-066"
+        )
+
+    def test_gold_067_only_for_city(self) -> None:
+        """only for city Midway → s_city 等值（SF0.1 无 CA 州，降级城市值域）。"""
+        plan = self.assert_plan(
+            RETAIL_PLANNER,
+            "What was the total sales only for city Midway in 1999?", "gold-067"
+        )
+        self.assertEqual(plan.filters, (Filter("s_city", "=", "Midway"),))
+
+
 if __name__ == "__main__":
     unittest.main()

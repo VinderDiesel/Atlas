@@ -1,0 +1,32 @@
+{
+  "id": "gold-164",
+  "question": "What was the total trade value in Q2 2013?",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "2013Q2",
+  "expected_filters": null,
+  "expected_sql": "SELECT SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarQtrID = 20132 LIMIT 100",
+  "result_hash": "7d43b81befdb0a920b1e53a856c697e71d19692914f35db90423325d6358913f",
+  "snapshot_sha": "1e5d35b",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment",
+    "lang_en"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "total trade value",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "Total trade value is measured as a monetary amount (quantity x trade price)"
+    },
+    {
+      "term": "trade",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "TPC-DI trade facts correspond to securities transactions"
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "id": "gold-166",
+  "question": "How many trades were there in May 2014?",
+  "expected_metric": "trade_count",
+  "expected_dimensions": [],
+  "expected_time": "201405",
+  "expected_filters": null,
+  "expected_sql": "SELECT COUNT(fact_trades.TradeID) AS trade_count FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarMonthID = 20145 LIMIT 100",
+  "result_hash": "ec8b19be39eb32ee923d4945f3d051320c8654747102aefc23da8d56cd4012d4",
+  "snapshot_sha": "1e5d35b",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "month_granularity",
+    "fibo_alignment",
+    "lang_en"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "trades",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "Trade count = number of securities transaction events"
+    },
+    {
+      "term": "May 2014",
+      "concept": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "role": "time",
+      "note": "Month granularity (dim_date.CalendarMonthID = YYYYM encoding 20145)"
+    }
+  ]
+}

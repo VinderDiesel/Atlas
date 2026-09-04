@@ -1,0 +1,33 @@
+{
+  "id": "gold-167",
+  "question": "What was the total cash balance on 2014-03-31?",
+  "expected_metric": "cash_balance",
+  "expected_dimensions": [],
+  "expected_time": "2014-03-31",
+  "expected_filters": null,
+  "expected_sql": "SELECT SUM(fact_cash_balances.Cash) AS cash_balance FROM atlas.dwd.fact_cash_balances AS fact_cash_balances INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_cash_balances.SK_DateID = dim_date.SK_DateID WHERE dim_date.DateValue = CAST('2014-03-31' AS DATE) LIMIT 100",
+  "result_hash": "9fd94197d3574cc4208ff2d2b1cb726c9c8fca2f3384f929ef30713918149c6a",
+  "snapshot_sha": "1e5d35b",
+  "tags": [
+    "aggregation",
+    "as_of_snapshot",
+    "time_range",
+    "fibo_alignment",
+    "lang_en"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "cash balance",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Balance",
+      "role": "measure",
+      "note": "Cash balance is a kind of account balance (can be negative for margin)"
+    },
+    {
+      "term": "account",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+      "role": "entity",
+      "note": "Balance is recorded per brokerage account"
+    }
+  ]
+}

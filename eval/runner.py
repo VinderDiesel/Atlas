@@ -235,7 +235,12 @@ def evaluate(
         "question": question,
         "ambiguous": bool(gold.get("ambiguous", False)),
     }
-    plan = planner.plan(question)
+    # 语言 = 样本属性（P6 双语）：tags 含 lang_en → 显式 en；缺省 zh。
+    # 确定性优先：不依赖自动检测，中文旧样本（无 tag）行为零变化。
+    tags = gold.get("tags") or []
+    locale = "en" if "lang_en" in tags else "zh"
+    result["lang"] = locale
+    plan = planner.plan(question, locale=locale)
     if isinstance(plan, ClarificationRequest):
         # 歧义样本：反问 = PASS；非歧义样本反问 = FAIL（不猜，但标注说应可解析）
         result["clarify_ok"] = bool(gold.get("ambiguous", False))
@@ -325,6 +330,13 @@ def main() -> int:
         results = [evaluate(planner, compiler, g, budget, sha, args.dry) for g in samples]
         results_all.extend(results)
         summary[domain] = summarize(results)
+        # zh/en 分节计数（P6 双语样本：语言 = tags lang_en，分语言不混报）
+        by_lang: dict[str, dict[str, Any]] = {}
+        for lang in ("zh", "en"):
+            sub = [r for r in results if r.get("lang") == lang]
+            if sub:
+                by_lang[lang] = summarize(sub)
+        summary[domain]["by_lang"] = by_lang
 
     report = {
         "sha": sha,
@@ -336,7 +348,8 @@ def main() -> int:
         "notes": (
             "口径：Plan Acc=metric/dimensions/time 与标注一致；EX=编译 SQL（过 Guard）"
             "执行结果 sha256 与锚定 result_hash 一致；歧义样本反问=pass；"
-            "summary 按域分节（finance/retail 不混报，AGENTS.md N10）；"
+            "summary 按域分节（finance/retail 不混报，AGENTS.md N10），by_lang 内"
+            "再按语言分节（zh/en，语言 = 样本 tags 的 lang_en，双语样本不混报）；"
             "result_hash 锚定回填 gold JSON 后需 git commit（换快照须重锚定，见 "
             "data/snapshots/README.md）。"
         ),

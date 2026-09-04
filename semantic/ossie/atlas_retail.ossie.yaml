@@ -17,6 +17,8 @@
 #   收集维度同义词）；d_year/d_moy/d_qoy 补 is_time: true（与金融同构，防止时间词
 #   混入维度同义词）；custom_extensions data JSON 加 time_dimension 键
 #   （composite 模式：year=列等值、quarter/month=year 列拆位 + qoy/moy 列双等值）。
+# 2026-09-05 修改（P6 英文样本）：total_sales_price quality.gold_test_cases 补入
+#   英文样本 gold-063~067（lang_en，语言 = 样本 tags 属性，不新增目录维度）。
 
 version: "0.2.0.dev0"
 
@@ -466,7 +468,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-001", "gold-051", "gold-056", "gold-057", "gold-058", "gold-059", "gold-060", "gold-061", "gold-062"],
+                  "gold_test_cases": ["gold-001", "gold-051", "gold-056", "gold-057", "gold-058", "gold-059", "gold-060", "gold-061", "gold-062", "gold-063", "gold-064", "gold-065", "gold-066", "gold-067"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }

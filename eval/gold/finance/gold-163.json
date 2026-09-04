@@ -1,0 +1,32 @@
+{
+  "id": "gold-163",
+  "question": "What was the total trade value in 2015?",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "2015",
+  "expected_filters": null,
+  "expected_sql": "SELECT SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.CalendarYearID = 2015 LIMIT 100",
+  "result_hash": "66663d77892fff6eed79274eaf83c20a2030747873e72d5a5a37ce450d63b67d",
+  "snapshot_sha": "1e5d35b",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "fibo_alignment",
+    "lang_en"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "trade value",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "Total trade value = sum of quantity x trade price"
+    },
+    {
+      "term": "trade",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "event",
+      "note": "Statistical object: securities trades (TPC-DI)"
+    }
+  ]
+}

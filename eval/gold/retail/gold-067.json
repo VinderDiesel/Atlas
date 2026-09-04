@@ -1,0 +1,25 @@
+{
+  "id": "gold-067",
+  "question": "What was the total sales only for city Midway in 1999?",
+  "expected_metric": "total_sales_price",
+  "expected_dimensions": [],
+  "expected_time": "1999",
+  "expected_filters": [
+    {
+      "column": "s_city",
+      "op": "=",
+      "value": "Midway"
+    }
+  ],
+  "expected_sql": "SELECT SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk INNER JOIN atlas.dwd.dim_store AS dim_store ON store_sales.ss_store_sk = dim_store.s_store_sk WHERE dim_date.d_year = 1999 AND dim_store.s_city = 'Midway' LIMIT 100",
+  "result_hash": "2662d379e18d331d31871aa9ded9149bc50a1ebbbb91a763e058a92af74cf98a",
+  "snapshot_sha": "1e5d35b",
+  "tags": [
+    "aggregation",
+    "equality_filter",
+    "filter",
+    "time_range",
+    "lang_en"
+  ],
+  "ambiguous": false
+}

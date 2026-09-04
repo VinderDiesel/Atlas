@@ -1,0 +1,20 @@
+{
+  "id": "gold-064",
+  "question": "What were the total sales by category in 1999?",
+  "expected_metric": "total_sales_price",
+  "expected_dimensions": [
+    "i_category"
+  ],
+  "expected_time": "1999",
+  "expected_filters": null,
+  "expected_sql": "SELECT dim_item.i_category AS i_category, SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk INNER JOIN atlas.dwd.dim_item AS dim_item ON store_sales.ss_item_sk = dim_item.i_item_sk WHERE dim_date.d_year = 1999 GROUP BY dim_item.i_category LIMIT 100",
+  "result_hash": "03476dbd1c8aa6c4379168b8fffba435c8e291ab1262edc49a222151ec036cc1",
+  "snapshot_sha": "1e5d35b",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "time_range",
+    "lang_en"
+  ],
+  "ambiguous": false
+}

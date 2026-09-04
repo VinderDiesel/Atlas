@@ -52,6 +52,9 @@
 - `92033c9`：双源 29 表同数据多锁（P5 零售锚定前重锁，指纹与 dc4f350
   全一致——中间 9cf70c7/b2a2e5c/92033c9 语义与样本批次未动数据）；零售 13 条
   gold 样本锚定绑定此 sha（eval/reports/92033c9.json）
+- `1e5d35b`：双源 29 表同数据多锁（P6 双语样本批次：planner locale 化 + 英文
+  样本 13 条，未动数据，指纹与 92033c9 全一致）；英文样本 13 条锚定绑定此 sha
+  （eval/reports/1e5d35b.json，per-domain by_lang 分节）
 
 换快照纪律：数据未变时 HEAD 前进仅重锁新 sha（同数据多锁先例），meta.json
 逐个保留可追溯，README 记演进即可，不需重锚历史样本。
