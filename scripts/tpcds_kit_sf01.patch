@@ -1,0 +1,102 @@
+diff --git a/tools/r_params.c b/tools/r_params.c
+index 4db16e5..c58cce7 100644
+--- a/tools/r_params.c
++++ b/tools/r_params.c
+@@ -536,7 +536,6 @@ set_option(char *name, char *param)
+ {
+ 	int res = 1;
+ 	option_t *o;
+-	char parse_int[15];
+ 	char *cp;
+ 
+ 	init_params();
+@@ -576,10 +575,10 @@ set_option(char *name, char *param)
+       {
+ 			if ((res = o->action(o->name, param)) < 0)
+ 				usage(NULL, "Bad parameter argument");
+-			else
+-				sprintf(parse_int, "%d", res);
++			/* keep the raw string value (e.g. "0.1" for sub-1 scale
++			 * factors); get_int() applies atoi() semantics on it */
+       }
+-		set_int(name, (o->action)?parse_int:param);
++		set_int(name, param);
+ 		res = 2;
+ 		break;
+ 	case	OPT_STR:
+diff --git a/tools/scaling.c b/tools/scaling.c
+index 5cc9be5..09a67af 100644
+--- a/tools/scaling.c
++++ b/tools/scaling.c
+@@ -256,6 +256,7 @@ get_rowcount(int table)
+ 
+ 	static int bScaleSet = 0,
+       nScale;
++	double dScale;
+ 	int nTable,
+ 		nMultiplier,
+ 		i,
+@@ -266,6 +267,9 @@ get_rowcount(int table)
+ 	if (!bScaleSet)
+ 	{		
+ 		nScale = get_int("SCALE");
++		/* community extension: keep the raw value so sub-1 scale factors
++		 * (e.g. 0.1) can be extrapolated from the SF1 rowcounts below */
++		dScale = atof(get_str("SCALE"));
+ 		if (nScale > 100000)
+ 			ReportErrorNoLine(QERR_BAD_SCALE, NULL, 1);
+ 
+@@ -306,19 +310,41 @@ get_rowcount(int table)
+ 				arRowcount[nTable].kBaseRowcount = dist_weight(NULL, "rowcounts", nTable + nRowcountOffset  + 1, 1);
+ 				break;
+ 			default:
+-				nBadScale = QERR_BAD_SCALE;
+-				switch(dist_member(NULL, "rowcounts", nTable + 1, 3))
++				if ((dScale > 0.0) && (dScale < 1.0))
++				{
++					/* community extension: sub-1 scale factors (e.g. SF0.1).
++					 * The rowcounts distribution is only defined for the
++					 * official integer scale factors (SF1 .. SF100000); for
++					 * 0 < scale < 1 we extrapolate linearly from the SF1
++					 * rowcounts: fact tables (FL_DATE_BASED, whose rows are
++					 * spread over the sales calendar) scale with the factor,
++					 * while dimension/static tables keep their SF1
++					 * cardinality so that category/state domains remain
++					 * meaningful for queries. */
++					arRowcount[nTable].kBaseRowcount =
++						dist_weight(NULL, "rowcounts", nTable + 1, 1);
++					if (getSimpleTdefsByNumber(nTable)->flags & FL_DATE_BASED)
++						arRowcount[nTable].kBaseRowcount =
++							(ds_key_t)((double)arRowcount[nTable].kBaseRowcount * dScale);
++					if (arRowcount[nTable].kBaseRowcount < 1)
++						arRowcount[nTable].kBaseRowcount = 1;
++				}
++				else
+ 				{
+-				case 2:
+-					arRowcount[nTable].kBaseRowcount = LinearScale(nTable + nRowcountOffset , nScale);
+-					break;
+-				case 1:
+-					arRowcount[nTable].kBaseRowcount = StaticScale(nTable + nRowcountOffset , nScale);
+-					break;
+-				case 3:
+-					arRowcount[nTable].kBaseRowcount = LogScale(nTable + nRowcountOffset , nScale);
+-					break;
+-				}	/* switch(FL_SCALE_MASK) */
++					nBadScale = QERR_BAD_SCALE;
++					switch(dist_member(NULL, "rowcounts", nTable + 1, 3))
++					{
++					case 2:
++						arRowcount[nTable].kBaseRowcount = LinearScale(nTable + nRowcountOffset , nScale);
++						break;
++					case 1:
++						arRowcount[nTable].kBaseRowcount = StaticScale(nTable + nRowcountOffset , nScale);
++						break;
++					case 3:
++						arRowcount[nTable].kBaseRowcount = LogScale(nTable + nRowcountOffset , nScale);
++						break;
++					}	/* switch(FL_SCALE_MASK) */
++				}
+ 				break;
+ 			} /* switch(nScale) */
+ 

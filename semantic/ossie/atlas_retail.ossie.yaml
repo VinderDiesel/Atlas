@@ -2,7 +2,9 @@
 #
 # Atlas 零售语义模型 —— Apache Ossie Core Metadata Spec 0.2.0.dev0
 #
-# 数据来源：TPC-DS SF1 公开基准（约 1GB），不对应任何真实企业指标。
+# 数据来源：TPC-DS SF0.1（dsdgen + 社区扩展补丁，2026-09-04 装载实测），不对应任何真实企业指标。
+# 口径声明与实测行数见 scripts/setup_tpcds.sh 头注释（store_sales 240,485 / dim_date 73,049 /
+# dim_item 18,000 / dim_store 12——维表保持 SF1 基数，门店 12 家全 TN 州 2 城的如实边界）。
 # 结构参考：apache/ossie/examples/tpcds_semantic_model.yaml（官方 631 行 TPC-DS 示例）
 #
 # 治理扩展（owner/version/supersedes/lineage/row_policy）不在 Ossie 核心规范中，
@@ -46,10 +48,10 @@ semantic_model:
               "migration_window": null
             },
             "lineage": {
-              "source_system": "TPC-DS SF1",
-              "source_catalog": "iceberg_rest.atlas",
-              "source_tables": ["store_sales", "date_dim", "item", "customer", "store"],
-              "transform_jobs": ["sql/dwd/*", "sql/dws/*"],
+              "source_system": "TPC-DS SF0.1（dsdgen + 社区扩展补丁，scripts/tpcds_kit_sf01.patch）",
+              "source_catalog": "atlas",
+              "source_tables": ["store_sales", "date_dim", "dim_item", "dim_store"],
+              "transform_jobs": ["scripts/setup_tpcds.sh", "data/tpcds_loader.py"],
               "downstream_consumers": []
             },
             "freshness": {
@@ -73,7 +75,7 @@ semantic_model:
     # ===================================================================
     datasets:
       - name: store_sales
-        source: iceberg_rest.atlas.dwd_fact_store_sales
+        source: atlas.dwd.store_sales
         primary_key:
           - ss_item_sk
           - ss_ticket_number
@@ -214,7 +216,7 @@ semantic_model:
                 - "盈利"
 
       - name: date_dim
-        source: iceberg_rest.atlas.dwd_dim_date
+        source: atlas.dwd.date_dim
         primary_key:
           - d_date_sk
         description: 日期维度表
@@ -290,7 +292,7 @@ semantic_model:
                 - "季"
 
       - name: item
-        source: iceberg_rest.atlas.dwd_dim_item
+        source: atlas.dwd.dim_item
         primary_key:
           - i_item_sk
         description: 商品维度表
@@ -337,7 +339,7 @@ semantic_model:
                 - "牌子"
 
       - name: store
-        source: iceberg_rest.atlas.dwd_dim_store
+        source: atlas.dwd.dim_store
         primary_key:
           - s_store_sk
         description: 门店维度表

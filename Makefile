@@ -1,4 +1,4 @@
-.PHONY: help install up down seed dwd lint lint-ossie lint-governance export plan compile ask eval e2e retrieve extract-meta train report test adr rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify
+.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance export plan compile ask eval e2e retrieve extract-meta train report test adr rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify
 
 PYTHON       ?= .venv/bin/python
 
@@ -10,6 +10,7 @@ help:
 	@echo "    make up              启动 Apache 全栈基础设施"
 	@echo "    make down            停止（不加 -v，保留数据卷）"
 	@echo "    make seed            装载 TPC-DI Batch1 → Iceberg → 锁定快照"
+	@echo "    make seed-retail     装载 TPC-DS SF0.1（dsdgen bootstrap → 4 表入 dwd，零售域）"
 	@echo "    make dwd             在 Doris 内执行 sql/dwd/*.sql（幂等，依赖 atlas catalog）"
 	@echo ""
 	@echo "  语义层（Apache Ossie）"
@@ -63,6 +64,18 @@ down:
 seed:
 	$(PYTHON) data/loader.py
 	$(PYTHON) -m data.snapshot
+
+# TPC-DS SF0.1 → Iceberg dwd 4 张零售表（P2 批次；口径声明见 scripts/setup_tpcds.sh 头注释）
+# 链路：setup_tpcds.sh（clone 固定版本 → 编译 dsdgen/distcomp → SF0.1 补丁 →
+#       dists.dmp → 生成 .dat）→ data/tpcds_loader.py（解析 .dat 装载
+#       atlas.dwd.{store_sales,date_dim,dim_item,dim_store} + 数据探查打印）
+# 表名注记：零售日期维度物理表为 date_dim——dwd.dim_date 已被金融 TPC-DI 占用（P2 实测撞名），
+# 语义模型内 dataset 名（date_dim/dim_date）只是 SQL 别名，source 指向物理表不受限。
+# 幂等：setup 产物齐全即跳过；loader 逐表 drop-if-exists -> create -> append。
+# 注意：不锁快照（锁快照是评测前手工步骤，需 HEAD 已含装载代码）
+seed-retail: up
+	scripts/setup_tpcds.sh
+	$(PYTHON) -m data.tpcds_loader
 
 # DWD 加工：8 张 INSERT OVERWRITE 幂等 SQL（实测行数见 data/snapshots/<sha>.meta.json）
 dwd:
