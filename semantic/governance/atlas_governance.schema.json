@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/apache/ossie/contrib/atlas_governance.schema.json",
   "title": "Atlas Governance Extension",
-  "description": "Atlas 治理扩展：补齐 Apache Ossie 核心规范未覆盖的 ownership / lineage / freshness / policy / quality。挂载在 Ossie 的 custom_extensions[].data 字段（vendor_name = ATLAS）内，该字段为 JSON 字符串，解析后按本 Schema 校验。",
+  "description": "Atlas 治理扩展：补齐 Apache Ossie 核心规范未覆盖的 ownership / lineage / freshness / policy / quality / time_dimension。挂载在 Ossie 的 custom_extensions[].data 字段（vendor_name = ATLAS）内，该字段为 JSON 字符串，解析后按本 Schema 校验。",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -137,6 +137,35 @@
               "verified_at": { "type": "string", "format": "date" },
               "note": { "type": "string" }
             }
+          }
+        }
+      }
+    },
+    "time_dimension": {
+      "type": "object",
+      "description": "时间维度声明（P3，compiler 时间谓词的唯一来源，不再硬编码）：表/模式/粒度列映射——single=每粒度一个 ID 列（金融 TPC-DI CalendarYearID 等）；composite=year 列拆位 + 季/月列双等值（零售 TPC-DS d_year + d_qoy/d_moy）",
+      "required": ["table", "mode", "columns"],
+      "additionalProperties": false,
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "语义模型内时间维度表 dataset 名（须存在于 datasets）"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["single", "composite"],
+          "description": "single=粒度 ID 列（month 需 YYYYM 无前导零换算、quarter 需 YYYYQn 拼位）；composite=year 列等值 + 季/月列双等值"
+        },
+        "columns": {
+          "type": "object",
+          "description": "粒度 → 时间维度表物理列名（列须存在于声明的 dataset）",
+          "required": ["year", "quarter", "month", "date"],
+          "additionalProperties": false,
+          "properties": {
+            "year": { "type": "string" },
+            "quarter": { "type": "string" },
+            "month": { "type": "string" },
+            "date": { "type": "string" }
           }
         }
       }

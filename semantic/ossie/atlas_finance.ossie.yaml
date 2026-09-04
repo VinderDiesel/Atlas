@@ -25,6 +25,9 @@
 #   （修复时间词"年/月/季度"混入 dimension_synonyms 导致"2013 年"误命中维度的缺陷）；
 #   total_trade_value/commission_revenue/total_trade_quantity 三指标 quality.gold_test_cases
 #   补入 filter 能力样本 gold-149 ~ 154（governance_validate 双向对齐）。
+# 2026-09-04 修改（compiler 时间声明化）：custom_extensions data JSON 加 time_dimension
+#   键（第 7 键，single 模式）——compiler 时间列不再硬编码，由模型声明驱动；
+#   值 = 原 TIME_COLUMNS 常量逐字（CalendarYearID/CalendarQtrID/CalendarMonthID/DateValue）。
 
 version: "0.2.0.dev0"
 
@@ -310,6 +313,16 @@ semantic_model:
                   "verified_at": "2026-09-03",
                   "note": "平均成交价=每股成交单价（UnitPrice=相对计量单位的货币价格）"
                 }
+              }
+            },
+            "time_dimension": {
+              "table": "dim_date",
+              "mode": "single",
+              "columns": {
+                "year": "CalendarYearID",
+                "quarter": "CalendarQtrID",
+                "month": "CalendarMonthID",
+                "date": "DateValue"
               }
             }
           }

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from sqlglot import parse_one
 
@@ -21,6 +22,10 @@ from agent.compiler import (
 
 MODEL = SemanticModel()
 COMPILER = Compiler(MODEL)
+RETAIL_MODEL = SemanticModel(
+    Path(__file__).resolve().parent.parent / "semantic" / "ossie" / "atlas_retail.ossie.yaml"
+)
+RETAIL_COMPILER = Compiler(RETAIL_MODEL)
 
 
 class TestGoldFinance(unittest.TestCase):
@@ -76,6 +81,107 @@ class TestGoldFinance(unittest.TestCase):
         for plan in plans:
             sql, _ = COMPILER.compile(plan)
             self.assertEqual(parse_one(sql).sql(), sql)
+
+
+class TestTimeDimensionDeclaration(unittest.TestCase):
+    """time_dimension 声明解析（compiler 时间列不再硬编码，P3 声明化契约）。"""
+
+    def test_finance_single_declaration(self) -> None:
+        """金融声明 = 原 TIME_COLUMNS 常量逐字（值不变是零回归的源头）。"""
+        self.assertEqual(
+            MODEL.time_dimension,
+            {
+                "table": "dim_date",
+                "mode": "single",
+                "columns": {
+                    "year": "CalendarYearID",
+                    "quarter": "CalendarQtrID",
+                    "month": "CalendarMonthID",
+                    "date": "DateValue",
+                },
+            },
+        )
+
+    def test_retail_composite_declaration(self) -> None:
+        """零售声明 = TPC-DS 拆分列（year + qoy/moy，date 走实际日期列）。"""
+        self.assertEqual(
+            RETAIL_MODEL.time_dimension,
+            {
+                "table": "dim_date",
+                "mode": "composite",
+                "columns": {
+                    "year": "d_year",
+                    "quarter": "d_qoy",
+                    "month": "d_moy",
+                    "date": "d_date",
+                },
+            },
+        )
+
+    def test_retail_dimension_synonyms_collected(self) -> None:
+        """dim_* 前缀改名后：非时间维度字段同义词入库，时间字段不混入。"""
+        self.assertEqual(
+            RETAIL_MODEL.dimension_synonyms,
+            {
+                "i_category": ("品类", "类别", "商品类别"),
+                "i_brand": ("品牌",),
+                "s_state": ("州", "省份", "门店州"),
+                "s_city": ("城市", "门店城市"),
+            },
+        )
+        # d_year/d_moy/d_qoy is_time: true → 不入维度同义词（金融 L24-26 同款缺陷修复）
+        self.assertNotIn("d_year", RETAIL_MODEL.dimension_synonyms)
+        self.assertNotIn("d_moy", RETAIL_MODEL.dimension_synonyms)
+        self.assertNotIn("d_qoy", RETAIL_MODEL.dimension_synonyms)
+
+
+class TestRetailCompositeTime(unittest.TestCase):
+    """零售 composite 时间谓词 4 形态（物理表 date_dim + 别名 dim_date）。"""
+
+    def test_year_equality(self) -> None:
+        sql, notes = RETAIL_COMPILER.compile(
+            Plan(metric="total_sales_price", time=TimeSpec("year", 2000))
+        )
+        self.assertIn("dim_date.d_year = 2000", sql)
+        self.assertIn("INNER JOIN atlas.dwd.date_dim AS dim_date", sql)
+        self.assertEqual(notes, ["store_sales → dim_date（sales_to_date）"])
+
+    def test_quarter_split(self) -> None:
+        sql, _ = RETAIL_COMPILER.compile(
+            Plan(metric="total_sales_price", time=TimeSpec("quarter", "1999Q1"))
+        )
+        self.assertIn("dim_date.d_year = 1999 AND dim_date.d_qoy = 1", sql)
+
+    def test_month_split(self) -> None:
+        sql, _ = RETAIL_COMPILER.compile(
+            Plan(metric="total_sales_price", time=TimeSpec("month", 200005))
+        )
+        # composite：YYYYMM 拆 YYYY 与 M 双等值（无 single 的 YYYYM 拼接）
+        self.assertIn("dim_date.d_year = 2000 AND dim_date.d_moy = 5", sql)
+        self.assertNotIn("20005", sql)
+
+    def test_date_cast(self) -> None:
+        sql, _ = RETAIL_COMPILER.compile(
+            Plan(metric="total_sales_price", time=TimeSpec("date", "2000-01-02"))
+        )
+        self.assertIn("dim_date.d_date = CAST('2000-01-02' AS DATE)", sql)
+
+    def test_group_by_category_with_time(self) -> None:
+        sql, _ = RETAIL_COMPILER.compile(
+            Plan(
+                metric="total_sales_price",
+                dimensions=("i_category",),
+                time=TimeSpec("year", 2000),
+            )
+        )
+        self.assertIn("dim_item.i_category AS i_category", sql)
+        self.assertIn("GROUP BY dim_item.i_category", sql)
+
+    def test_bad_quarter_raises(self) -> None:
+        with self.assertRaises(CompileError):
+            RETAIL_COMPILER.compile(
+                Plan(metric="total_sales_price", time=TimeSpec("quarter", "2000-1"))
+            )
 
 
 class TestFilterCompilation(unittest.TestCase):

@@ -36,7 +36,8 @@ MAX_CATEGORIES = 200
 # 表格降级时的最大展示行数（截断并注记，不静默丢数据）
 MAX_TABLE_ROWS = 500
 
-# 时间列识别（dim_date 物理列约定，见 agent/compiler.py TIME_COLUMNS）
+# 时间列识别（执行结果列名约定：金融 TPC-DI dim_date ID 列 + 通用 date/time；
+# 识别为时间轴的列进 X 轴，未识别列按类目处理——零售结果集列名识别待实测扩展）
 _TIME_COLUMN_NAMES = frozenset(
     {"CalendarYearID", "CalendarQtrID", "CalendarMonthID", "DateValue", "date", "time"}
 )

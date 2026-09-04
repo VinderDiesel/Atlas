@@ -36,7 +36,8 @@ from agent.security.sql_guard import Budget, BudgetExceeded, UnsafeQuery, enforc
 # 执行器同构约定（与 eval/runner.execute_sql / agent/graph.py 一致）
 Executor = Callable[[str], tuple[list[tuple[Any, ...]], list[str]]]
 
-# compile_sql 支持的时间粒度（Compiler TIME_COLUMNS 同源；拒绝未知粒度）
+# compile_sql 支持的时间粒度（TimeSpec 固定集合；列映射由模型 time_dimension
+# 声明驱动，见 agent/compiler.py；拒绝未知粒度）
 _GRANULARITIES = ("year", "quarter", "month", "date")
 # compile_sql 白名单键（filters 未开放，见模块 docstring）
 _PLAN_KEYS = frozenset({"metric", "dimensions", "time", "order_by", "limit"})

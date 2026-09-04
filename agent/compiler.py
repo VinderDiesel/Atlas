@@ -11,8 +11,11 @@
 已知边界（MVP，诚实声明）
 ------------------------
 - 字段重命名不支持：field expression 必须等于物理列名（否则报错，不猜测）
-- 时间维度约定：granularity → dim_date 列（year→CalendarYearID / quarter→CalendarQtrID
-  / month→CalendarMonthID / date→DateValue），列不存在时报错
+- 时间维度声明化：时间表/列由模型 custom_extensions data JSON 的 `time_dimension`
+  声明驱动（{table, mode: single|composite, columns: {year/quarter/month/date}}）——
+  single = 每粒度一个 ID 列（金融 TPC-DI CalendarYearID 等）；composite = year 列
+  拆位 + 季/月列双等值（零售 TPC-DS d_year + d_qoy/d_moy）；模型未声明而 Plan
+  带时间时确定性报错
 - 仅支持 ANSI_SQL 方言输出（Doris 转换见 guard / transpile 后续迭代）
 """
 
@@ -28,14 +31,6 @@ from sqlglot import exp
 
 REPO = Path(__file__).resolve().parent.parent
 FINANCE_MODEL = REPO / "semantic" / "ossie" / "atlas_finance.ossie.yaml"
-
-# 时间粒度 → dim_date 物理列（与 TPC-DI dim_date 结构一致，见 ADR-0006）
-TIME_COLUMNS = {
-    "year": "CalendarYearID",
-    "quarter": "CalendarQtrID",
-    "month": "CalendarMonthID",
-    "date": "DateValue",
-}
 
 
 class CompileError(Exception):
@@ -138,7 +133,7 @@ class SemanticModel:
         self.metric_synonyms: dict[str, tuple[str, ...]] = {}
         self.metric_owners: dict[str, str] = {}
         self.dimension_synonyms: dict[str, tuple[str, ...]] = {}
-
+        self.time_dimension: dict | None = None  # custom_extensions 声明（见下方解析）
         for ds in model["datasets"]:
             fields: dict[str, Field] = {}
             for f in ds["fields"]:
@@ -194,6 +189,20 @@ class SemanticModel:
                         continue
                     owner = str(gov.get("owner", ""))
             self.metric_owners[m["name"]] = owner
+
+        # time_dimension：模型级声明（compiler 时间谓词的时间表/列来源，不再硬编码
+        # dim_date + CalendarYearID 等；金融 single / 零售 composite，见各 YAML 头注记）
+        for ext in model.get("custom_extensions", []):
+            if ext.get("vendor_name") != "ATLAS":
+                continue
+            try:
+                data = json.loads(ext["data"])
+            except (KeyError, json.JSONDecodeError) as exc:
+                raise CompileError(f"custom_extensions data JSON 解析失败：{exc}") from exc
+            td = data.get("time_dimension")
+            if td is not None:
+                self.time_dimension = td
+                break
 
     def find_field(self, field_name: str) -> tuple[str, Field] | None:
         """按逻辑字段名查找（维度解析：branch → dim_broker.Branch）。"""
@@ -261,7 +270,8 @@ class Compiler:
         # join 链（BFS 最短路径）；WHERE filter 引用的表也须可达
         target_ds = set(dim_targets)
         if time_predicates:
-            target_ds.add("dim_date")
+            # time_predicates 非空 ⟹ _time_predicate 已成功 ⟹ 声明必然存在
+            target_ds.add(self.model.time_dimension["table"])
         for f in where_filters:
             found = self.model.find_field(f.column)
             if found is not None:
@@ -364,31 +374,86 @@ class Compiler:
         raise CompileError("metric expression 未引用任何 dataset")
 
     def _time_predicate(self, time: TimeSpec) -> exp.Expr:
-        if time.granularity not in TIME_COLUMNS:
-            raise CompileError(f"不支持的粒度：{time.granularity}（支持 {sorted(TIME_COLUMNS)}）")
-        column = TIME_COLUMNS[time.granularity]
-        dim_date = self.model.datasets.get("dim_date")
-        if dim_date is None or column not in dim_date.fields:
-            raise CompileError(f"dim_date 缺少时间列 {column}（granularity={time.granularity}）")
+        """时间谓词：按模型 time_dimension 声明构造（single/composite 两模式）。
+
+        single（每粒度一列，金融 TPC-DI）：quarter "2013Q2" → CalendarQtrID = 20132
+        （Q 固定在第 5 位）；month YYYYMM → YYYYM 无前导零换算；date → DATE cast；
+        year → 列等值。composite（拆分列，零售 TPC-DS）：quarter → d_year = 2013
+        AND d_qoy = 2；month 201305 → d_year = 2013 AND d_moy = 5；year → 列等值。
+        """
+        td = self.model.time_dimension
+        if td is None:
+            raise CompileError(
+                "模型未声明 time_dimension（custom_extensions data JSON），无法编译时间谓词"
+            )
+        mode = td.get("mode", "single")
+        if mode not in ("single", "composite"):
+            raise CompileError(f"未知 time_dimension mode：{mode}（支持 single/composite）")
+        table = td["table"]
+        columns = td["columns"]
+        dim_ds = self.model.datasets.get(table)
+        if dim_ds is None:
+            raise CompileError(f"time_dimension 声明的表不存在：{table}")
+        if time.granularity not in columns:
+            raise CompileError(
+                f"不支持的粒度：{time.granularity}"
+                f"（time_dimension 声明 {sorted(columns)}）"
+            )
+        column = columns[time.granularity]
+        if column not in dim_ds.fields:
+            raise CompileError(f"{table} 缺少时间列 {column}（granularity={time.granularity}）")
+
+        # composite 拆位需要 year 列（quarter/month 拆出年再与季/月列双等值）
+        if mode == "composite" and time.granularity in ("quarter", "month"):
+            year_col = columns.get("year")
+            if not year_col or year_col not in dim_ds.fields:
+                raise CompileError(
+                    f"{table} 缺少 composite 拆位所需 year 列：{year_col or '未声明'}"
+                )
 
         if time.granularity == "quarter":
-            # "2013Q2" → CalendarQtrID = 20132（Q 固定在第 5 位）
+            # "2013Q2"：Q 固定在第 5 位（single 拼为 CalendarQtrID = 20132；
+            # composite 拆为 d_year = 2013 AND d_qoy = 2）
             text = str(time.value).strip().upper()
             if len(text) != 6 or text[4] != "Q" or not (text[:4].isdigit() and text[5].isdigit()):
                 raise CompileError(f"季度格式必须为 YYYYQn，如 2013Q2：{time.value!r}")
+            if mode == "composite":
+                return exp.and_(
+                    exp.EQ(
+                        this=self._column_ast(table, columns["year"]),
+                        expression=exp.Literal.number(int(text[:4])),
+                    ),
+                    exp.EQ(
+                        this=self._column_ast(table, column),
+                        expression=exp.Literal.number(int(text[5:])),
+                    ),
+                )
             value = int(text[:4] + text[5:])
         elif time.granularity == "date":
             literal = exp.cast(exp.Literal.string(str(time.value)), to="DATE")
-            return exp.EQ(this=self._column_ast("dim_date", column), expression=literal)
+            return exp.EQ(this=self._column_ast(table, column), expression=literal)
         else:
             value = int(time.value)
             if time.granularity == "month":
-                # TPC-DI dim_date.CalendarMonthID = YYYYM 拼接（2014 年 5 月 = 20145，
-                # 10-12 月 = 201410 等），无前导零；而 TimeSpec 用 YYYYMM（201405）
-                # 承载月粒度，此处换算（实测：直接 int 匹配 201405 命中 0 行）
-                value = int(f"{value // 100}{value % 100}")
+                # single：TPC-DI dim_date.CalendarMonthID = YYYYM 拼接（2014 年 5 月 =
+                # 20145，10-12 月 = 201410 等），无前导零；TimeSpec 用 YYYYMM（201405）
+                # 承载月粒度（实测：直接 int 匹配 201405 命中 0 行）。composite：拆为
+                # d_year = YYYY AND d_moy = M 双等值（d_moy 有前导零天然 1-12）
+                y, m = value // 100, value % 100
+                if mode == "composite":
+                    return exp.and_(
+                        exp.EQ(
+                            this=self._column_ast(table, columns["year"]),
+                            expression=exp.Literal.number(y),
+                        ),
+                        exp.EQ(
+                            this=self._column_ast(table, column),
+                            expression=exp.Literal.number(m),
+                        ),
+                    )
+                value = int(f"{y}{m}")
         return exp.EQ(
-            this=self._column_ast("dim_date", column), expression=exp.Literal.number(value)
+            this=self._column_ast(table, column), expression=exp.Literal.number(value)
         )
 
     def _compare(self, left: exp.Expr, op: str, value: object) -> exp.Expr:
