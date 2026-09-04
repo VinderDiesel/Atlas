@@ -238,7 +238,10 @@ Apache Ossie Core Spec（semantic_model / datasets / fields / relationships / me
 主模型：`semantic/ossie/atlas_finance.ossie.yaml`（8 datasets / 12 relationships / 20 metrics，
 挂载 31 条 FIBO 概念映射（8 datasets 全覆盖 + 19/20 metrics；total_trade_tax 待办见 `data/fibo/README.md` 审计节），
 见 `data/fibo/README.md`；指标审核发布记录见 `semantic/migrations/`）；
-`atlas_retail.ossie.yaml` 保留为演进对照（TPC-DS 零售，不再扩展）
+`atlas_retail.ossie.yaml` 自 2026-09-04 起转正为第二主评测域：TPC-DS SF0.1 数据已装载
+（`make seed-retail`，4 表入 dwd），gold 样本 14 条已锚定（快照 92033c9，见
+eval/gold/README.md 零售段）；此前“不再扩展”裁定基于无数据前提，已废除（P7 文档
+收口记录裁定推翻流程）
 
 ```yaml
 version: "0.2.0.dev0"
@@ -583,10 +586,14 @@ EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活）；�
 15. **行级权限实现的两个诚实边界**：① Polaris 层为对象级（表/命名空间粒度）
     授权，无行级能力（实测 polaris-rbac-7d48dcb.json 为对象级；无行级为官方
     文档核对结论，见 ADR-0014 ⑤）——行级过滤维持 Guard SQL 谓词层为架构终局，
-    Polaris 下推为不适用项；② TPC-DI 无地理/品类维度
-    （实测 dim_broker.Branch 为随机变造串），规划原文「华东区 / 某品类」零售
-    角色仅注册未实测（机制与 branch/tier 相同，零售数据装载后 rp_dept_visible
-    才可实测）
+    Polaris 下推为不适用项；② 地理/品类角色已跨域实测（2026-09-04 收窄）：
+    TPC-DI 无地理/品类维度（实测 dim_broker.Branch 为随机变造串）是金融域
+    数据事实；规划原文「华东区 / 某品类」零售角色随 TPC-DS SF0.1 数据落地已实测
+    ——rp_dept_visible 未落地逻辑列 region/product_category 对齐物理
+    dim_store.s_state / dim_item.i_category（row_policy.yml），rls-verify 双域差异报告
+    `eval/reports/rls-verify-1d7b672.json`（finance 差异集 3；retail 差异集 2：
+    region_manager（州=TN）与 hq_admin 结果一致系 SF0.1 单州数据事实，如实报告，
+    差异由 category_analyst 品类受限承担）
 16. **Day 27 派生指标数值背书已闭环（2026-09-04）**：5 个派生指标 gold_test_cases 与
     expected_value_snapshot_sha 已回填（gold-156~162、快照 30b8344，Plan Acc 57/57、
     EX 57/57 全绿，报告 `eval/reports/30b8344.json`）；评测先行暴露的 Planner 同义词
