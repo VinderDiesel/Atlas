@@ -11,10 +11,12 @@
 ----
 Day 19-20 骨架 → 契约测试覆盖（tests/test_sql_guard.py）与行级权限实测
 （serving/rls_verify.py）后持续演进：AST 校验链（禁 DDL/DML → 函数黑名单
-→ LIMIT → 行级策略注入 → 二次只读校验）已落地；跨表策略谓词沿语义模型
-join 图补 LEFT JOIN（Phase 2，ADR-0014 ⑤ 相关），无合法路径仍拒绝。
-已知边界（见 README Known Limitations）：视图展开递归校验、真实成本估算
-仍待实现。
+→ LIMIT → 时间范围 → 行级策略注入 → 二次只读校验 → 成本估算）已落地；跨表
+策略谓词沿语义模型 join 图补 LEFT JOIN（Phase 2，ADR-0014 ⑤ 相关），无合法
+路径仍拒绝。
+已知边界（见 README Known Limitations）：视图展开递归校验仍待实现；成本估算
+当前为基于扫描表数的启发式代理（非基于真实统计信息的行数估算，ADR-0003 代价
+登记），阈值属保守护栏而非压测标定值。
 
 参考 ADR：infra/adr/0003-readonly-sql-gateway.md
 """
@@ -88,7 +90,15 @@ FORBIDDEN_NODES = (
 
 @dataclass(frozen=True)
 class Budget:
-    """查询预算。超预算直接拒绝，而不是降级执行。"""
+    """查询预算。超预算直接拒绝，而不是降级执行。
+
+    max_cost_units 是成本预算阈值（启发式扫描广度护栏，非压测标定）：
+    estimate_cost 返回归一化成本（扫描表数 / 8.0），> 1.0 即拒绝异常宽的
+    多表扫描。阈值与 estimate_cost 量纲一致；部署方应按实际表数调参。
+    default_time_window_days 是时间范围防御的默认回退窗：当查询已 join 语义
+    模型声明的时间维表、却无任何时间谓词时，强制补 `time_col >= 当前 - N 天`
+    的下界（纵深防御，防止无界全表扫描）。0 = 关闭该回退（仅依赖上游注入）。
+    """
 
     max_rows: int = DEFAULT_MAX_ROWS
     max_days: int = DEFAULT_MAX_DAYS
@@ -96,6 +106,8 @@ class Budget:
     dialect: str = "clickhouse"
     time_column: str = "order_date"
     allowed_tables: frozenset[str] = field(default_factory=frozenset)
+    default_time_window_days: int = DEFAULT_MAX_DAYS
+    table_stats: dict[str, float] = field(default_factory=dict)
 
     def exceeded(self, cost_units: float) -> bool:
         return cost_units > self.max_cost_units
@@ -188,7 +200,7 @@ def _escape_literal(value: object) -> str:
     （模板约定：`branch = '{{ user.branch }}'`），否则会双重引号。
     这是**兜底防御**，不是主要防线。主要防线是 AST 校验 + 参数化。
     """
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return str(value)
     text = str(value)
     if not re.fullmatch(r"[A-Za-z0-9_\-.:]+", text):
@@ -213,9 +225,7 @@ def _physical_table(source: str) -> exp.Table:
         raise UnsafeQuery(f"语义模型 dataset source 非 catalog.db.table：{source!r}")
     # this 必须为 Identifier：Guard 注入后仍会 find_all(exp.Table) 并访问 .name
     # （实测 this=str 时 table.name property 崩溃，sqlglot 期望 Identifier）
-    table = exp.Table(
-        this=exp.to_identifier(parts[2]), db=parts[1], catalog=parts[0]
-    )
+    table = exp.Table(this=exp.to_identifier(parts[2]), db=parts[1], catalog=parts[0])
     table.set("alias", exp.TableAlias(this=exp.to_identifier(parts[2])))
     return table
 
@@ -235,9 +245,7 @@ def _policy_join_ast(edge: Any, sources: dict[str, str]) -> exp.Join:
     return exp.Join(this=_physical_table(source), on=on, kind="LEFT")
 
 
-def _join_path_to(
-    model: object, starts: set[str], goal: str
-) -> list[Any] | None:
+def _join_path_to(model: object, starts: set[str], goal: str) -> list[Any] | None:
     """BFS：从 starts（查询中已存在的表）沿 relationships 到 goal 的最短边链。
 
     返回边列表（已按行进方向排列，反向边已 reversed）；不可达返回 None。
@@ -378,31 +386,78 @@ def apply_limit(tree: exp.Expr, max_rows: int) -> exp.Expr:
     return tree
 
 
-def apply_time_range(tree: exp.Expr, budget: Budget) -> exp.Expr:
-    """强制时间范围。
+def apply_time_range(tree: exp.Expr, budget: Budget, model: object | None = None) -> exp.Expr:
+    """强制时间范围（纵深防御，AST 构造，禁用字符串拼接）。
 
-    MVP 阶段：若查询中已包含对 time_column 的过滤，则跳过；
-    否则追加默认范围。**这是简化实现，需要在 Day 20 补充更严谨的判定。**
+    判定：当语义模型声明了 time_dimension、查询已 join 该时间维表、且查询中
+    对该表时间列**没有任何谓词**时，追加默认下界
+    ``time_col >= CURRENT_DATE - INTERVAL default_time_window_days DAY``。
+    已含时间谓词（编译器对注册问句总是注入）→ 跳过；查询未 join 时间维表
+    → 无法安全注入（补表会放大攻击面），跳过并依赖上游时间约束。
+
+    仅消费 budget.default_time_window_days 与 model.time_dimension；不读 time_column
+    （真实时间列名来自模型声明，而非预算里的占位列名）。
     """
-    tree = tree.copy()
-    has_time_filter = any(
-        isinstance(col, exp.Column) and col.name == budget.time_column
-        for col in tree.find_all(exp.Column)
-    )
-    if has_time_filter:
+    if budget.default_time_window_days <= 0 or model is None:
         return tree
-    # TODO(day-20): 用 AST 构造时间谓词，而不是字符串拼接
+    td = getattr(model, "time_dimension", None)
+    if not isinstance(td, dict):
+        return tree
+    time_table = td.get("table")
+    columns = td.get("columns")
+    if not isinstance(time_table, str) or not isinstance(columns, dict) or not columns:
+        return tree
+    # 时间列优先取 date 粒度列，否则取声明中的任一列
+    time_col = columns.get("date") or next(iter(columns.values()))
+    if not isinstance(time_col, str):
+        return tree
+
+    existing = {table.name for table in tree.find_all(exp.Table)}
+    aliases = {table.name: (table.alias or table.name) for table in tree.find_all(exp.Table)}
+    referenced = time_table in existing or time_table in aliases.values()
+    if not referenced:
+        return tree
+    # 已有对该时间表列的谓词 → 跳过（避免双重约束）
+    if any(
+        isinstance(col, exp.Column)
+        and (col.table == time_table or aliases.get(str(col.table)) == time_table)
+        for col in tree.find_all(exp.Column)
+    ):
+        return tree
+
+    tree = tree.copy()
+    days = budget.default_time_window_days
+    interval = exp.Interval(this=exp.Literal.string(f"{days} DAY"))
+    date_expr = exp.Sub(this=exp.CurrentDate(), expression=interval)
+    predicate = exp.GTE(
+        this=exp.column(time_col, table=time_table),
+        expression=date_expr,
+    )
+    where = tree.find(exp.Where)
+    if where is None:
+        tree.set("where", exp.Where(this=predicate))
+    else:
+        where.set("this", exp.and_(where.this, predicate))
     return tree
 
 
-def estimate_cost(tree: exp.Expr) -> float:
-    """成本估算。
+def estimate_cost(tree: exp.Expr, stats: dict[str, float] | None = None) -> float:
+    """成本估算（启发式，归一化，非压测标定）。
 
-    MVP 阶段返回占位值。**必须替换为基于统计信息的真实估算**
-    （可参考 ClickHouse system.parts 的行数与字节数）。
+    返回归一化成本（与 Budget.max_cost_units 同量纲）：
+    - 有表行数统计 stats（表全名 → 行数）时，成本 = Σ 引用表行数 / 1e6
+      （百万行单位），反映真实扫描体量；
+    - 无统计时回退为扫描表数 / 8.0（表数代理：扫描越宽成本越高）。
+    成本仅用于阈值护栏（异常宽扫描拒绝），不用于执行计划选择。
     """
-    _ = tree
-    return 0.0
+    tables = [t for t in tree.find_all(exp.Table)]
+    if stats:
+        total = 0.0
+        for t in tables:
+            full = ".".join(p for p in (t.catalog, t.db, t.name) if p)
+            total += float(stats.get(full, stats.get(t.name, 0.0)))
+        return total / 1_000_000.0
+    return len(tables) / 8.0
 
 
 def enforce(
@@ -425,7 +480,7 @@ def enforce(
     check_tables(tree, budget)
 
     tree = apply_limit(tree, budget.max_rows)
-    tree = apply_time_range(tree, budget)
+    tree = apply_time_range(tree, budget, model=model)
 
     if policy is not None:
         if user_context is not None:
@@ -441,7 +496,7 @@ def enforce(
     check_functions(tree)
     check_tables(tree, budget)
 
-    cost = estimate_cost(tree)
+    cost = estimate_cost(tree, budget.table_stats)
     if budget.exceeded(cost):
         raise BudgetExceeded(f"预估成本 {cost:.2f} 超过预算 {budget.max_cost_units:.2f}")
 

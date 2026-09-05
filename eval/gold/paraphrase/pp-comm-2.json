@@ -1,0 +1,10 @@
+{
+  "id": "pp-comm-2",
+  "base": "gold-comm",
+  "intended_metric": "commission_revenue",
+  "question": "2013 年第二季度的手续费多少？",
+  "expected_metric": "commission_revenue",
+  "expected_dimensions": [],
+  "expected_time": "2013Q2",
+  "note": "注册同义词「手续费」"
+}

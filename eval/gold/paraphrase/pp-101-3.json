@@ -1,0 +1,10 @@
+{
+  "id": "pp-101-3",
+  "base": "gold-101",
+  "intended_metric": "total_trade_value",
+  "question": "2013 Q2 总交易额是多少？",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "2013Q2",
+  "note": "ISO 季度写法（无「年/季度」中文结构词）"
+}

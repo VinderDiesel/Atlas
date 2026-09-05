@@ -22,6 +22,6 @@ repos:
     hooks:
       - id: protect-generated-dags
         name: 禁止手工编辑 airflow/dags/generated/
-        entry: echo "ERROR: airflow/dags/generated/ 由 YAML 生成，禁止手工编辑（见 AGENTS.md N5）"
+        entry: 'echo "ERROR: airflow/dags/generated/ 由 YAML 生成，禁止手工编辑（见 AGENTS.md N5）"'
         language: fail
         files: ^airflow/dags/generated/

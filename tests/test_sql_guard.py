@@ -18,9 +18,11 @@ from agent.security.sql_guard import (
     Policy,
     UnsafeQuery,
     apply_limit,
+    apply_time_range,
     check_functions,
     check_readonly,
     enforce,
+    estimate_cost,
     parse,
 )
 
@@ -267,8 +269,7 @@ class TestCrossTableJoinInjection(unittest.TestCase):
         """查询原有 WHERE 保留，策略谓词以 AND 并入（不覆盖）。"""
         policy = Policy(name="rp_broker", condition="dim_broker.branch = 'east'", columns=("*",))
         sql, _ = enforce(
-            "SELECT * FROM atlas.dwd.fact_trades AS fact_trades"
-            " WHERE fact_trades.Quantity > 0",
+            "SELECT * FROM atlas.dwd.fact_trades AS fact_trades" " WHERE fact_trades.Quantity > 0",
             policy=policy,
             user_context={},
             model=MODEL,
@@ -335,6 +336,75 @@ class TestBudget(unittest.TestCase):
 
     def test_default_rows(self) -> None:
         self.assertEqual(Budget().max_rows, 10_000)
+
+
+class TestTimeRangeEnforcement(unittest.TestCase):
+    """apply_time_range 真实注入默认时间窗（纵深防御，非空操作）。"""
+
+    # 迷你模型：声明时间维表 dim_date，物理时间列 CalendarDate
+    FAKE_MODEL = SimpleNamespace(
+        time_dimension={"table": "dim_date", "columns": {"date": "CalendarDate"}}
+    )
+
+    def test_injects_default_window_when_time_table_joined(self) -> None:
+        """查询 join 时间维表且无时间谓词 → 强制补下界。"""
+        sql, cost = enforce(
+            "SELECT f.x FROM atlas.dwd.fact_trades AS fact_trades "
+            "LEFT JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.d = dim_date.d",
+            model=self.FAKE_MODEL,
+        )
+        self.assertIn("dim_date.CalendarDate", sql)
+        self.assertIn("INTERVAL", sql)
+        self.assertIn("CURRENT_DATE", sql)
+
+    def test_skips_when_time_predicate_present(self) -> None:
+        """已有时间谓词 → 不重复注入。"""
+        sql, _ = enforce(
+            "SELECT f.x FROM atlas.dwd.fact_trades AS fact_trades "
+            "LEFT JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.d = dim_date.d "
+            "WHERE dim_date.CalendarDate = DATE '2013-01-01'",
+            model=self.FAKE_MODEL,
+        )
+        self.assertNotIn("INTERVAL", sql)
+
+    def test_no_injection_without_time_table(self) -> None:
+        """查询未 join 时间维表 → 不强行补表（防放大攻击面）。"""
+        sql, _ = enforce(
+            "SELECT * FROM atlas.dwd.fact_trades AS fact_trades", model=self.FAKE_MODEL
+        )
+        self.assertNotIn("INTERVAL", sql)
+
+    def test_window_disabled_when_zero(self) -> None:
+        budget = Budget(default_time_window_days=0)
+        out = apply_time_range(
+            parse(
+                "SELECT f.x FROM atlas.dwd.fact_trades AS fact_trades "
+                "LEFT JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.d = dim_date.d",
+                "clickhouse",
+            ),
+            budget,
+            model=self.FAKE_MODEL,
+        )
+        self.assertNotIn("INTERVAL", out.sql())
+
+
+class TestCostEstimate(unittest.TestCase):
+    """estimate_cost 返回真实启发式（非恒 0 占位）。"""
+
+    def test_returns_real_number_without_stats(self) -> None:
+        tree = parse("SELECT a FROM t1 JOIN t2 ON t1.x = t2.x", "clickhouse")
+        self.assertAlmostEqual(estimate_cost(tree), 2.0 / 8.0)
+
+    def test_uses_table_stats_when_provided(self) -> None:
+        tree = parse("SELECT a FROM atlas.dwd.fact_trades AS ft", "clickhouse")
+        stats = {"atlas.dwd.fact_trades": 2_940_000.0}
+        # 294 万行 → 2.94 百万行单位
+        self.assertAlmostEqual(estimate_cost(tree, stats), 2.94)
+
+    def test_budget_rejects_wide_scan(self) -> None:
+        budget = Budget(max_cost_units=1.0, table_stats={"atlas.dwd.a": 9_000_000.0})
+        tree = parse("SELECT a FROM atlas.dwd.a AS a", "clickhouse")
+        self.assertTrue(budget.exceeded(estimate_cost(tree, budget.table_stats)))
 
 
 if __name__ == "__main__":

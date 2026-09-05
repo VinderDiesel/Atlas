@@ -1,0 +1,10 @@
+{
+  "id": "pp-comm-4",
+  "base": "gold-comm",
+  "intended_metric": "commission_revenue",
+  "question": "2013 年第二季度券商抽成",
+  "expected_metric": "commission_revenue",
+  "expected_dimensions": [],
+  "expected_time": "2013Q2",
+  "note": "OOV 措辞（券商抽成非注册同义词）→ 预期无法解析（drop）"
+}

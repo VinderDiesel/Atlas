@@ -1,4 +1,4 @@
-.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance export plan compile ask eval e2e retrieve extract-meta train report test adr rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify
+.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance export plan compile ask eval paraphrase e2e retrieve extract-meta train train-distill train-dryrun report report-latest test adr rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify
 
 PYTHON       ?= .venv/bin/python
 
@@ -25,11 +25,15 @@ help:
 	@echo ""
 	@echo "  评测"
 	@echo "    make eval            跑黄金集（Plan Acc + EX，自动复核数据快照）"
+	@echo "    make paraphrase      同义改写鲁棒性评测（Planner-only，不需 Doris）"
 	@echo "    make demo            端到端演示测试（双语 12 + RLS 身份 2，需 Doris + 锁定快照）"
 	@echo "    make rls-verify      行级权限回归（双域：finance 差异集 3；retail 州/品类档）"
 	@echo "    make e2e             Data Agent 端到端验收门禁：5 场景+handoff（Day 48）"
 	@echo "    make train           用确认后的失败样本训练 SQL LoRA"
+	@echo "    make train-distill   蒸馏冷启动语料（确定性编译器作 teacher，不碰 gold）"
+	@echo "    make train-dryrun    语料飞轮自检（CPU，不训练）"
 	@echo "    make report          生成 EVAL_REPORT.md"
+	@echo "    make report-latest   跨最新多 sha 聚合生成 EVAL_REPORT.md（High4）"
 	@echo ""
 	@echo "  其他"
 	@echo "    make lint            全部校验（ossie + governance + 语义层）"
@@ -146,6 +150,15 @@ e2e:
 eval:
 	$(PYTHON) -m eval.runner
 
+# 同义改写鲁棒性评测（High1）：Planner-only，不需 Doris；测量注册口径内改写掉落率
+paraphrase:
+	$(PYTHON) -m eval.paraphrase_eval
+
+# 评测报告聚合（High4）：--latest 跨最新多 sha 聚合，避免 headline 报告为空
+report-latest:
+	$(PYTHON) -m eval.report --latest > EVAL_REPORT.md
+	@echo "已生成 EVAL_REPORT.md（--latest 跨 sha 聚合）"
+
 # compiler-only 基线分析（eval/baseline_compiler.py，Day 30）：读主评测报告
 # 派生确定性链覆盖分析（多少问题不需要 LLM），产出
 # eval/reports/baseline-compiler-<sha>.json；需先跑 make eval
@@ -183,6 +196,19 @@ extract-meta:
 train:
 	uv run python -m lora.build_pairs --approved lora/data/approved_pairs.jsonl
 	$(PYTHON) -m lora.train --adapter sql_v1 --data lora/data/pairs.jsonl
+
+# 蒸馏冷启动语料（High2）：用确定性编译器作 teacher 生成 SFT 语料，不依赖 approved 样本
+# 也不碰 gold 标签——解决「空语料」阻塞，作为 LoRA 预训练起点
+train-distill:
+	uv run python -m lora.build_pairs --distill
+
+# 语料飞轮自检（CPU 可跑，无 GPU）：只校验数据/Plan 合法性/min_samples，不训练、不烧钱
+train-dryrun:
+	uv run python -m lora.train --adapter sql_v1 --data lora/data/pairs.jsonl --dry-run
+
+# LoRA 影子推理（无 GPU 演练问句→Plan→SQL 全链路；配 ATLAS_LORA_ENDPOINT 走真·LoRA）
+lora-infer:
+	uv run python -m lora.infer "2013 年第二季度总交易额是多少？"
 
 report:
 	$(PYTHON) -m eval.report > EVAL_REPORT.md

@@ -612,8 +612,11 @@ per-user identity 透传属 0011 决策 4 独立项——见 KL #28 ③。
     查询中时，沿语义模型 relationships join 图补 LEFT JOIN（与编译器同形态：
     catalog.db.table AS base 名 + 关系列 EQ，Phase 2 落地）；**无合法 join 路径
     或未提供模型仍拒绝**（安全底线不放开），注入后二次只读校验含补表后的表白
-    名单复核；已知边界：视图展开递归校验、真实成本估算仍待实现（见
-    agent/security/sql_guard.py 模块 docstring）
+    名单复核；已知边界：视图展开递归校验仍待实现（见 agent/security/sql_guard.py
+    模块 docstring）；**成本估算已落地**为基于扫描表数 / 表行数统计的启发式代理
+    （非压测标定，阈值 1.0 为保守护栏，部署按实际表数调参），**时间范围防御已落地**
+    （查询 join 语义模型声明的时间维表且无时间谓词时，强制补 `time_col >= 当前 - N
+    天` 下界——纵深防御填补原 apply_time_range 空操作）
 15. **行级权限实现的两个诚实边界**：① Polaris 层为对象级（表/命名空间粒度）
     授权，无行级能力（实测 polaris-rbac-7d48dcb.json 为对象级；无行级为官方
     文档核对结论，见 ADR-0014 ⑤）——行级过滤维持 Guard SQL 谓词层为架构终局，

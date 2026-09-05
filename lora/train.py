@@ -56,12 +56,16 @@ def _require_module(name: str) -> None:
         )
 
 
-def check_preconditions(data_path: Path, cfg: dict[str, Any]) -> list[dict[str, Any]]:
-    """数据/依赖/GPU 前置检查 → 合规样本；任一不满足 raise _Blocked。"""
+def validate_pairs(data_path: Path, cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """数据 + 语料质量前置检查（不依赖 torch/CUDA，CPU 可跑）。
+
+    返回合规样本行；缺数据/空语料/answer 非合法 Plan JSON/min_samples 不足 → raise _Blocked。
+    这是 `make train --dry-run` 在无 GPU 环境也能端到端校验语料飞轮的依据。
+    """
     if not data_path.exists():
         raise _Blocked(
-            f"语料不存在：{data_path}\n先运行 `uv run python -m lora.build_pairs`"
-            "（approved 样本人工确认后）生成合规语料；当前空语料是设计结论（Day 36）"
+            f"语料不存在：{data_path}\n先运行 `uv run python -m lora.build_pairs --distill`"
+            "（蒸馏冷启动语料）或 approved 样本人工确认后生成；当前空语料是设计结论（Day 36）"
         )
     rows: list[dict[str, Any]] = []
     for line in data_path.read_text(encoding="utf-8").splitlines():
@@ -92,8 +96,18 @@ def check_preconditions(data_path: Path, cfg: dict[str, Any]) -> list[dict[str, 
     if len(rows) < min_samples:
         raise _Blocked(
             f"语料 {len(rows)} 条 < min_samples {min_samples}——样本太少训练无统计意义，"
-            "拒绝启动（防止浪费 GPU 按量费用）；先积累失败样本（Day 41 飞轮）"
+            "拒绝启动（防止浪费 GPU 按量费用）；先做蒸馏冷启动或积累失败样本（Day 41 飞轮）"
         )
+    return rows
+
+
+def check_preconditions(data_path: Path, cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """数据/依赖/GPU 前置检查 → 合规样本；任一不满足 raise _Blocked。
+
+    GPU 训练前置（torch/CUDA）独立于语料校验：CPU 环境用 `--dry-run` 仅跑
+    validate_pairs 即可完成语料飞轮自检，不必触发 GPU 硬阻断。
+    """
+    rows = validate_pairs(data_path, cfg)
 
     _require_module("torch")
     _require_module("transformers")
@@ -224,6 +238,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adapter", default="sql_v1")
     parser.add_argument("--data", type=Path, default=LORA_DIR / "data" / "pairs.jsonl")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="仅校验语料飞轮（数据/Plan 合法性/min_samples），不加载 torch、不训练——CPU 可跑",
+    )
     args = parser.parse_args()
 
     cfg_path = LORA_DIR / "configs" / f"{args.adapter}.yaml"
@@ -231,6 +250,18 @@ def main() -> int:
         print(f"[blocked] 配置不存在：{cfg_path}", file=sys.stderr)
         return 2
     cfg: dict[str, Any] = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+
+    if args.dry_run:
+        try:
+            rows = validate_pairs(args.data, cfg)
+        except _Blocked as exc:
+            print(f"[blocked] {exc}", file=sys.stderr)
+            return 2
+        print(
+            f"[dry-run] 语料飞轮校验通过：{len(rows)} 条合法 Plan 样本"
+            "（未训练；GPU 就绪后去掉 --dry-run 重跑即可）"
+        )
+        return 0
 
     try:
         rows = check_preconditions(args.data, cfg)

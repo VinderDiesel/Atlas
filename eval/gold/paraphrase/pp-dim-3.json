@@ -1,0 +1,10 @@
+{
+  "id": "pp-dim-3",
+  "base": "gold-146",
+  "intended_metric": "total_trade_value",
+  "question": "2013 年各网点交易额",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": ["Branch"],
+  "expected_time": "2013",
+  "note": "OOV 分组形态（各网点，无「按X统计」结构）→ 预期不分组（drop，测量维度解析泛化缺口）"
+}

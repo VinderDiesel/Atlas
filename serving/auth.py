@@ -141,7 +141,7 @@ def sign_token(
 
 
 def verify_token(token: str, *, secret: str | None = None) -> dict[str, object]:
-    """校验 JWT 并返回 claims。
+    """校验 HS256 本地 JWT 并返回 claims。
 
     Raises
     ------
@@ -168,6 +168,106 @@ def verify_token(token: str, *, secret: str | None = None) -> dict[str, object]:
     if payload.get("role") not in ROLE_DIRECTORY:
         raise AuthError(f"JWT role 未注册：{payload.get('role')!r}")
     return payload
+
+
+# ---------------------------------------------------------------------------
+# 外部 IdP 验证（RS256 / JWKS，生产部署钩子；本地 HS256 自签发仅开发用）
+# ---------------------------------------------------------------------------
+
+
+def _b64url_to_int(text: str) -> int:
+    return int.from_bytes(_b64url_decode(text), "big")
+
+
+def _jwk_rsa_public(jwk: dict[str, object]):
+    """JWK（kty=RSA，含 n/e）→ RSA 公钥（lazy import cryptography）。"""
+    try:
+        from cryptography.hazmat.primitives.asymmetric import rsa
+    except Exception as exc:  # noqa: BLE001 - 可选依赖，缺失即明确报错
+        raise AuthError(
+            "cryptography 未安装：外部 IdP（RS256/JWKS）验证需要它" "（uv sync --extra idp）"
+        ) from exc
+    if jwk.get("kty") != "RSA":
+        raise AuthError(f"仅支持 RSA JWK，收到 kty={jwk.get('kty')!r}")
+    n = _b64url_to_int(str(jwk["n"]))
+    e = _b64url_to_int(str(jwk["e"]))
+    return rsa.RSAPublicNumbers(e, n).public_key()
+
+
+def verify_token_external(
+    token: str,
+    jwk: dict[str, object],
+    *,
+    audience: str | None = None,
+    issuer: str | None = None,
+) -> dict[str, object]:
+    """用外部 IdP 的 RSA 公钥（JWK）验证 RS256 JWT，返回 claims。
+
+    校验链：header.alg == RS256 → 签名（PKCS1v15 + SHA256）→ exp →
+    aud（若配置）→ iss（若配置）→ role 注册。与本地 HS256 路径同口径，
+    仅密钥来源不同（受管 IdP 而非 ATLAS_JWT_SECRET）。
+
+    Raises
+    ------
+    AuthError : 任何校验失败
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise AuthError("JWT 格式错误：应为三段 base64url")
+    header: dict[str, object] = json.loads(_b64url_decode(parts[0]))
+    if header.get("alg") != "RS256":
+        raise AuthError(f"外部 IdP 仅支持 RS256，收到 alg={header.get('alg')!r}")
+    signing_input = f"{parts[0]}.{parts[1]}".encode()
+    sig = _b64url_decode(parts[2])
+    public_key = _jwk_rsa_public(jwk)
+    try:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        public_key.verify(sig, signing_input, padding.PKCS1v15(), hashes.SHA256())
+    except Exception as exc:  # noqa: BLE001 - 签名不符/算法错误统一为 AuthError
+        raise AuthError(f"RS256 签名校验失败：{exc}") from exc
+    payload = json.loads(_b64url_decode(parts[1]))
+    now = int(time.time())
+    exp = payload.get("exp", 0)
+    if not isinstance(exp, int) or exp <= now:
+        raise AuthError("JWT 已过期")
+    if audience is not None and payload.get("aud") != audience:
+        raise AuthError(f"JWT audience 不符：{payload.get('aud')!r} != {audience!r}")
+    if issuer is not None and payload.get("iss") != issuer:
+        raise AuthError(f"JWT issuer 不符：{payload.get('iss')!r} != {issuer!r}")
+    if payload.get("role") not in ROLE_DIRECTORY:
+        raise AuthError(f"JWT role 未注册：{payload.get('role')!r}")
+    return payload
+
+
+class JwksResolver:
+    """从 IdP 的 JWKS 端点按 kid 解析 RSA 公钥（lazy 拉取 + 内存缓存）。
+
+    用法::
+        resolver = JwksResolver("https://idp.example.com/.well-known/jwks.json")
+        claims = verify_token_external(token, resolver.get_kid(kid), audience=AUD, issuer=ISS)
+    """
+
+    def __init__(self, jwks_url: str) -> None:
+        self._url = jwks_url
+        self._cache: dict[str, dict[str, object]] = {}
+
+    def _fetch(self) -> dict[str, object]:
+        import urllib.request
+
+        with urllib.request.urlopen(self._url, timeout=10) as resp:  # noqa: S310 - 受管 IdP 端点
+            return json.loads(resp.read().decode("utf-8"))
+
+    def get_kid(self, kid: str) -> dict[str, object]:
+        if kid not in self._cache:
+            doc = self._fetch()
+            keys = doc.get("keys", [])
+            match = next((k for k in keys if k.get("kid") == kid), None)
+            if match is None:
+                raise AuthError(f"JWKS 中找不到 kid={kid!r}")
+            self._cache[kid] = match
+        return self._cache[kid]
 
 
 @dataclass(frozen=True)
@@ -218,21 +318,17 @@ def resolve_claims(
         raise AuthError(f"策略 {policy_name!r} 中找不到角色 {role_name!r}（{policy_path}）")
     rendered = condition
     for key, value in user_context.items():
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, list | tuple):
             continue  # 列表值仅由下方 sql_in 过滤器渲染（_literal 拒非标量）
         rendered = rendered.replace(f"{{{{ user.{key} }}}}", _literal(value))
     # sql_in 过滤器：列表值 → ('a','b')（单项仍过 _literal 安全校验后包引号，
     # 不引入引号逃逸；值须为非空列表，防注入与空集语义陷阱）
-    for match in re.finditer(
-        r"\{\{ user\.([A-Za-z_][A-Za-z0-9_]*) \| sql_in \}\}", rendered
-    ):
+    for match in re.finditer(r"\{\{ user\.([A-Za-z_][A-Za-z0-9_]*) \| sql_in \}\}", rendered):
         key = match.group(1)
         values = user_context.get(key)
-        if not isinstance(values, (list, tuple)) or not values:
+        if not isinstance(values, list | tuple) or not values:
             raise AuthError(f"claim {key!r} 需为非空列表（sql_in 渲染）：{values!r}")
-        rendered = rendered.replace(
-            match.group(0), ", ".join(f"'{_literal(v)}'" for v in values)
-        )
+        rendered = rendered.replace(match.group(0), ", ".join(f"'{_literal(v)}'" for v in values))
     if "{{" in rendered:
         raise AuthError(f"角色 {role!r} 条件存在未渲染占位符：{rendered}")
     return ResolvedPolicy(
@@ -264,7 +360,7 @@ def _literal(value: object) -> str:
     """
     import re
 
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return str(value)
     text = str(value)
     if not re.fullmatch(r"[A-Za-z0-9_\-.:]+", text):

@@ -1,0 +1,10 @@
+{
+  "id": "pp-101-2",
+  "base": "gold-101",
+  "intended_metric": "total_trade_value",
+  "question": "2013 年第二季度的成交金额多少？",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "2013Q2",
+  "note": "注册同义词「成交金额」替换"
+}

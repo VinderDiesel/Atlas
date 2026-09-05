@@ -1,0 +1,10 @@
+{
+  "id": "pp-101-5",
+  "base": "gold-101",
+  "intended_metric": "total_trade_value",
+  "question": "2013 年第二季度股票买卖总金额",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "2013Q2",
+  "note": "OOV 措辞（股票买卖总金额非注册同义词）→ 预期 Planner 无法解析（drop，诚实测量泛化缺口）"
+}

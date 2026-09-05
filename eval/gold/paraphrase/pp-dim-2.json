@@ -1,0 +1,10 @@
+{
+  "id": "pp-dim-2",
+  "base": "gold-146",
+  "intended_metric": "total_trade_value",
+  "question": "按营业部分组 2013 年成交额",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": ["Branch"],
+  "expected_time": "2013",
+  "note": "维度同义词「营业部」替换「分支」"
+}

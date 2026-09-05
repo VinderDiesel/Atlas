@@ -1,0 +1,10 @@
+{
+  "id": "pp-dim-1",
+  "base": "gold-146",
+  "intended_metric": "total_trade_value",
+  "question": "按分支统计 2013 年总交易额",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": ["Branch"],
+  "expected_time": "2013",
+  "note": "显式分组结构 + 注册维度同义词「分支」"
+}

@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +31,10 @@ FAILURES_DIR = Path(__file__).resolve().parent / "failures"
 TZ = timezone(timedelta(hours=8))
 
 MISSING = "<缺失：报告文件不存在，先运行对应 make target>"
+
+# 主评测报告文件名 = <git sha>.json（纯 sha，无类型前缀）；用其鉴别「主评测」报告，
+# 与 baseline-compiler-<sha>.json / rag-llm-*-<sha>.json 等类型化报告区分。
+_SHA_RE = re.compile(r"^[0-9a-f]{7,}$")
 
 
 def _load(name: str) -> dict[str, Any] | None:
@@ -60,15 +66,36 @@ def _row(label: str, value: str, source: str) -> str:
     return f"| {label} | {value} | `{source}` |"
 
 
-def _section_main(sha: str) -> list[str]:
+def _discover_main_reports() -> list[tuple[Path, str]]:
+    """所有主评测报告（文件名 = <sha>.json），按 mtime 倒序（最新在前）。"""
+    found: list[tuple[Path, str]] = []
+    for p in REPORTS_DIR.glob("*.json"):
+        if _SHA_RE.fullmatch(p.stem):
+            found.append((p, p.stem))
+    found.sort(key=lambda x: x[0].stat().st_mtime, reverse=True)
+    return found
+
+
+def _section_main(sha: str, latest: bool = False) -> list[str]:
     """§1 主评测（compiler-only 基线，make eval；per-domain 分节，P1/P7 目录化后结构）。
 
     runner 报告 summary 为 {domain: {total/plan_acc/clarify/ex/ex_anchored/
     exec_errors/by_lang}}（金融/零售各自成节不混报）；本表对每域机械转述六键 +
     by_lang zh/en 总数（双语细目见 eval/gold/README.md）。
+
+    聚合（诚实）：当前 sha 无报告时，回退到**最新一次**主评测报告（按 mtime），
+    并在表格后标注来源 sha——避免「headline 报告主体为空」的退化（High4）。
+    `--latest` 则强制使用最新报告聚合。
     """
     name = f"{sha}.json"
     d = _load(name)
+    used_sha = sha
+    if d is None:
+        recent = _discover_main_reports()
+        if recent:
+            used_sha = recent[0][1]
+            name = f"{used_sha}.json"
+            d = _load(name)
     lines = [
         "## 1. 主评测（compiler-only 基线 · `make eval`）",
         "",
@@ -78,6 +105,12 @@ def _section_main(sha: str) -> list[str]:
     if d is None:
         lines.append(_row("summary", MISSING, name))
         return lines
+    if used_sha != sha:
+        lines.append(
+            f"> 当前 HEAD `{sha}` 尚无主评测报告，已回退聚合最新一次 `{used_sha}`"
+            "（按 mtime 选择；数字不可跨快照混报，见报告 source）。"
+        )
+        lines.append("")
     summary = d.get("summary", {})
     for domain in ("finance", "retail"):
         lines.append(_row(f"{domain}_total", _field(summary, domain, "total"), name))
@@ -85,10 +118,42 @@ def _section_main(sha: str) -> list[str]:
             lines.append(_row(f"{domain}_{key}", _field(summary, domain, key), name))
         for lang in ("zh", "en"):
             lines.append(
-                _row(f"{domain}_{lang}_total", _field(summary, domain, "by_lang", lang, "total"), name)
+                _row(
+                    f"{domain}_{lang}_total",
+                    _field(summary, domain, "by_lang", lang, "total"),
+                    name,
+                )
             )
     lines.append("")
     lines.append(f"**评测脚本**：`eval/runner.py`（{name} `created_at`={_field(d, 'created_at')}）")
+    return lines
+
+
+def _section_trend(top_n: int = 5) -> list[str]:
+    """§0 趋势：最近 N 次主评测的 Plan Acc / EX 走势（按 mtime 倒序，不混报）。
+
+    仅转述各历史主报告 summary 的实测字段；无历史则占位。数字均来自
+    eval/reports/<sha>.json，不推断。
+    """
+    reports = _discover_main_reports()[:top_n]
+    lines = [
+        "## 0. 主评测趋势（最近评测轮次，按 mtime）",
+        "",
+        "| sha | finance Plan Acc | retail Plan Acc | finance EX | retail EX |",
+        "|---|---|---|---|---|",
+    ]
+    if not reports:
+        lines.append(f"| {MISSING} | | | | |")
+        return lines
+    for _path, sha in reports:
+        d = _load(f"{sha}.json")
+        if d is None:
+            continue
+        s = d.get("summary", {})
+        lines.append(
+            f"| `{sha}` | {_field(s, 'finance', 'plan_acc')} | {_field(s, 'retail', 'plan_acc')} "
+            f"| {_field(s, 'finance', 'ex')} | {_field(s, 'retail', 'ex')} |"
+        )
     return lines
 
 
@@ -323,6 +388,14 @@ def _section_meta(sha: str) -> list[str]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--latest",
+        action="store_true",
+        help="强制聚合最新一次/最近 N 次评测报告（跨 sha，避免 headline 报告为空）",
+    )
+    args = parser.parse_args()
+
     sha = git_short_sha()
     lines: list[str] = [
         "# EVAL_REPORT — Atlas 评测汇总（自动生成）",
@@ -331,11 +404,14 @@ def main() -> int:
         f"{datetime.now(TZ).isoformat(timespec='seconds')}（仅时间戳不可复现）",
         f"> 绑定 git sha：`{sha}`；数据快照：`data/snapshots/{sha}.meta.json`",
         "> 规则：**无手写数字**；每格数字 source 列可追溯，缺失显示占位不推断。",
+        f"> 聚合模式：{'--latest（跨 sha 取最新报告）' if args.latest else '当前 sha 单轮'}。",
         "",
         "---",
         "",
     ]
-    lines.extend(_section_main(sha))
+    lines.extend(_section_trend())
+    lines.append("")
+    lines.extend(_section_main(sha, latest=args.latest))
     lines.append("")
     lines.extend(_section_baseline(sha))
     lines.append("")

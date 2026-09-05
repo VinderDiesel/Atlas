@@ -43,8 +43,9 @@ from typing import Any
 
 import sqlglot
 
-from agent.compiler import SemanticModel
+from agent.compiler import Plan, SemanticModel
 from agent.generator import validate_plan_json
+from agent.planner import Planner
 from eval.runner import GOLD_DIR, git_short_sha
 
 LORA_DIR = Path(__file__).resolve().parent
@@ -152,6 +153,84 @@ def build_pairs(
     return stats, kept_rows
 
 
+def plan_to_generator_json(plan: Plan) -> dict[str, Any]:
+    """确定性 Plan → Generator 训练目标 JSON（与 agent/generator.validate_plan_json 同口径）。
+
+    只保留 metric / dimensions / time / top_n（Generator 不消费 filters/order_by；
+    top_n 由 limit<100 还原，与 Planner._parse_top_n 口径一致）。
+    """
+    obj: dict[str, Any] = {
+        "metric": plan.metric,
+        "dimensions": list(plan.dimensions),
+    }
+    if plan.time is not None:
+        obj["time"] = {"granularity": plan.time.granularity, "value": plan.time.value}
+    # 前 N 名 → limit（Planner 仅在此情形设 order_by 且 limit = N）
+    if plan.order_by and plan.limit < 100:
+        obj["top_n"] = plan.limit
+    return obj
+
+
+def build_distillation_pairs(
+    model: SemanticModel,
+    protected: set[str],
+    aliases: dict[str, str],
+) -> tuple[PairStats, list[dict[str, Any]]]:
+    """蒸馏语料构造（High2：用确定性编译器作 teacher，去空语料，不碰 gold 标签）。
+
+    对每条注册指标同义词，套用若干问句模板（年/季度/维度分组）生成自然语言问句，
+    经 Planner 解析为 Plan，再规约为 Generator 训练目标 JSON（answer），并用
+    validate_plan_json 校验（与推理同口径）。问句若命中 gold 模板 → 拒绝（双层防泄漏）。
+
+    为什么合法：训练目标是编译器在**注册口径**内的确定性产物，gold 评测问句与答案
+    均不参与；这是「教师=确定性编译器」的自蒸馏，而非用 gold 当标签（KL #18/#19 红线）。
+    """
+    planner = Planner(model)
+    stats = PairStats()
+    seen: set[str] = set()
+    kept_rows: list[dict[str, Any]] = []
+    # 取一个维度同义词作分组变体（存在时）
+    dim_syns = model.dimension_synonyms
+    dim_variant = next(iter(dim_syns.values()))[0] if dim_syns else None
+
+    templates: list[str] = []
+    for _name, syns in model.metric_synonyms.items():
+        for syn in syns:
+            templates.append(f"{syn} 2013 年")
+            templates.append(f"2013 年{syn}是多少")
+            templates.append(f"2013 年第二季度{syn}")
+            if dim_variant:
+                templates.append(f"按{dim_variant}统计 2013 年{syn}")
+
+    for q in templates:
+        stats.total += 1
+        if q in seen:
+            stats.dup_removed += 1
+            continue
+        seen.add(q)
+        if q in protected or template_of(q, aliases) in protected:
+            stats.leak_rejected += 1
+            if len(stats.leak_examples) < 5:
+                stats.leak_examples.append(q)
+            continue
+        plan = planner.plan(q)
+        if not isinstance(plan, Plan):
+            stats.quality_rejected += 1  # 解析为澄清/未命中 → 不入训练
+            continue
+        obj = plan_to_generator_json(plan)
+        validated, reason = validate_plan_json(model, obj)
+        if validated is None:
+            stats.quality_rejected += 1
+            continue
+        answer = json.dumps(obj, ensure_ascii=False)
+        if not quality_ok(q, answer, model, mode="plan"):
+            stats.quality_rejected += 1
+            continue
+        kept_rows.append({"question": q, "answer": answer})
+    stats.kept = len(kept_rows)
+    return stats, kept_rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--approved", type=Path, default=DATA_DIR / "approved_pairs.jsonl")
@@ -161,19 +240,27 @@ def main() -> int:
         default="plan",
         help="answer 形态校验：plan（默认，与 generator 同口径）/ sql",
     )
+    parser.add_argument(
+        "--distill",
+        action="store_true",
+        help="蒸馏模式：用确定性编译器（Planner→Plan）生成 SFT 语料，不依赖 approved 样本",
+    )
     args = parser.parse_args()
 
     model = SemanticModel()
     protected = gold_templates(model)
     aliases = metric_aliases(model)
 
-    approved_rows: list[dict[str, Any]] = []
-    if args.approved.exists():
-        for line in args.approved.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                approved_rows.append(json.loads(line))
+    if args.distill:
+        stats, kept = build_distillation_pairs(model, protected, aliases)
+    else:
+        approved_rows: list[dict[str, Any]] = []
+        if args.approved.exists():
+            for line in args.approved.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    approved_rows.append(json.loads(line))
+        stats, kept = build_pairs(approved_rows, protected, aliases, model, mode=args.mode)
 
-    stats, kept = build_pairs(approved_rows, protected, aliases, model, mode=args.mode)
     sha = git_short_sha()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if kept:
@@ -184,7 +271,7 @@ def main() -> int:
         )
     report = {
         "sha": sha,
-        "source": str(args.approved),
+        "source": "distill(teacher=compiler)" if args.distill else str(args.approved),
         "gold_protected": len(protected),
         "stats": {
             "total": stats.total,
@@ -195,7 +282,10 @@ def main() -> int:
         },
         "leak_examples": stats.leak_examples,
         "notes": (
-            "数据源策略：approved 样本人工确认后才可进训练（AGENTS.md）；"
+            "蒸馏模式：训练目标 = 确定性编译器在注册口径内的 Plan 产物，gold 不参与"
+            "（KL #18/#19 红线不触碰）；非 approved 飞轮样本，作为 LoRA 预训练冷启动语料。"
+            if args.distill
+            else "数据源策略：approved 样本人工确认后才可进训练（AGENTS.md）；"
             "gold 评测问句与同模板衍生问句一律拒绝（红线）；"
             f"mode={args.mode} 形态校验（plan 与 agent/generator 推理同口径）；"
             "当前无 approved 样本 → 空语料是设计结论，待失败样本飞轮驱动（Day 41）。"
@@ -207,7 +297,7 @@ def main() -> int:
         out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"[done] 语料 {stats.kept} 条 → {DATA_DIR / 'pairs.jsonl'}；报告 {out}")
     else:
-        print(f"[empty] 合规语料为空（approved 输入 {stats.total} 条，0 通过过滤）")
+        print(f"[empty] 合规语料为空（输入 {stats.total} 条，0 通过过滤）")
         print(f"[stats] {json.dumps(report['stats'], ensure_ascii=False)}")
     return 0
 

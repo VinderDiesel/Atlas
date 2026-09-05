@@ -1,0 +1,10 @@
+{
+  "id": "pp-101-6",
+  "base": "gold-101",
+  "intended_metric": "total_trade_value",
+  "question": "把 2013 年第二季度的成交额算一下",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "2013Q2",
+  "note": "口语化指令，仍含注册同义词「成交额」"
+}

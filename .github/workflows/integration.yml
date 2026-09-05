@@ -1,0 +1,93 @@
+name: integration
+
+# 集成测试（Medium7）：需 Doris 全栈数据环境，手动 / 定时触发，可重跑。
+#
+# 与 eval.yml 的 plan-regression（无 DB，push 即跑）分工：
+# - plan-regression = 语义 lint + 契约测试 + Plan Acc 回归（CI 默认门槛）
+# - integration     = 全栈数据评测（EX）+ 权限 + 改写鲁棒性 + 报告聚合，需 docker compose
+#   起全栈（PostgreSQL/Polaris/Doris/Milvus/Grafana）并装载数据，公共 runner 无数据，
+#   故为 workflow_dispatch / schedule 手动触发，自托管 runner 或数据缓存就绪后运行。
+#
+# 诚实边界：EX 必须绑定锁定快照；make eval 启动即复核 snapshot 指纹，漂移即拒。
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"   # 每周一 UTC 03:17 跑全栈回归（数据环境就绪时）
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install deps (uv sync, mirrors local .venv)
+        run: uv sync --extra dev --frozen
+        env:
+          UV_DEFAULT_INDEX: https://pypi.org/simple
+
+      - name: Start full stack (Doris / Polaris / Milvus / Postgres / Grafana)
+        run: docker compose up -d
+
+      - name: Wait for Doris healthy
+        # compose 内 Doris FE/BE 双进程启动较慢；轮询健康检查，最多 ~5 分钟
+        run: |
+          for i in $(seq 1 60); do
+            if docker exec atlas-doris-fe mysqladmin ping -h127.0.0.1 -P9030 -uroot --silent 2>/dev/null; then
+              echo "Doris ready"; break
+            fi
+            echo "waiting for Doris ($i)..."; sleep 5
+          done
+
+      - name: Load data + build warehouse (TPC-DI → Iceberg → 锁定快照 → DWD)
+        run: make PYTHON=.venv/bin/python seed && make PYTHON=.venv/bin/python dwd
+
+      - name: Semantic lint (structure / governance)
+        run: make PYTHON=.venv/bin/python lint
+
+      # ---- DB-free 确定性回归（不需执行，先跑，快速反馈） ----
+      - name: Contract tests
+        run: make PYTHON=.venv/bin/python test
+
+      - name: Paraphrase robustness (Planner-only, no Doris)
+        run: make PYTHON=.venv/bin/python paraphrase
+
+      # ---- 全栈数据评测（绑定快照，EX 锚定） ----
+      - name: Gold eval (Plan Acc + EX)
+        run: make PYTHON=.venv/bin/python eval
+
+      - name: Deterministic coverage (baseline)
+        run: make PYTHON=.venv/bin/python baseline
+
+      - name: Strategy compare (4-way)
+        run: make PYTHON=.venv/bin/python compare
+
+      - name: Readonly Guard + RLS + RBAC verification
+        run: make PYTHON=.venv/bin/python p1-verify && make PYTHON=.venv/bin/python rls-verify
+
+      - name: Aggregate EVAL_REPORT (--latest across shas)
+        run: make PYTHON=.venv/bin/python report-latest
+
+      - name: Upload eval reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports
+          path: eval/reports/
+
+      - name: Publish EVAL_REPORT summary
+        if: always()
+        run: cat EVAL_REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tear down
+        if: always()
+        run: docker compose down
