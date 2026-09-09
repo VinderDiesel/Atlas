@@ -1,0 +1,26 @@
+# MOCK 任务编排源 —— 03 快照复核网关（评测前数据指纹检查）
+#
+# ⚠️ MOCK 声明：见 01_data_ingest.yaml 文件头（本目录为 mock 样例，Airflow 运行时
+#    未部署，不真实调度/执行；命令引用仓库真实对象）。
+#
+# owner: data-platform
+# 2026-09-07 修改：初始化 mock 样例集（快照治理独立网关形态：单任务 job 作为
+#   下游评测链的依赖闸口，展示「质检任务前置」编排模式）
+version: "0.1-mock"
+defaults:
+  catchup: false
+  timezone: "Asia/Shanghai"
+  retries: 0                # 快照复核失败 = 数据漂移信号，不自动重试（避免掩盖漂移）
+  retry_delay_seconds: 60
+  owner: data-platform
+
+jobs:
+  - id: verify_snapshot_locked
+    description: "（mock）评测前数据指纹复核：当前库 vs 已锁 <sha>.meta.json（data/snapshot.py --check，行数 + snapshot id 现场测量；漂移/未锁 → exit 2）。评测 runner 启动时自动执行同款检查——本 job 作为独立网关形态（04 评测链的前置依赖；也可人工巡检触发）。"
+    schedule: null          # 由下游评测链依赖驱动（04_semantic_publish_eval.yaml），非周期
+    owner: data-platform
+    tasks:
+      - id: check_data_fingerprint
+        operator: python
+        command: ".venv/bin/python -m data.snapshot --check"
+        description: "exit 0 = 指纹一致；exit 2 = 漂移/未锁 → 下游阻断并告警（mock 不真实执行，语义见 data/snapshot.py docstring）"

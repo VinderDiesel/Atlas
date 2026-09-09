@@ -1,0 +1,50 @@
+# MOCK 任务编排源 —— 04 语义发布后回归链（lint → 评测 → 基线 → 报告）
+#
+# ⚠️ MOCK 声明：见 01_data_ingest.yaml 文件头（本目录为 mock 样例，Airflow 运行时
+#    未部署，不真实调度/执行；命令引用仓库真实对象与 make 目标）。
+#
+# owner: data-platform
+# 2026-09-07 修改：初始化 mock 样例集（长任务链 + 跨文件多依赖形态；语义层/提示词
+#   变更触发的回归链与 CI eval.yml 同口径，本 job 为本地批跑形态）
+version: "0.1-mock"
+defaults:
+  catchup: false
+  timezone: "Asia/Shanghai"
+  retries: 1
+  retry_delay_seconds: 300
+  owner: data-platform
+
+jobs:
+  - id: semantic_publish_eval
+    description: "（mock）语义发布后全量回归：lint → 新指标编译实测 → 黄金集双域评测 → compiler 基线 → EVAL_REPORT。评测依赖装载/加工/快照三前置（跨文件依赖示例）；gold 目录 finance/retail 双域全跑、报告按域分节不混报（AGENTS.md N10）。"
+    schedule: null          # 语义发布批次触发（semantic/** 或 agent/prompts/** 变更后），非周期
+    owner: data-platform
+    depends_on:
+      - "01_data_ingest.yaml:ingest_tpcds_retail"    # 零售 dwd 4 表就绪（评测含零售域 19 条）
+      - "02_dwd_build.yaml:build_dwd_finance"       # 金融 DWD 8 表就绪（评测含金融域 70 条）
+      - "03_snapshot_verify.yaml:verify_snapshot_locked"  # 快照复核通过（评测自动复核的前置哨兵）
+    tasks:
+      - id: semantic_lint
+        operator: shell
+        command: "make lint"
+        description: "Ossie 官方 schema + 治理扩展 + 语义层全量校验（semantic/lint.py --all）"
+      - id: metrics_verify_published
+        operator: shell
+        command: "make metrics-verify"
+        description: "新发布指标编译 + Doris 实测（Day 27 流程；无指标变更的批次可人工跳过——mock 不执行）"
+        depends_on: ["semantic_lint"]
+      - id: eval_gold_full
+        operator: shell
+        command: "make eval"
+        description: "黄金集 Plan Acc + EX（双域 89 条全跑，自动复核快照指纹）→ eval/reports/<sha>.json"
+        depends_on: ["metrics_verify_published"]
+      - id: baseline_analyze
+        operator: shell
+        command: "make baseline"
+        description: "确定性链零 LLM 覆盖分析（读主评测报告逐域盘存校验）→ eval/reports/baseline-compiler-<sha>.json"
+        depends_on: ["eval_gold_full"]
+      - id: render_eval_report
+        operator: shell
+        command: "make report"
+        description: "机械转述生成 EVAL_REPORT.md（八节，无手写数字，每格带 source 列）"
+        depends_on: ["baseline_analyze"]

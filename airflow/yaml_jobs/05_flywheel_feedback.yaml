@@ -1,0 +1,34 @@
+# MOCK 任务编排源 —— 05 失败样本飞轮（评测失败 → 人工确认 → 合规语料）
+#
+# ⚠️ MOCK 声明：见 01_data_ingest.yaml 文件头（本目录为 mock 样例，Airflow 运行时
+#    未部署，不真实调度/执行；命令引用仓库真实对象）。
+#
+# owner: data-platform
+# 2026-09-07 修改：初始化 mock 样例集（人工闸口编排形态：飞轮状态机内含 review
+#   闸口，红线「人工确认后才可进 SFT」，编排层不绕过、不自动批准）
+version: "0.1-mock"
+defaults:
+  catchup: false
+  timezone: "Asia/Shanghai"
+  retries: 1
+  retry_delay_seconds: 300
+  owner: data-platform
+
+jobs:
+  - id: failure_flywheel
+    description: "（mock）失败驱动数据飞轮（Day 41）：评测失败样本 → 归类 → 人工确认 → 合规语料 → 条件训练。lora.flywheel 单命令串行五阶段（scan → review 人工闸口 → export → build → train）；前置检查不满足（语料 min_samples/GPU）→ blocked 如实记录，不假跑。"
+    schedule: null          # 评测回归链（04）后触发，非周期
+    owner: data-platform
+    depends_on: ["04_semantic_publish_eval.yaml:semantic_publish_eval"]
+    tasks:
+      - id: run_flywheel_state_machine
+        operator: python
+        command: ".venv/bin/python -m lora.flywheel"
+        description: >-
+          阶段语义（见 lora/flywheel.py docstring，mock 不执行）：scan 复用
+          eval.failure_collect.classify 归类写 eval/failures/<category>/（status=
+          pending_review）；review 为人工闸口（approved + 合法 answer_plan，红线
+          人工确认后才可进 SFT）；export 收 approved → lora/data/approved_pairs.jsonl
+          （answer_plan 过 agent.generator.validate_plan_json，否则拦下计数）；
+          build 子进程 lora.build_pairs（防泄漏过滤）；train 子进程 lora.train
+          （前置检查不过 → blocked 如实记录）。--dry 只输出状态机不落盘不训练。

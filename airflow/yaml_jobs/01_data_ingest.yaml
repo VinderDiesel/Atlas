@@ -1,0 +1,58 @@
+# MOCK 任务编排源 —— 01 数据装载（TPC-DI / TPC-DS → Iceberg 与 dwd）
+#
+# ⚠️ MOCK 声明：airflow/yaml_jobs/ 当前全部为 mock 样例，供「YAML → DAG 生成器」
+#    开发与演示使用（AGENTS.md：dags/generated 由本目录生成，勿手改生成物）。
+#    Airflow 运行时尚未部署（docker-compose 无 airflow 服务；技术栈 Airflow 2.9
+#    已锁定，接入为后续批次）。任务命令引用仓库真实对象（脚本/模块/make 目标
+#    均已存在），但本文件不真实调度、不真实执行。
+#
+# owner: data-platform
+# 2026-09-07 修改：初始化 mock 样例集（生成器批次输入；格式定稿以 JSON Schema 为准，
+#   沿 semantic/schema 惯例，本文件头注释为草案说明）
+#
+# yaml_jobs 草案字段（v0.1-mock）：
+#   version    格式草案版本
+#   defaults   全局默认（job 级同名键可覆盖）
+#   jobs[]     编排单元：id（全局唯一）/ description / schedule（cron 或 null=手动）/
+#              owner / depends_on（跨文件依赖，["<文件>:<job_id>"]）/
+#              tasks[]（id / operator: shell|python|sql / command | sql_files /
+#              depends_on（同 job 内 task id，缺省按数组顺序串行））
+#   operator   抽象操作符（生成器映射 Bash/Python/SQL Operator 时细化为子类）
+version: "0.1-mock"
+defaults:
+  catchup: false            # 错过调度窗口不补跑（mock 演示；真实按批语义定）
+  timezone: "Asia/Shanghai"
+  retries: 2
+  retry_delay_seconds: 300
+  owner: data-platform
+
+jobs:
+  - id: ingest_tpcdi_sf1
+    description: "（mock）TPC-DI Batch1 基准装载 → Iceberg（Polaris catalog atlas）+ 锁定快照。对应 make seed（data/loader.py → data/snapshot.py）；一次性地基装载，非周期任务，schedule=null 手动触发。"
+    schedule: null          # 手动触发（一次性基准装载）
+    owner: data-platform
+    tasks:
+      - id: load_tpcdi_batch1
+        operator: python
+        command: ".venv/bin/python data/loader.py"
+        description: "解析 TPC-DI Batch1 源文件写 tpcdi 17 张 Iceberg 表（实测链路见 Makefile seed 注释）"
+      - id: lock_snapshot_meta
+        operator: python
+        command: ".venv/bin/python -m data.snapshot"
+        description: "枚举全表固化 <sha>.meta.json（git sha + 每表 snapshot id）；评测基准只认快照文件（AGENTS.md N6）"
+        depends_on: ["load_tpcdi_batch1"]
+
+  - id: ingest_tpcds_retail
+    description: "（mock）TPC-DS SF0.1 零售域装载 → dwd 4 表（store_sales/date_dim/dim_item/dim_store）。对应 make seed-retail（scripts/setup_tpcds.sh → data.tpcds_loader）。注意：本链路不锁快照——锁快照是评测前手工步骤，需 HEAD 已含装载代码（Makefile 同口径）。"
+    schedule: null          # 手动触发（一次性基准装载）
+    owner: data-platform
+    tasks:
+      - id: bootstrap_tpcds_kit
+        operator: shell
+        command: "bash scripts/setup_tpcds.sh"
+        description: "clone 固定版本 → 编译 dsdgen → SF0.1 补丁 → 生成 .dat（幂等：产物齐全即跳过，口径见脚本头注释）"
+      - id: load_store_sales_dwd
+        operator: python
+        command: ".venv/bin/python -m data.tpcds_loader"
+        description: "解析 .dat 装载 atlas.dwd.{store_sales,date_dim,dim_item,dim_store} + 数据探查打印（幂等：逐表 drop-if-exists → create → append）"
+        depends_on: ["bootstrap_tpcds_kit"]

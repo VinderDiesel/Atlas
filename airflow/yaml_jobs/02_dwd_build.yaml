@@ -1,0 +1,31 @@
+# MOCK 任务编排源 —— 02 DWD 层加工（金融 8 表，Doris 侧执行）
+#
+# ⚠️ MOCK 声明：见 01_data_ingest.yaml 文件头（本目录为 mock 样例，Airflow 运行时
+#    未部署，不真实调度/执行；命令引用仓库真实对象）。
+#
+# owner: data-platform
+# 2026-09-07 修改：初始化 mock 样例集（DWD 加工编排形态：cron 周期 + sql operator）
+version: "0.1-mock"
+defaults:
+  catchup: false
+  timezone: "Asia/Shanghai"
+  retries: 2
+  retry_delay_seconds: 300
+  owner: data-platform
+
+jobs:
+  - id: build_dwd_finance
+    description: "（mock）金融 DWD 8 张 INSERT OVERWRITE 幂等 SQL（sql/dwd/*.sql：dim_account/dim_broker/dim_customer/dim_date/dim_security/fact_cash_balances/fact_holdings/fact_trades）。对应 make dwd；SQL 在 Doris 侧执行（依赖 Doris 的 Polaris catalog atlas 已配置）。幂等 → 支持周期重跑。"
+    schedule: "0 3 * * 0"   # 每周日 03:00（+08:00）；重跑安全（幂等 SQL）
+    owner: data-platform
+    depends_on: ["01_data_ingest.yaml:ingest_tpcdi_sf1"]
+    tasks:
+      - id: run_finance_dwd_sql
+        operator: sql
+        sql_files: "sql/dwd/*.sql"
+        description: "逐文件送入 Doris 执行；实际执行形态 = docker exec -i atlas-doris-fe mysql -h127.0.0.1 -P9030 -uroot < f（Makefile dwd 原样，mock 不执行）"
+      - id: verify_dwd_row_counts
+        operator: python
+        command: ".venv/bin/python -m data.snapshot --check"
+        description: "加工后复核数据指纹仍在锁定快照口径内（漂移即 exit 2；真实批次中此步按需启用）"
+        depends_on: ["run_finance_dwd_sql"]
