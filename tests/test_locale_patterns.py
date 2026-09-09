@@ -1,4 +1,4 @@
-"""中文形态触发词词典契约测试（ADR-0015 §②，批次 B3a：纯搬运的机械锁定）。
+"""locale 形态触发词词典契约测试（ADR-0015 §②，批次 B3a 中文 / B3b 英文）。
 
 口径：
 - `load_locale_patterns` 与同义词加载器同一纪律——**封闭 locale 注册表 + 严格形态**：
@@ -6,6 +6,9 @@
   或重复拒、量级映射非整数拒（静默降级 = 某类问句在无人察觉时不再被解析）；
 - `time.patterns` 的**声明顺序**与 kind ↔ 解析器实现的一致性必须锁定（顺序即语义：
   短模式先跑会截获长模式的输入，"2013 年 7 月" 会被读成年份）；
+- 英文词典的两处新增机制同样受约束：`ref` 只能指向上游已声明的 kind 且解析为
+  **同一已编译对象**（ISO 形态权威源唯一）、`flags` 只能配 pattern 且名字在封闭
+  白名单内、`months` 表与 month 模式的交替串必须同源（双写漂移在加载期就报错）；
 - planner 侧只做一条断言：形态常量的值**来自词典**（对象同一性），代码内不再有第二份
   字面量——这是"搬运而非重写"的可证伪形式。行为等价性由 tests/test_planner.py 的中英文
   用例（断言一字未改）与 `make eval --dry` 逐域比对共同锁定（设计页 §4）。
@@ -15,6 +18,7 @@
 
 from __future__ import annotations
 
+import itertools
 import re
 import tempfile
 import unittest
@@ -29,8 +33,9 @@ import agent.planner as planner_mod
 from agent.compiler import SemanticModel, TimeSpec, load_locale_patterns
 from agent.planner import ClarificationRequest
 
-# 解析器已实现的时间形态 kind（与 planner._TIME_DISPATCH 一一对应）
+# 解析器已实现的时间形态 kind（与 planner._TIME_DISPATCH / _EN_TIME_DISPATCH 一一对应）
 TIME_KINDS = ("date", "iso_date", "quarter", "iso_quarter", "month", "year")
+EN_TIME_KINDS = ("iso_date", "quarter", "iso_quarter", "month", "year_prep", "year_bare")
 SECTIONS = (
     "time",
     "grouping",
@@ -40,6 +45,32 @@ SECTIONS = (
     "threshold",
     "magnitude",
     "followup",
+)
+EN_SECTIONS = (
+    "time",
+    "months",
+    "grouping",
+    "topn",
+    "topn_dim",
+    "filter_include",
+    "filter_exclude",
+    "threshold",
+    "magnitude",
+    "followup",
+)
+MONTH_NAMES = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 )
 
 
@@ -76,6 +107,43 @@ def _valid_doc() -> dict[str, Any]:
     }
 
 
+def _valid_en_doc() -> dict[str, Any]:
+    """与 patterns_en_us.yml 同构的最小合法文档（只用于校验加载器形态，非仓库口径）。"""
+    return {
+        "time": {
+            "relative_reject": {"words": ["last month", "recent"]},
+            "patterns": [
+                {"kind": "iso_date", "ref": "iso_date"},
+                {"kind": "quarter", "pattern": r"(?:([Qq][1-4])\s+(\d{4})|(\d{4})\s+([Qq][1-4]))"},
+                {"kind": "iso_quarter", "ref": "iso_quarter"},
+                {
+                    "kind": "month",
+                    "pattern": r"\b(" + "|".join(MONTH_NAMES) + r")\s*,?\s+(\d{4})\b",
+                    "flags": ["IGNORECASE"],
+                },
+                {"kind": "year_prep", "pattern": r"\b(?:in|for|during|of|from)\s+(\d{4})\b"},
+                {"kind": "year_bare", "pattern": r"\b(\d{4})\b"},
+            ],
+            "threshold_gate": {"words": ["over", "more than"]},
+        },
+        "months": {name.lower(): i + 1 for i, name in enumerate(MONTH_NAMES)},
+        "grouping": {"pattern": r"\b(?:grouped by|by)\s+(.+?)(?=\s+\bin\b|$)"},
+        "topn": {"pattern": r"\b(?:top|best)\s+(\d+)\b"},
+        "topn_dim": {"pattern": r"\b(?:top|best)\s+\d+\s+(.+?)(?=\s+\bby\b|$)"},
+        "filter_include": {"pattern": r"\bonly\s+(.+?)(?=\s+\bin\b|$)"},
+        "filter_exclude": {"pattern": r"\b(?:excluding|except)\s+(.+?)(?=\s+\bin\b|$)"},
+        "threshold": {
+            "greater": {"pattern": r"\b(?:over|above)\s+([\d.]+)\s*(million|[KMB])?"},
+            "less": {"pattern": r"\b(?:under|below)\s+([\d.]+)\s*(million|[KMB])?"},
+        },
+        "magnitude": {"en_units": {"billion": 1_000_000_000, "million": 1_000_000, "K": 1_000}},
+        "followup": {
+            "what": {"pattern": r"(?:what|how)\s+about\s+(.+?)\??\s*$"},
+            "instead": {"pattern": r"(.+?)\s+instead\??\s*$"},
+        },
+    }
+
+
 class LoaderTestCase(unittest.TestCase):
     """公共 setUp/tearDown：把词典目录切到 tmp，并清空形态词典缓存。"""
 
@@ -108,6 +176,25 @@ class LoaderTestCase(unittest.TestCase):
         compiler_mod._PATTERNS_CACHE.clear()
         with self.subTest(case=label), self.assertRaises(ValueError):
             load_locale_patterns("zh_cn")
+
+    def _write_en(self, doc: dict[str, Any]) -> Path:
+        """写英文词典，并补一份合法中文词典（en 的 `ref` 需上游 zh 词典在场）。"""
+        self._write(_valid_doc())
+        path = self.dir / "patterns_en_us.yml"
+        path.write_text(
+            yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+        return path
+
+    def _reject_en(
+        self, mutate: Callable[[dict[str, Any]], None], label: str
+    ) -> None:
+        doc = _valid_en_doc()
+        mutate(doc)
+        self._write_en(doc)
+        compiler_mod._PATTERNS_CACHE.clear()
+        with self.subTest(case=label), self.assertRaises(ValueError):
+            load_locale_patterns("en_us")
 
 
 class TestNormalLoad(LoaderTestCase):
@@ -148,6 +235,41 @@ class TestNormalLoad(LoaderTestCase):
         first = load_locale_patterns("zh_cn")
         (self.dir / "patterns_zh_cn.yml").unlink()
         self.assertIs(first, load_locale_patterns("zh_cn"))
+
+    def test_en_sections_shape_and_order(self) -> None:
+        """英文词典：节齐与 time.patterns 顺序保留（顺序即语义，与中文同纪律）。"""
+        self._write_en(_valid_en_doc())
+        loaded = load_locale_patterns("en_us")
+        self.assertEqual(tuple(loaded), EN_SECTIONS)
+        self.assertEqual(
+            tuple(kind for kind, _ in loaded["time"]["patterns"]), EN_TIME_KINDS
+        )
+        self.assertEqual(
+            loaded["time"]["threshold_gate"]["words"], ("over", "more than")
+        )
+        self.assertEqual(loaded["months"]["may"], 5)
+        self.assertEqual(loaded["magnitude"]["en_units"]["K"], 1_000)
+        self.assertEqual(
+            loaded["followup"]["instead"]["pattern"].pattern, r"(.+?)\s+instead\??\s*$"
+        )
+
+    def test_en_ref_reuses_zh_object(self) -> None:
+        """`ref` 解析为上游的**同一已编译对象**（ISO 形态不存在第二份权威源）。"""
+        self._write_en(_valid_en_doc())
+        zh = dict(load_locale_patterns("zh_cn")["time"]["patterns"])
+        en = dict(load_locale_patterns("en_us")["time"]["patterns"])
+        self.assertIs(en["iso_date"], zh["iso_date"])
+        self.assertIs(en["iso_quarter"], zh["iso_quarter"])
+
+    def test_en_flags_are_declared_not_rebuilt(self) -> None:
+        """flags 只作为编译参数参入：模式串逐字保持，未因 flag 而被改写。"""
+        self._write_en(_valid_en_doc())
+        month = dict(load_locale_patterns("en_us")["time"]["patterns"])["month"]
+        self.assertEqual(
+            month.pattern, r"\b(" + "|".join(MONTH_NAMES) + r")\s*,?\s+(\d{4})\b"
+        )
+        self.assertEqual(month.flags & ~re.UNICODE, re.IGNORECASE)
+        self.assertIsNotNone(month.search("may 2014"))
 
 
 class TestLoaderRejects(LoaderTestCase):
@@ -252,6 +374,94 @@ class TestLoaderRejects(LoaderTestCase):
         with self.assertRaises(ValueError):
             load_locale_patterns("zh_cn")
 
+    def test_en_missing_and_unknown_section(self) -> None:
+        for section in EN_SECTIONS:
+            self._reject_en(lambda doc, s=section: doc.pop(s), f"en 缺节 {section}")
+        self._reject_en(
+            lambda doc: doc.update({"months_alias": {"x": 1}}), "en 多余顶层节"
+        )
+
+    def test_en_time_section_shape(self) -> None:
+        self._reject_en(
+            lambda doc: doc["time"].pop("threshold_gate"), "en time 缺 threshold_gate"
+        )
+        self._reject_en(
+            lambda doc: doc["time"]["threshold_gate"].update({"extra": 1}),
+            "threshold_gate 多余键",
+        )
+
+    def test_en_ref_rules(self) -> None:
+        """ref 只能指向上游已声明 kind，且不携带 pattern（不允许"抄一份再用 ref 校对"）。"""
+        self._reject_en(
+            lambda doc: doc["time"]["patterns"][0].update({"ref": "week"}),
+            "ref 指向不存在的 kind",
+        )
+        self._reject_en(
+            lambda doc: doc["time"]["patterns"][0].update(
+                {"pattern": r"(\d{4})/(\d{2})/(\d{2})"}
+            ),
+            "ref 与 pattern 共存",
+        )
+        self._reject_en(
+            lambda doc: doc["time"]["patterns"][0].pop("ref"), "ref 条目缺 ref"
+        )
+
+    def test_en_flags_rules(self) -> None:
+        self._reject_en(
+            lambda doc: doc["time"]["patterns"][0].update({"flags": ["IGNORECASE"]}),
+            "flags 无 pattern（配 ref）",
+        )
+        self._reject_en(
+            lambda doc: doc["time"]["patterns"][3].update({"flags": ["LCASE"]}),
+            "flag 名不在白名单",
+        )
+        self._reject_en(
+            lambda doc: doc["time"]["patterns"][3].update({"flags": []}),
+            "flag 空列表",
+        )
+        self._reject_en(
+            lambda doc: doc["time"]["patterns"][3].update(
+                {"flags": ["IGNORECASE", "IGNORECASE"]}
+            ),
+            "flag 重复",
+        )
+
+    def test_en_months_rules(self) -> None:
+        """months 表里的名字必须能被 month 模式命中（改了模式没改表 → 加载期报错）。
+
+        反方向（交替串里的名字都得在表里）靠 test_months_table_matches_pattern_alternation
+        逐名逐量锁定：交替串是正则的一部分，加载器不解析正则、不重组模式。
+        """
+        self._reject_en(
+            lambda doc: doc["months"].update({"May": 5}), "months 键非小写"
+        )
+        self._reject_en(
+            lambda doc: doc["months"].update({"yanuary": 1}), "months 键错拼（模式不命中）"
+        )
+        self._reject_en(
+            lambda doc: doc["months"].update({"may": "5"}), "months 值非整数"
+        )
+        self._reject_en(
+            lambda doc: doc["time"]["patterns"][3].update(
+                {"pattern": r"\b(May|June)\s*,?\s+(\d{4})\b", "flags": ["IGNORECASE"]}
+            ),
+            "months 含模式命中不到的名字",
+        )
+        self._reject_en(
+            lambda doc: doc["time"]["patterns"].pop(3), "缺 kind: month 形态"
+        )
+
+    def test_zh_lexicon_rejects_ref_and_flags(self) -> None:
+        """ref/flags 是英文词典专有能力：中文词典用了依旧报错（不把未验证能力摊开）。"""
+        self._reject(
+            lambda doc: doc["time"]["patterns"][0].update({"flags": ["IGNORECASE"]}),
+            "zh 条目带 flags",
+        )
+        self._reject(
+            lambda doc: doc["time"]["patterns"][1].update({"ref": "iso_date"}),
+            "zh 条目用 ref",
+        )
+
 
 class TestRealRepoLexicon(unittest.TestCase):
     """仓库真实词典：结构基线 + planner 接线（值来自词典，代码无第二份）。"""
@@ -317,8 +527,115 @@ class TestRealRepoLexicon(unittest.TestCase):
         self.assertIs(planner_mod._FOLLOWUP_DIM_RE, lex["followup"]["dim_pattern"])
         # ISO 形态中英共享，同源于 zh 词典（英文侧不复制第二份，避免双权威源）
         by_kind = dict(lex["time"]["patterns"])
-        self.assertIs(planner_mod._ISO_DATE_RE, by_kind["iso_date"])
-        self.assertIs(planner_mod._ISO_QUARTER_RE, by_kind["iso_quarter"])
+        self.assertIs(
+            dict(planner_mod._TIME_PATTERNS)["iso_date"], by_kind["iso_date"]
+        )
+
+    def test_lexicon_content_baseline_en(self) -> None:
+        """英文侧词表/映射的内容基线（同中文：改动即语义变化，需单独评审）。"""
+        lex = load_locale_patterns("en_us")
+        self.assertEqual(
+            tuple(lex["time"]["relative_reject"]["words"]),
+            (
+                "last month",
+                "last quarter",
+                "last year",
+                "last week",
+                "this month",
+                "this quarter",
+                "this year",
+                "this week",
+                "recent",
+                "yesterday",
+                "today",
+            ),
+        )
+        self.assertEqual(
+            tuple(lex["time"]["threshold_gate"]["words"]),
+            (
+                "over",
+                "above",
+                "more than",
+                "greater than",
+                "exceeding",
+                "under",
+                "below",
+                "less than",
+                "fewer than",
+            ),
+        )
+        self.assertEqual(
+            lex["months"], {name.lower(): i + 1 for i, name in enumerate(MONTH_NAMES)}
+        )
+        self.assertEqual(
+            lex["magnitude"]["en_units"],
+            {
+                "billion": 1_000_000_000,
+                "million": 1_000_000,
+                "thousand": 1_000,
+                "B": 1_000_000_000,
+                "M": 1_000_000,
+                "K": 1_000,
+            },
+        )
+
+    def test_time_kinds_match_parser_implementation_en(self) -> None:
+        """英文词典 kind 集合 == planner 英文分发表（与中文同纪律）。"""
+        patterns = load_locale_patterns("en_us")["time"]["patterns"]
+        self.assertEqual(tuple(kind for kind, _ in patterns), EN_TIME_KINDS)
+        self.assertEqual(
+            set(planner_mod._EN_TIME_DISPATCH), {kind for kind, _ in patterns}
+        )
+
+    def test_planner_en_constants_come_from_lexicon(self) -> None:
+        """planner 英文形态常量与词典对象同一——B3b"纯搬运"的可证伪断言。"""
+        lex = load_locale_patterns("en_us")
+        self.assertIs(planner_mod._EN_TIME_PATTERNS, lex["time"]["patterns"])
+        self.assertIs(
+            planner_mod._EN_RELATIVE_TIME, lex["time"]["relative_reject"]["words"]
+        )
+        self.assertIs(
+            planner_mod._EN_THRESHOLD_WORDS, lex["time"]["threshold_gate"]["words"]
+        )
+        self.assertIs(planner_mod._EN_MONTH_NUM, lex["months"])
+        self.assertIs(planner_mod._EN_GROUP_RE, lex["grouping"]["pattern"])
+        self.assertIs(planner_mod._EN_TOP_N_RE, lex["topn"]["pattern"])
+        self.assertIs(planner_mod._EN_TOP_N_DIM_RE, lex["topn_dim"]["pattern"])
+        self.assertIs(planner_mod._EN_ONLY_RE, lex["filter_include"]["pattern"])
+        self.assertIs(planner_mod._EN_EXCL_RE, lex["filter_exclude"]["pattern"])
+        self.assertIs(
+            planner_mod._EN_THRESHOLD_GT_RE, lex["threshold"]["greater"]["pattern"]
+        )
+        self.assertIs(
+            planner_mod._EN_THRESHOLD_LT_RE, lex["threshold"]["less"]["pattern"]
+        )
+        self.assertIs(planner_mod._EN_UNIT, lex["magnitude"]["en_units"])
+        self.assertIs(
+            planner_mod._EN_FOLLOWUP_WHAT_RE, lex["followup"]["what"]["pattern"]
+        )
+        self.assertIs(
+            planner_mod._EN_FOLLOWUP_INSTEAD_RE, lex["followup"]["instead"]["pattern"]
+        )
+        # ISO 形态经 ref 同源于 zh 词典（planner 的英文表里就是中文词典那个对象）
+        zh = dict(load_locale_patterns("zh_cn")["time"]["patterns"])
+        en = dict(planner_mod._EN_TIME_PATTERNS)
+        self.assertIs(en["iso_date"], zh["iso_date"])
+        self.assertIs(en["iso_quarter"], zh["iso_quarter"])
+
+    def test_months_table_matches_pattern_alternation(self) -> None:
+        """交叉不变量（设计页 #3/#4）：month 模式的交替串 == months 表键。"""
+        lex = load_locale_patterns("en_us")
+        pattern = dict(lex["time"]["patterns"])["month"].pattern
+        names = pattern.split("(")[1].split(")")[0].split("|")
+        self.assertEqual(len(names), len(lex["months"]))
+        self.assertEqual({name.lower() for name in names}, set(lex["months"]))
+
+    def test_month_names_are_prefix_free(self) -> None:
+        """交替串顺序无关的前提：月份名互不为前缀（前提破了必须显式改设计）。"""
+        names = list(load_locale_patterns("en_us")["months"])
+        for first, second in itertools.permutations(names, 2):
+            with self.subTest(prefix=first, other=second):
+                self.assertFalse(second.startswith(first))
 
     def test_registry_matches_files_on_disk(self) -> None:
         """patterns_*.yml 与 patterns 注册表一一对应（B3b 新增 en 词典须同步注册）。"""
@@ -367,6 +684,59 @@ class TestTimeFormsResolve(unittest.TestCase):
 
     def test_no_time_form(self) -> None:
         self.assertIsNone(self._time("总交易额是多少"))
+
+
+class TestEnglishTimeFormsResolve(unittest.TestCase):
+    """英文时间形态 6 kind 各有用例（B3b 新增，不改既有断言）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.planner = planner_mod.Planner(SemanticModel())
+
+    def _time(self, question: str) -> Any:
+        return self.planner._parse_time(question, "en")
+
+    def test_each_kind(self) -> None:
+        cases = {
+            "total commission on 2013-07-05": ("date", "2013-07-05"),
+            "total commission in Q2 2013": ("quarter", "2013Q2"),
+            "total commission in 2013 Q2": ("quarter", "2013Q2"),
+            "total commission in 2013Q2": ("quarter", "2013Q2"),
+            "total commission in May 2014": ("month", 201405),
+            "total commission in may 2014": ("month", 201405),
+            "total commission in December, 2014": ("month", 201412),
+            "total commission for 2013": ("year", 2013),
+            "total commission 2013": ("year", 2013),
+        }
+        for question, expected in cases.items():
+            with self.subTest(question=question):
+                spec = self._time(question)
+                self.assertIsInstance(spec, TimeSpec)
+                assert isinstance(spec, TimeSpec)
+                self.assertEqual((spec.granularity, spec.value), expected)
+
+    def test_bare_year_gated_by_threshold_words(self) -> None:
+        """裸年兜底封锁表：句中含阈值词时数字不得被读成年份。"""
+        for question in (
+            "accounts with over 5000 trades",
+            "accounts with more than 5000 trades",
+        ):
+            with self.subTest(question=question):
+                self.assertIsNone(self._time(question))
+
+    def test_order_sensitivity(self) -> None:
+        """月份名形态不得被裸年兜底截获（顺序被破坏时在此暴露）。"""
+        self.assertEqual(self._time("total commission in May 2014").granularity, "month")
+        self.assertEqual(self._time("total commission in Q2 2013").granularity, "quarter")
+
+    def test_relative_time_rejected(self) -> None:
+        spec = self._time("total commission last quarter")
+        self.assertIsInstance(spec, ClarificationRequest)
+        assert isinstance(spec, ClarificationRequest)
+        self.assertEqual(spec.kind, "relative_time")
+
+    def test_no_time_form(self) -> None:
+        self.assertIsNone(self._time("total commission by branch"))
 
 
 if __name__ == "__main__":

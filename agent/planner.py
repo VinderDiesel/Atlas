@@ -16,9 +16,10 @@
   语言自动检测（句中含任意中文字符 → zh，否则 → en），CLI/API 无需显式参数；
   评测 runner 按样本 tags lang_en 显式传 locale（确定性优先）。英文同义词
   外置在 `semantic/synonyms/en_us.yml`（ADR-0015，由 compiler.load_locale_synonyms
-  加载；YAML ai_context 是中文注记域，英文措辞属解析器形态层）；中文形态
-  触发词（分组/filter/TopN/追问/时间）外置在 `semantic/synonyms/patterns_zh_cn.yml`
-  （ADR-0015 §②，B3a 纯搬运，由 compiler.load_locale_patterns 加载）
+  加载；YAML ai_context 是中文注记域，英文措辞属解析器形态层）；中英形态
+  触发词（时间/分组/TopN/filter/追问）外置在 `semantic/synonyms/patterns_<locale>.yml`
+  （ADR-0015 §②：B3a 中文 / B3b 英文，**纯搬运**，由 compiler.load_locale_patterns
+  加载；ISO 日期/季度中英共享，英文侧以 `ref` 引用中文词典，不复制第二份）
 - 英文 filter 边界：值须为**精确值**（"only for branch X"），裸实体复数词
   （customers/branches 等）作值后缀裁剪；无维度词短语（强调语）不产生 filter，
   与中文同构（见 _EN_ONLY_RE/_EN_EXCL_RE）
@@ -125,11 +126,6 @@ if {kind for kind, _ in _TIME_PATTERNS} != set(_TIME_DISPATCH):
         f"实现 {sorted(_TIME_DISPATCH)}（新增形态需同时补 _TIME_DISPATCH 分支）"
     )
 
-# ISO 形态中英共享（英文侧 `_parse_time_en` 直接用），同源于 zh 词典不复制第二份
-_TIME_BY_KIND = dict(_TIME_PATTERNS)
-_ISO_DATE_RE = _TIME_BY_KIND["iso_date"]
-_ISO_QUARTER_RE = _TIME_BY_KIND["iso_quarter"]
-
 # 相对时间词：命中即反问（固定快照评测下必然漂移，ADR-0014 ③ 设计性不支持）
 _RELATIVE_TIME = _ZH_PATTERNS["time"]["relative_reject"]["words"]
 
@@ -155,73 +151,107 @@ _FOLLOWUP_DIM_RE = _ZH_PATTERNS["followup"]["dim_pattern"]
 
 # ---------------------------------------------------------------------------
 # 英文形态（en，P6 locale 化，2026-09-05）：与中文词表互斥分片，正则独立成族。
-# 时间语序：quarter 两向（Q2 2013 / 2013 Q2）、月份名（May 2014）、ISO date
-# （与 zh 共享 _ISO_DATE_RE/_ISO_QUARTER_RE）；裸年份须介词引导，无介词兜底仅
-# 在句内无阈值词时启用（防 "over 5000" 之类阈值数字被误读成年份）。
+#
+# 形态触发词已从本文件外置到 `semantic/synonyms/patterns_en_us.yml`（ADR-0015 §②，
+# 批次 B3b）——**纯搬运**：常量名与类型不变，值来自词典，解析算法本体未动。
+# ISO 日期/季度与中文同源（词典内 `ref` 引用，不复制第二份）。逐条等价性证明与
+# 验收口径见 docs/design/adr-0015-pattern-lexicon-en.md。
+#
+# 时间语序（声明在词典的 time.patterns 里）：quarter 两向（Q2 2013 / 2013 Q2）、
+# 月份名（May 2014）、ISO date（与 zh 共享）；裸年份须介词引导，无介词兜底仅在
+# 句内无阈值词时启用（防 "over 5000" 之类阈值数字被误读成年份）。
 # ---------------------------------------------------------------------------
 
-_EN_MONTHS = (
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-)
-_EN_MONTH_NUM = {name.lower(): i + 1 for i, name in enumerate(_EN_MONTHS)}
-_EN_QUARTER_RE = re.compile(r"(?:([Qq][1-4])\s+(\d{4})|(\d{4})\s+([Qq][1-4]))")
-_EN_MONTH_RE = re.compile(
-    r"\b(" + "|".join(_EN_MONTHS) + r")\s*,?\s+(\d{4})\b", re.IGNORECASE
-)
-_EN_YEAR_PREP_RE = re.compile(r"\b(?:in|for|during|of|from)\s+(\d{4})\b")
-_EN_YEAR_BARE_RE = re.compile(r"\b(\d{4})\b")
+_EN_PATTERNS = load_locale_patterns("en_us")
+
+# 月份名 → 序号（词典 months 节；键小写，查表前对捕获组做 lower()）
+_EN_MONTH_NUM = _EN_PATTERNS["months"]
+
+# 时间形态：`time.patterns` 是**有序** (kind, 已编译正则) 列表，解析按声明顺序逐个
+# 尝试（原实现的 if-chain 顺序：ISO date → quarter 两向 → ISO quarter → 月份名 →
+# 介词年 → 裸年兜底）。
+_EN_TIME_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = _EN_PATTERNS["time"][
+    "patterns"
+]
+
+
+def _tp_en_iso_date(question: str, m: re.Match[str]) -> TimeSpec | None:
+    """ISO 日期"2013-07-05"（ref 自 zh 词典，中英共享）。"""
+    return TimeSpec("date", m.group(0))
+
+
+def _tp_en_quarter(question: str, m: re.Match[str]) -> TimeSpec | None:
+    """英文季度两向：语序 A"Q2 2013" 用 group(1)/(2)；语序 B"2013 Q2" 用 group(3)/(4)。"""
+    if m.group(1):
+        return TimeSpec("quarter", f"{m.group(2)}Q{m.group(1)[-1]}")
+    return TimeSpec("quarter", f"{m.group(3)}Q{m.group(4)[-1]}")
+
+
+def _tp_en_iso_quarter(question: str, m: re.Match[str]) -> TimeSpec | None:
+    """ISO 季度"2013Q2"（ref 自 zh 词典，中英共享）。"""
+    return TimeSpec("quarter", f"{m.group(1)}Q{m.group(2)}")
+
+
+def _tp_en_month(question: str, m: re.Match[str]) -> TimeSpec | None:
+    """月份名 + 年份"May 2014"（month = 年*100+月；大小写不敏感由词典 flags 声明）。"""
+    return TimeSpec("month", int(m.group(2)) * 100 + _EN_MONTH_NUM[m.group(1).lower()])
+
+
+def _tp_en_year_prep(question: str, m: re.Match[str]) -> TimeSpec | None:
+    """介词引导年份"in 2013" / "during 2013"。"""
+    return TimeSpec("year", int(m.group(1)))
+
+
+def _tp_en_year_bare(question: str, m: re.Match[str]) -> TimeSpec | None:
+    """无介词裸年兜底：句中含阈值词时不启用（防 "over 5000" 误读成年份）。
+
+    返回 None = 本形态不启用、继续下一形态；`year_bare` 是表内**最后一项**，故
+    "继续"必然落到解析尾部的 `return None`——与原 if-chain 的 gate 逐字等价。
+    """
+    if any(w in question.lower() for w in _EN_THRESHOLD_WORDS):
+        return None
+    return TimeSpec("year", int(m.group(1)))
+
+
+# kind 分发表：英文解析器已实现形态的唯一权威，与词典 kind 集合不一致 = 加载失败
+_EN_TIME_DISPATCH: dict[str, Callable[[str, re.Match[str]], TimeSpec | None]] = {
+    "iso_date": _tp_en_iso_date,
+    "quarter": _tp_en_quarter,
+    "iso_quarter": _tp_en_iso_quarter,
+    "month": _tp_en_month,
+    "year_prep": _tp_en_year_prep,
+    "year_bare": _tp_en_year_bare,
+}
+if {kind for kind, _ in _EN_TIME_PATTERNS} != set(_EN_TIME_DISPATCH):
+    raise ValueError(
+        "patterns_en_us.yml 的 time.patterns kind 与解析器实现不一致："
+        f"词典 {sorted(kind for kind, _ in _EN_TIME_PATTERNS)} vs "
+        f"实现 {sorted(_EN_TIME_DISPATCH)}（新增形态需同时补 _EN_TIME_DISPATCH 分支）"
+    )
+
+# 相对时间词：命中即反问（固定快照评测下必然漂移，ADR-0014 ③ 设计性不支持）
+_EN_RELATIVE_TIME = _EN_PATTERNS["time"]["relative_reject"]["words"]
 # 阈值词：裸年兜底封锁表（句中含任意阈值词时不启用无介词年份解析）
-_EN_THRESHOLD_WORDS = (
-    "over", "above", "more than", "greater than", "exceeding",
-    "under", "below", "less than", "fewer than",
-)
-_EN_RELATIVE_TIME = (
-    "last month", "last quarter", "last year", "last week",
-    "this month", "this quarter", "this year", "this week",
-    "recent", "yesterday", "today",
-)
+_EN_THRESHOLD_WORDS = _EN_PATTERNS["time"]["threshold_gate"]["words"]
+
 # 显式分组结构词（by/grouped by/group by/broken down by + 短语；截到时间介词/连词）
-_EN_GROUP_RE = re.compile(
-    r"\b(?:grouped by|group by|broken down by|by)\s+(.+?)"
-    r"(?=\s+(?:in|for|during|of|on|over|under|above|below|with|and)\b|$)"
-)
-_EN_TOP_N_RE = re.compile(r"\b(?:top|best)\s+(\d+)\b")
+_EN_GROUP_RE = _EN_PATTERNS["grouping"]["pattern"]
+_EN_TOP_N_RE = _EN_PATTERNS["topn"]["pattern"]
 # TopN 后短语提维度（"top 3 categories by sales in 1999" → categories），
 # 截到排序词 by / 时间介词 / 连词（与中文"前 N 名"只给数字不同，英文名词后置）
-_EN_TOP_N_DIM_RE = re.compile(
-    r"\b(?:top|best)\s+\d+\s+(.+?)"
-    r"(?=\s+(?:by|in|for|during|of|on|over|under|above|below|with|and)\b|$)"
-)
+_EN_TOP_N_DIM_RE = _EN_PATTERNS["topn_dim"]["pattern"]
 # filter 触发结构（en）：only/排除 + 值短语；值后裸实体复数词（tier 3 customers）
 # 作后缀裁剪；介词 for/of/from 剥除；lookahead 防值吞掉时间/分组短语
-_EN_ONLY_RE = re.compile(
-    r"\bonly\s+(?:for|of|from)?\s*(.+?)"
-    r"(?=\s+(?:in|for|during|of|on|over|under|above|below|with|by|and)\b|"
-    r"\s+(?:the\s+)?(?:customers|branches|accounts|securities|holdings|"
-    r"clients|trades|orders|products|items)\b|$)"
-)
-_EN_EXCL_RE = re.compile(
-    r"\b(?:excluding|except)\s+(.+?)"
-    r"(?=\s+(?:in|for|during|of|on|over|under|above|below|with|by|and)\b|$)"
-)
+_EN_ONLY_RE = _EN_PATTERNS["filter_include"]["pattern"]
+_EN_EXCL_RE = _EN_PATTERNS["filter_exclude"]["pattern"]
 # 度量阈值（HAVING 语义）：over/above/more than… + 数值 + 可选英文量级词/K-M-B 后缀
-_EN_THRESHOLD_GT_RE = re.compile(
-    r"\b(?:over|above|more than|greater than)\s+([\d.]+)"
-    r"\s*(billion|million|thousand|[KMB])?"
-)
-_EN_THRESHOLD_LT_RE = re.compile(
-    r"\b(?:under|below|less than|fewer than)\s+([\d.]+)"
-    r"\s*(billion|million|thousand|[KMB])?"
-)
-_EN_UNIT = {
-    "billion": 1_000_000_000, "million": 1_000_000, "thousand": 1_000,
-    "B": 1_000_000_000, "M": 1_000_000, "K": 1_000,
-}
+_EN_THRESHOLD_GT_RE = _EN_PATTERNS["threshold"]["greater"]["pattern"]
+_EN_THRESHOLD_LT_RE = _EN_PATTERNS["threshold"]["less"]["pattern"]
+_EN_UNIT = _EN_PATTERNS["magnitude"]["en_units"]
 # 指代追问（en）：what about / how about X？与 by X instead（换维壳）；
 # 与中文同构：自由代词与无法归属的碎片 → 反问完整重述
-_EN_FOLLOWUP_WHAT_RE = re.compile(r"(?:what|how)\s+about\s+(.+?)\??\s*$")
-_EN_FOLLOWUP_INSTEAD_RE = re.compile(r"(.+?)\s+instead\??\s*$")
+_EN_FOLLOWUP_WHAT_RE = _EN_PATTERNS["followup"]["what"]["pattern"]
+_EN_FOLLOWUP_INSTEAD_RE = _EN_PATTERNS["followup"]["instead"]["pattern"]
 
 # 同义词表外置（ADR-0015）：zh = 语义模型 ai_context 注记（实测全中文，唯一
 # 例外 GMV/AOV 中英通用）；en = 模型注记 ∪ `semantic/synonyms/en_us.yml`。
@@ -497,7 +527,13 @@ class Planner:
     def _parse_time_en(
         self, question: str
     ) -> TimeSpec | None | ClarificationRequest:
-        """英文绝对时间解析（语序：ISO date → quarter 两向 → 月份名 → 裸年）。"""
+        """英文绝对时间解析（形态顺序见 patterns_en_us.yml 的 time.patterns）。
+
+        与中文同构：按声明顺序逐个尝试，命中后按 kind 分发——与原函数体的
+        if-chain（ISO date → quarter 两向 → ISO quarter → 月份名 → 介词年 → 裸年
+        兜底）逐字等价；只有 `year_bare` 的 handler 会返回 None（词面命中但
+        句含阈值词 → 本形态不启用），且它是表内末项，因此行为与原 gate 一致。
+        """
         lowered = question.lower()
         if any(t in lowered for t in _EN_RELATIVE_TIME):
             return ClarificationRequest(
@@ -506,30 +542,13 @@ class Planner:
                  "evaluation); please use an absolute date",),
                 kind="relative_time",
             )
-        m = _ISO_DATE_RE.search(question)
-        if m:
-            return TimeSpec("date", m.group(0))
-        m = _EN_QUARTER_RE.search(question)
-        if m:
-            # 语序 A：Q2 2013 → group(2)；语序 B：2013 Q2 → group(3)/(4)
-            if m.group(1):
-                return TimeSpec("quarter", f"{m.group(2)}Q{m.group(1)[-1]}")
-            return TimeSpec("quarter", f"{m.group(3)}Q{m.group(4)[-1]}")
-        m = _ISO_QUARTER_RE.search(question)
-        if m:
-            return TimeSpec("quarter", f"{m.group(1)}Q{m.group(2)}")
-        m = _EN_MONTH_RE.search(question)
-        if m:
-            month = _EN_MONTH_NUM[m.group(1).lower()]
-            return TimeSpec("month", int(m.group(2)) * 100 + month)
-        m = _EN_YEAR_PREP_RE.search(question)
-        if m:
-            return TimeSpec("year", int(m.group(1)))
-        # 无介词裸年兑底：句中含阈值词时不启用（防 "over 5000" 误读成年份）
-        if not any(w in lowered for w in _EN_THRESHOLD_WORDS):
-            m = _EN_YEAR_BARE_RE.search(question)
-            if m:
-                return TimeSpec("year", int(m.group(1)))
+        for kind, regex in _EN_TIME_PATTERNS:
+            m = regex.search(question)
+            if not m:
+                continue
+            spec = _EN_TIME_DISPATCH[kind](question, m)
+            if spec is not None:
+                return spec
         return None
 
     def _parse_dimensions(self, question: str, locale: str) -> tuple[str, ...]:

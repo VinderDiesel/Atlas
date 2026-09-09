@@ -1,0 +1,149 @@
+# 英文形态触发词词典（locale=en_us）：解析器形态层的**数据**，不是口径定义
+#
+# owner: agent（解析器形态层；口径定义的唯一权威源仍是 semantic/ossie/）
+# 最后修改: 2026-09-09 从 agent/planner.py 的字面量正则/词表外置（ADR-0015 §②，
+#           批次 B3b）——**纯搬运**：模式串逐字复制，未做任何"顺手优化"。
+#           等价性对照与验收口径见 docs/design/adr-0015-pattern-lexicon-en.md。
+#
+# 分节即能力（节名与 planner 英文解析阶段一一对应，缺节 = 加载失败）：
+#   time / months / grouping / topn / topn_dim / filter_include / filter_exclude /
+#   threshold / magnitude / followup
+#
+# 与中文词典（patterns_zh_cn.yml）的三点差异（本文件特有的机制，见 ADR-0015 §②）：
+#   1. `time.patterns` 的条目除 `pattern` 外还可写 `ref`——引用 zh 词典里的同名
+#      kind 并复用**同一已编译对象**（ISO 日期/季度与语言无关，不复制第二份）；
+#   2. 条目可写 `flags`（封闭白名单 IGNORECASE/MULTILINE/DOTALL/VERBOSE）——月份名
+#      是全仓唯一需要大小写不敏感的形态，声明式放行，不参与正则重组；
+#   3. `time.threshold_gate`（英文独有）：裸年份兜底的**封锁表**，句中含任意阈值词
+#      时不启用无介词年份解析（防 "over 5000" 被读成年份）。
+#
+# 换场景怎么改：新场景要支持 "greater than" 之外的阈值措辞，只在本文件
+# threshold.greater.pattern 的交替里加词（并同步 time.threshold_gate.words），
+# 并补对应黄金集样本复验。
+
+# -- 时间形态（绝对时间解析 + 相对时间拒答）--------------------------------
+# 顺序即语义（与中文同纪律）：解析按声明顺序逐个尝试。此处顺序原本写在
+# _parse_time_en 的 if-chain 里（ISO date → quarter 两向 → ISO quarter → 月份名 →
+# 介词年 → 裸年兜底），本批外置后顺序成为可评审的声明位置。
+time:
+  # 相对时间词：命中即反问（固定快照评测下相对时间必然漂移，ADR-0014 ③ 设计性不支持）
+  # 匹配前问句已 lower()，故词表一律小写（含空格词组）
+  relative_reject:
+    words:
+      - last month
+      - last quarter
+      - last year
+      - last week
+      - this month
+      - this quarter
+      - this year
+      - this week
+      - recent
+      - yesterday
+      - today
+  patterns:
+    # 1) ISO 日期："2013-07-05"（与 zh 共享，ref 引用不复制）
+    - kind: iso_date
+      ref: iso_date
+    # 2) 英文季度两向："Q2 2013" / "2013 Q2"（取组：语序 A 用 g1/g2，语序 B 用 g3/g4）
+    - kind: quarter
+      pattern: '(?:([Qq][1-4])\s+(\d{4})|(\d{4})\s+([Qq][1-4]))'
+    # 3) ISO 季度："2013Q2"（与 zh 共享，ref 引用不复制）
+    - kind: iso_quarter
+      ref: iso_quarter
+    # 4) 月份名 + 年份："May 2014" / "may, 2014"（月份名交替串即本文件 months 表的键，
+    #    两者必须同步改——加载期校验本表每个键都能被本模式命中，反方向由
+    #    tests/test_locale_patterns.py 逐名锁定）
+    - kind: month
+      pattern: '\b(January|February|March|April|May|June|July|August|September|October|November|December)\s*,?\s+(\d{4})\b'
+      flags: [IGNORECASE]
+    # 5) 介词引导年份："in 2013" / "during 2013"
+    - kind: year_prep
+      pattern: '\b(?:in|for|during|of|from)\s+(\d{4})\b'
+    # 6) 无介词裸年兜底（受 time.threshold_gate 封锁，见 §3 差异 3）
+    - kind: year_bare
+      pattern: '\b(\d{4})\b'
+  # 裸年兜底封锁表：句内含任意阈值词 → 不启用 year_bare
+  threshold_gate:
+    words:
+      - over
+      - above
+      - more than
+      - greater than
+      - exceeding
+      - under
+      - below
+      - less than
+      - fewer than
+
+# -- 月份名 → 序号（供 month 形态换算 month = 年*100+月）--------------------
+# 键必须小写（查表前对捕获组做 lower()）；与上面 month 模式的交替串同源：加载器校
+# 表键 → 模式命中，测试校 模式交替串 → 表键（加载器不解析正则、不重组模式）。
+months:
+  january: 1
+  february: 2
+  march: 3
+  april: 4
+  may: 5
+  june: 6
+  july: 7
+  august: 8
+  september: 9
+  october: 10
+  november: 11
+  december: 12
+
+# -- 分组结构（显式结构词，通用词无结构时不触发分组）------------------------
+grouping:
+  # "by branch / grouped by customer tier / broken down by product"：截到时间介词
+  # 或连词为止，短语内再做维度字段匹配
+  pattern: '\b(?:grouped by|group by|broken down by|by)\s+(.+?)(?=\s+(?:in|for|during|of|on|over|under|above|below|with|and)\b|$)'
+
+# -- TopN（"top N" / "best N" → 按指标降序 + limit）-------------------------
+topn:
+  pattern: '\b(?:top|best)\s+(\d+)\b'
+
+# -- TopN 后短语提维度（英文名词后置，与中文"前 N 名"只给数字不同）----------
+# "top 3 categories by sales in 1999" → categories；截到排序词 by / 时间介词 / 连词
+topn_dim:
+  pattern: '\b(?:top|best)\s+\d+\s+(.+?)(?=\s+(?:by|in|for|during|of|on|over|under|above|below|with|and)\b|$)'
+
+# -- filter：维度值等值（ADR-0014 ①）--------------------------------------
+filter_include:
+  # "only for branch X" / "only tier 3 customers"：介词 for/of/from 剥除；值后裸实体
+  # 复数词作后缀裁剪；lookahead 防值吞掉时间/分组短语
+  pattern: '\bonly\s+(?:for|of|from)?\s*(.+?)(?=\s+(?:in|for|during|of|on|over|under|above|below|with|by|and)\b|\s+(?:the\s+)?(?:customers|branches|accounts|securities|holdings|clients|trades|orders|products|items)\b|$)'
+
+# -- filter：维度值排除 ----------------------------------------------------
+filter_exclude:
+  # "excluding tier 1" / "except branch A"
+  pattern: '\b(?:excluding|except)\s+(.+?)(?=\s+(?:in|for|during|of|on|over|under|above|below|with|by|and)\b|$)'
+
+# -- filter：度量阈值（HAVING 语义）----------------------------------------
+threshold:
+  greater:
+    # "over 5 million" / "greater than 1.2B" → 编译为 metric > N
+    pattern: '\b(?:over|above|more than|greater than)\s+([\d.]+)\s*(billion|million|thousand|[KMB])?'
+  less:
+    # "under 1 million" / "fewer than 5000" → 编译为 metric < N
+    pattern: '\b(?:under|below|less than|fewer than)\s+([\d.]+)\s*(billion|million|thousand|[KMB])?'
+
+# -- 量级映射（英文侧只有倍率换算，无中文编号）------------------------------
+magnitude:
+  # 词形与字母后缀共存（million / M）；大小写敏感——正则只声明 [KMB] 大写
+  en_units:
+    billion: 1_000_000_000
+    million: 1_000_000
+    thousand: 1_000
+    B: 1_000_000_000
+    M: 1_000_000
+    K: 1_000
+
+# -- 指代追问（ADR-0014 ②，仅全量解析 unmatched 的残句才进入）--------------
+followup:
+  what:
+    # "what about branch A?" / "how about 2014?"
+    pattern: '(?:what|how)\s+about\s+(.+?)\??\s*$'
+  instead:
+    # "by customer tier instead"（换维壳）
+    pattern: '(.+?)\s+instead\??\s*$'

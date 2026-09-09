@@ -283,7 +283,7 @@ def load_locale_synonyms(locale: str) -> dict[str, dict[str, tuple[str, ...]]]:
 # 静默降级等于让某类问句在无人察觉时不再被解析（口径风险）。
 # ---------------------------------------------------------------------------
 
-_PATTERN_FILES = {"zh_cn": "patterns_zh_cn.yml"}
+_PATTERN_FILES = {"zh_cn": "patterns_zh_cn.yml", "en_us": "patterns_en_us.yml"}
 
 # 每 locale 的必需节（缺任何一节 = 该能力形态失去触发词）与顺序无关的白名单
 _PATTERN_SECTIONS: dict[str, tuple[str, ...]] = {
@@ -297,6 +297,29 @@ _PATTERN_SECTIONS: dict[str, tuple[str, ...]] = {
         "magnitude",
         "followup",
     ),
+    # 英文独有 topn_dim（名词后置提维度）与 months（月份名→序号）；time 节内多一张
+    # threshold_gate（裸年份兜底的封锁表）
+    "en_us": (
+        "time",
+        "months",
+        "grouping",
+        "topn",
+        "topn_dim",
+        "filter_include",
+        "filter_exclude",
+        "threshold",
+        "magnitude",
+        "followup",
+    ),
+}
+
+# flags 声明式白名单（ADR-0015 §②）：只放行 re 的四个纯语法标志，不放行任意整数。
+# 仅英文词典可用——中文形态一律不需要，不把未经验证的能力摊开。
+_PATTERN_FLAGS = {
+    "IGNORECASE": re.IGNORECASE,
+    "MULTILINE": re.MULTILINE,
+    "DOTALL": re.DOTALL,
+    "VERBOSE": re.VERBOSE,
 }
 
 _PATTERNS_CACHE: dict[str, dict[str, Any]] = {}
@@ -319,14 +342,33 @@ def _pattern_doc(path: Path, locale: str) -> dict[str, Any]:
     return doc
 
 
-def _compile_pattern(raw: Any, where: str, path: Path) -> re.Pattern[str]:
+def _compile_pattern(
+    raw: Any, where: str, path: Path, flags: int = 0
+) -> re.Pattern[str]:
     """模式串 → 已编译正则。**不做 strip**：首尾空白在正则里有语义。"""
     if not isinstance(raw, str) or not raw:
         raise ValueError(f"{where} 必须是非空正则字符串：{path}")
     try:
-        return re.compile(raw)
+        return re.compile(raw, flags)
     except re.error as exc:
         raise ValueError(f"{where} 不是合法正则（{exc}）：{path}") from exc
+
+
+def _pattern_flags(raw: Any, where: str, path: Path) -> int:
+    """`flags: [IGNORECASE]` → re 标志位或值；未知/重复 flag 名报错。"""
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)) or not raw:
+        raise ValueError(f"{where} 必须是非空 flag 名列表：{path}")
+    merged = 0
+    for name in raw:
+        if not isinstance(name, str) or name not in _PATTERN_FLAGS:
+            raise ValueError(
+                f"{where} 含不支持的 flag {name!r}"
+                f"（允许：{', '.join(sorted(_PATTERN_FLAGS))}）：{path}"
+            )
+        if merged & _PATTERN_FLAGS[name]:
+            raise ValueError(f"{where} flag 重复：{name}（{path}）")
+        merged |= _PATTERN_FLAGS[name]
+    return merged
 
 
 def _pattern_words(raw: Any, where: str, path: Path) -> tuple[str, ...]:
@@ -363,6 +405,59 @@ def _single_node(node: Any, where: str, path: Path) -> re.Pattern[str]:
     return _compile_pattern(node["pattern"], f"{where}.pattern", path)
 
 
+def _time_pattern_items(
+    items: Any, path: Path, *, shared: dict[str, re.Pattern[str]] | None = None
+) -> list[tuple[str, re.Pattern[str]]]:
+    """`time.patterns` → **有序** (kind, 已编译正则) 列表（两 locale 共用）。
+
+    顺序即语义：解析按声明顺序逐个尝试，短模式先跑会截获长模式的输入。
+    `shared is None`（中文词典）——条目必须恰含 `kind` 与 `pattern`：中文形态
+    既不需要 flags，也没有可引用的上游。给出 `shared`（英文词典）时额外允许：
+    - `{kind, ref}`：引用上游（zh 词典）同名 kind，复用**同一已编译对象**；
+      ref 不携带 pattern，因此不存在"先抄一份再用 ref 校对"的半搬运动作；
+    - `{kind, pattern, flags}`：声明式正则标志（见 _PATTERN_FLAGS）。
+    """
+    if isinstance(items, str) or not isinstance(items, (list, tuple)) or not items:
+        raise ValueError(f"time.patterns 必须是 非空的 kind/pattern 列表：{path}")
+    kinds: list[str] = []
+    compiled: list[tuple[str, re.Pattern[str]]] = []
+    for index, item in enumerate(items):
+        where = f"time.patterns[{index}]"
+        if not isinstance(item, dict) or "kind" not in item:
+            raise ValueError(f"{where} 必须是含 kind 的映射：{path}")
+        kind = str(item["kind"])
+        if not kind or kind != kind.strip():
+            raise ValueError(f"{where}.kind 非法（空或含首尾空白）：{path}")
+        if kind in kinds:
+            raise ValueError(f"time.patterns kind 重复：{kind}（{path}）")
+        keys = set(item) - {"kind"}
+        if keys == {"pattern"}:
+            regex = _compile_pattern(item["pattern"], f"{where}.pattern", path)
+        elif shared is not None and keys == {"ref"}:
+            target = str(item["ref"])
+            if target not in shared:
+                raise ValueError(
+                    f"{where}.ref 指向不存在的形态 {target!r}"
+                    f"（可引用：{', '.join(sorted(shared))}）：{path}"
+                )
+            regex = shared[target]  # 同一对象，不是副本
+        elif shared is not None and keys == {"pattern", "flags"}:
+            regex = _compile_pattern(
+                item["pattern"],
+                f"{where}.pattern",
+                path,
+                _pattern_flags(item["flags"], f"{where}.flags", path),
+            )
+        else:
+            allowed = "kind+pattern" + ("/ref" if shared is not None else "")
+            raise ValueError(
+                f"{where} 必须恰含 {allowed}（flags 只能配 pattern）：{path}"
+            )
+        kinds.append(kind)
+        compiled.append((kind, regex))
+    return compiled
+
+
 def _load_zh_patterns(path: Path) -> dict[str, Any]:
     """中文形态词典 → 归一化结构（节名与 planner 解析阶段一一对应）。
 
@@ -378,24 +473,7 @@ def _load_zh_patterns(path: Path) -> dict[str, Any]:
     reject = time_doc["relative_reject"]
     if not isinstance(reject, dict) or set(reject) != {"words"}:
         raise ValueError(f"time.relative_reject 必须恰含 words 一键：{path}")
-    items = time_doc["patterns"]
-    if isinstance(items, str) or not isinstance(items, (list, tuple)) or not items:
-        raise ValueError(f"time.patterns 必须是 非空的 kind/pattern 列表：{path}")
-    kinds: list[str] = []
-    compiled: list[tuple[str, re.Pattern[str]]] = []
-    for index, item in enumerate(items):
-        where = f"time.patterns[{index}]"
-        if not isinstance(item, dict) or set(item) != {"kind", "pattern"}:
-            raise ValueError(f"{where} 必须恰含 kind 与 pattern 两键：{path}")
-        kind = str(item["kind"])
-        if not kind or kind != kind.strip():
-            raise ValueError(f"{where}.kind 非法（空或含首尾空白）：{path}")
-        if kind in kinds:
-            raise ValueError(f"time.patterns kind 重复：{kind}（{path}）")
-        kinds.append(kind)
-        compiled.append(
-            (kind, _compile_pattern(item["pattern"], f"{where}.pattern", path))
-        )
+    compiled = _time_pattern_items(time_doc["patterns"], path)
 
     magnitude = doc["magnitude"]
     if not isinstance(magnitude, dict) or set(magnitude) != {"cn_units", "cn_numerals"}:
@@ -447,7 +525,98 @@ def _load_zh_patterns(path: Path) -> dict[str, Any]:
     }
 
 
-_PATTERN_LOADERS: dict[str, Callable[[Path], dict[str, Any]]] = {"zh_cn": _load_zh_patterns}
+def _months_map(raw: Any, month_re: re.Pattern[str], path: Path) -> dict[str, int]:
+    """`months`（小写月份名 → 序号）+ 与 month 形态的交叉校验。
+
+    月份名同时活在两处：`time.patterns` 里 month 模式的交替串、与本表的键——这是
+    英文词典唯一一处"同一事实两个书写位置"（交替串是正则一部分，不能由代码重组）。
+    加载期强制：本表每个键都必须能被该模式命中，且捕获组 lower() 后回落到同一名字
+    （改了表没改模式、或改了模式没改表，都在此响亮报错，而不是解析时 KeyError）。
+    """
+    months = _pattern_map(raw, "months", path)
+    for name in months:
+        if name != name.lower():
+            raise ValueError(
+                f"months 键必须小写（查表前对捕获组做 lower()）：{name}（{path}）"
+            )
+        for probe in (name, name.capitalize()):
+            hit = month_re.search(f"{probe} 2014")
+            if hit is None or hit.group(1).lower() != name:
+                raise ValueError(
+                    f"months.{name} 与 time.patterns 的 month 模式不同源："
+                    f"{probe!r} 未被该模式命中（{path}）"
+                )
+    return months
+
+
+def _load_en_patterns(path: Path) -> dict[str, Any]:
+    """英文形态词典 → 归一化结构（与中文同构的两处差异：ref / flags）。
+
+    ISO 日期与 ISO 季度与语言无关，本词典以 `ref` 引用 zh 词典的同名形态，加载期
+    解析为**同一已编译对象**（权威源唯一，不会改一处漏一处）；因此 zh 词典必须先
+    加载（由本函数触发，进程内缓存）。`months` 表与 month 模式的交替串交叉校验。
+    """
+    doc = _pattern_doc(path, "en_us")
+
+    shared = dict(load_locale_patterns("zh_cn")["time"]["patterns"])
+    time_doc = doc["time"]
+    expected = {"relative_reject", "patterns", "threshold_gate"}
+    if not isinstance(time_doc, dict) or set(time_doc) != expected:
+        raise ValueError(f"time 必须恰含 {sorted(expected)} 三键：{path}")
+    words: dict[str, tuple[str, ...]] = {}
+    for key in ("relative_reject", "threshold_gate"):
+        node = time_doc[key]
+        if not isinstance(node, dict) or set(node) != {"words"}:
+            raise ValueError(f"time.{key} 必须恰含 words 一键：{path}")
+        words[key] = _pattern_words(node["words"], f"time.{key}.words", path)
+    compiled = _time_pattern_items(time_doc["patterns"], path, shared=shared)
+    by_kind = dict(compiled)
+    if "month" not in by_kind:
+        raise ValueError(f"time.patterns 必须含 kind: month（与 months 表交叉校验）：{path}")
+
+    magnitude = doc["magnitude"]
+    if not isinstance(magnitude, dict) or set(magnitude) != {"en_units"}:
+        raise ValueError(f"magnitude 必须恰含 en_units 一键：{path}")
+
+    threshold = doc["threshold"]
+    if not isinstance(threshold, dict) or set(threshold) != {"greater", "less"}:
+        raise ValueError(f"threshold 必须恰含 greater 与 less 两键：{path}")
+
+    followup = doc["followup"]
+    if not isinstance(followup, dict) or set(followup) != {"what", "instead"}:
+        raise ValueError(f"followup 必须恰含 what 与 instead 两键：{path}")
+
+    single = ("grouping", "topn", "topn_dim", "filter_include", "filter_exclude")
+    return {
+        "time": {
+            "relative_reject": {"words": words["relative_reject"]},
+            "patterns": tuple(compiled),
+            "threshold_gate": {"words": words["threshold_gate"]},
+        },
+        "months": _months_map(doc["months"], by_kind["month"], path),
+        **{key: {"pattern": _single_node(doc[key], key, path)} for key in single},
+        "threshold": {
+            side: {
+                "pattern": _single_node(threshold[side], f"threshold.{side}", path)
+            }
+            for side in ("greater", "less")
+        },
+        "magnitude": {
+            "en_units": _pattern_map(
+                magnitude["en_units"], "magnitude.en_units", path
+            )
+        },
+        "followup": {
+            side: {"pattern": _single_node(followup[side], f"followup.{side}", path)}
+            for side in ("what", "instead")
+        },
+    }
+
+
+_PATTERN_LOADERS: dict[str, Callable[[Path], dict[str, Any]]] = {
+    "zh_cn": _load_zh_patterns,
+    "en_us": _load_en_patterns,
+}
 
 
 def load_locale_patterns(locale: str) -> dict[str, Any]:
@@ -455,8 +624,8 @@ def load_locale_patterns(locale: str) -> dict[str, Any]:
 
     返回按节组织的归一化结构，模式串已编译为 `re.Pattern`（顺序保留）。
     locale 封闭注册表：未注册 → ValueError（不拼接任意文件名）；已注册但文件
-    缺失 → ValueError（宁可启动即失败，不出口径）。B3a 只注册 zh_cn——英文形态
-    词典属 B3b，届时 planner 的英文常量一并接线。
+    缺失 → ValueError（宁可启动即失败，不出口径）。英文词典（en_us，B3b）可
+    以 `ref` 引用中文词典的共享形态，因此加载 en 会连带加载 zh（见 _PATTERN_LOADERS）。
     """
     if locale in _PATTERNS_CACHE:
         return _PATTERNS_CACHE[locale]
