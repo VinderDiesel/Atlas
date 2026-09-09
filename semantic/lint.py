@@ -5,6 +5,7 @@
 2. governance_validate —— 治理扩展（schema / FIBO IRI 注册表 / 策略与黄金集引用）
 3. gold schema 校验   —— eval/gold/*.json 结构（FIBO 闭包深度校验见 eval/gold/validate_gold.py）
 4. 权威源唯一性     —— semantic/ 下语义定义文件只允许住在权威目录（ADR-0002/0015）
+5. values 快照锁定  —— semantic/values/*.json 可被运行时加载、且绑定当前锁定快照（ADR-0016）
 
 任一环节失败即返回非零退出码。
 
@@ -20,15 +21,20 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import yaml
 
+from agent.value_domain import parse_profile
 from semantic import governance_validate, ossie_validate
 
 REPO = Path(__file__).resolve().parent.parent
 GOLD_SCHEMA = REPO / "eval" / "gold" / "schema.json"
 SEMANTIC_ROOT = REPO / "semantic"
+VALUES_DIR = SEMANTIC_ROOT / "values"
+SNAPSHOT_DIR = REPO / "data" / "snapshots"
 # 语义定义文件（*.yaml / *.yml）允许存放的目录（ADR-0002：权威源唯一 = ossie/；
-# ADR-0015：locale 同义词/形态词典在 synonyms/；行级策略声明在 policies/）
-_AUTHORITATIVE_DIRS = frozenset({"ossie", "synonyms", "policies"})
+# ADR-0015：locale 同义词/形态词典在 synonyms/；行级策略声明在 policies/；
+# ADR-0016：维度值域快照在 values/——机器生成，与词典/策略同一目录职责纪律）
+_AUTHORITATIVE_DIRS = frozenset({"ossie", "synonyms", "policies", "values"})
 # 不检查位置的非定义目录（`_*` 前缀归档区另走豁免分支）
 _EXEMPT_DIRS = _AUTHORITATIVE_DIRS | {"__pycache__"}
 
@@ -81,6 +87,112 @@ def check_gold_schema() -> list[str]:
     return errors
 
 
+def _ossie_dimension_fields() -> dict[str, set[str]]:
+    """ossie 模型名 → dim_* 数据集的非时间字段名（值域文件允许的归属域）。
+
+    只做**存在性**判定（字段是否真在该模型的维度表里），不复制 planner 的
+    "必须有同义词" 规则——那条完整性检查在 tests/test_value_domain.py 用运行时
+    加载器做（覆盖 = 注册维度全集有 profile 文件）。
+    """
+    index: dict[str, set[str]] = {}
+    for path in sorted((REPO / "semantic" / "ossie").glob("*.ossie.yaml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for model in doc.get("semantic_model", []):
+            fields: set[str] = set()
+            for ds in model.get("datasets", []):
+                if not str(ds.get("name", "")).startswith("dim_"):
+                    continue
+                for f in ds.get("fields", []):
+                    if f.get("dimension", {}).get("is_time"):
+                        continue
+                    fields.add(str(f["name"]))
+            index[str(model["name"])] = fields
+    return index
+
+
+def _latest_snapshot_meta(snapshot_dir: Path = SNAPSHOT_DIR) -> dict | None:
+    """最新锁定快照 meta（按 created_at）——值域 snapshot_sha 的比对基准。"""
+    metas = [
+        json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted(snapshot_dir.glob("*.meta.json"))
+    ]
+    if not metas:
+        return None
+    return max(metas, key=lambda m: str(m.get("created_at", "")))
+
+
+def check_value_profiles(
+    values_dir: Path | None = None,
+    snapshot_dir: Path | None = None,
+) -> list[str]:
+    """值域快照绑定校验（ADR-0016 §③）。
+
+    规则：
+    1. 文件名必须为 `<model>.<field>.json`，且 model/field 与内容一致；
+    2. 运行时加载器能解析（_parse_profile 的强校验契约）；
+    3. model 必须是已知 ossie 模型，field 必须是该模型 dim_* 数据集的非时间字段；
+    4. snapshot_sha 必须等于当前最新锁定 meta 的 sha（漂移即红，重跑
+       `make profile-values` 同步）；
+    5. registered 值域的 source_table 必须在最新锁定快照的表白名单内。
+
+    目录不存在或为空 → 不报错（值域未启用，完整性检查在 tests/）。
+    """
+    base = values_dir or VALUES_DIR
+    snap_dir = snapshot_dir or SNAPSHOT_DIR
+    if not base.exists():
+        return []
+    files = sorted(base.glob("*.json"))
+    if not files:
+        return []
+    errors: list[str] = []
+    index = _ossie_dimension_fields()
+    meta = _latest_snapshot_meta(snap_dir)
+    if meta is None:
+        return [f"值域文件存在但无锁定快照 meta 可比对：{snap_dir}"]
+    allowed_tables = {
+        f"atlas.{ns}.{table}"
+        for ns, tables in meta.get("row_counts", {}).items()
+        for table in tables
+    }
+    for path in files:
+        stem = path.stem
+        parts = stem.split(".")
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            errors.append(f"{path.name}：文件名必须是 <model>.<field>.json")
+            continue
+        expected_model, expected_field = parts
+        try:
+            profile = parse_profile(path)
+        except ValueError as exc:
+            errors.append(f"{path.name}：运行时加载失败（{exc}）")
+            continue
+        if profile.model != expected_model or profile.field != expected_field:
+            errors.append(
+                f"{path.name}：内容 model/field ({profile.model}/{profile.field}) "
+                f"与文件名 ({expected_model}/{expected_field}) 不一致"
+            )
+        if profile.model not in index:
+            errors.append(f"{path.name}：模型 {profile.model!r} 不在已知 ossie 模型内")
+            continue
+        if profile.field not in index[profile.model]:
+            errors.append(
+                f"{path.name}：字段 {profile.field!r} 不在模型 {profile.model!r} 的 "
+                "dim_* 数据集内（非时间字段）"
+            )
+        if profile.snapshot_sha != str(meta["sha"]):
+            errors.append(
+                f"{path.name}：snapshot_sha {profile.snapshot_sha!r} ≠ 最新锁定快照 "
+                f"{meta['sha']!r}（请重跑 make profile-values 同步）"
+            )
+        if profile.status == "registered" and profile.source_table is not None:
+            if profile.source_table not in allowed_tables:
+                errors.append(
+                    f"{path.name}：source_table {profile.source_table!r} 不在锁定快照 "
+                    "的表白名单内（快照可能已变，请重跑 make profile-values）"
+                )
+    return errors
+
+
 def main() -> int:
     files = sorted(Path(REPO / "semantic" / "ossie").glob("*.ossie.yaml"))
 
@@ -125,7 +237,20 @@ def main() -> int:
     if errors:
         print(f"\n[authority] 校验失败：{len(errors)} 个问题")
         return 1
-    print("✅ [authority] 语义定义文件仅在权威目录（ossie/ synonyms/ policies/）")
+    print("✅ [authority] 语义定义文件仅在权威目录（ossie/ synonyms/ policies/ values/）")
+
+    # 5) 值域快照绑定
+    errors = check_value_profiles()
+    for err in errors:
+        print(f"  ❌ [values] {err}")
+    if errors:
+        print(f"\n[values] 校验失败：{len(errors)} 个问题")
+        return 1
+    n_values = len(sorted(VALUES_DIR.glob("*.json")))
+    if n_values:
+        print(f"✅ [values] 值域快照绑定校验通过：{n_values} 个文件")
+    else:
+        print("✅ [values] 值域快照绑定校验通过（目录为空，完整性检查在 tests/）")
 
     print("\nlint 全部通过")
     return 0

@@ -491,6 +491,7 @@ atlas-data-platform/
 | `make plan Q="..."` | 问句 → 指标计划（不执行） |
 | `make compile` | 计划 → 只读 SQL |
 | `make ask` | Data Agent 多轮问数（真实 Doris + 锁定快照；无参数进交互会话） |
+| `make query Q="..."` | 一步问数（Planner→Compiler→Guard→Doris 真连库）：`--domain retail` 切零售、`--format json` 机读、未知指标默认澄清、`--role branch_manager --role-ctx branch=BR_A1` 注入行级策略；退出码 0/1/2/3 分流 |
 | `make e2e` | Data Agent 端到端验收门禁：5 场景 + handoff（Day 48） |
 | `make eval` | 跑评测集，产出 report JSON |
 | `make retrieve` | 指标检索评测（BM25；`ENGINE=milvus` 走 Milvus 稀疏向量；`ENGINE=fuse` 走 RRF 双路融合；`ENGINE=rerank` 走元数据 Rerank） |
@@ -720,6 +721,13 @@ per-user identity 透传属 0011 决策 4 独立项——见 KL #28 ③。
     metric（无从挂载聚合比较）均返回 ClarificationRequest；时间词不并入 filter
     （时间一律走 TimeSpec，相对时间见第 11 条）——与 ADR-0014 ① 裁定一致，
     这些形态是澄清机制的评测载体而非缺陷（gold-149~155 中歧义样本即为此类）
+30. **维度值域是快照态而非实时（ADR-0016，B4）**：`semantic/values/*.json` 由
+    `make profile-values` 从锁定快照 SELECT DISTINCT 生成，值域与最新锁定快照绑定
+    （`make lint [values]` 漂移即红）。数据重新装载后必须重跑 `make profile-values`
+    同步值域，否则 lint 红。同名维度字段跨数据集时，编译器按 datasets 顺序首匹配
+    （实测金融 `Status` 绑到 `fact_trades` 而非 `dim_account`），该事实如实记进
+    profile 的 `bound_dataset` 与 `note`，本批不改编译器。大基数列（distinct > 200）
+    跳过注册，planner 对该列不做值校验——合法值与非法值都透传，静默漏匹配风险仍在
 
 **如果有真实企业数据，我会优先补做**：数据契约、IAM 集成、审计留痕、容灾、并发压测、模型红队测试、变更管理流程。
 

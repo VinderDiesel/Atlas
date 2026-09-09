@@ -79,6 +79,8 @@ atlas-data-platform/
 │   ├── governance/      # ATLAS 治理扩展 JSON Schema（挂在 custom_extensions 下）
 │   ├── synonyms/        # locale 词典：同义词表（en_us/zh_cn）+ 形态触发词
 │   │                    #（patterns_<locale>）——解析器形态层的数据，ADR-0015
+│   ├── values/          # 维度值域快照（ADR-0016）：`make profile-values` 产物，
+│   │                    # 机器生成值本体 + 人工追加别名；snapshot_sha 绑定锁定快照
 │   ├── policies/        # RowPolicy 行级权限与脱敏策略声明
 │   ├── migrations/      # 语义层变更记录（版本演进）
 │   └── _legacy/         # ❌ 已归档：ADR-0002 前的自研 DSL 定义，零引用，仅演进对照

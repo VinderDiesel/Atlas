@@ -911,5 +911,185 @@ class TestEnglishGoldPlanner(unittest.TestCase):
         self.assertEqual(plan.filters, (Filter("s_city", "=", "Midway"),))
 
 
+class TestPlannerValueDomain(unittest.TestCase):
+    """planner 值域校验集成（ADR-0016 §②）：用 tmp fixture 注入值域，验证归一/澄清。
+
+    真实仓库测试：若 semantic/values/ 已生成（B4 产物已入库），gold-171/gold-068
+    必须通过；否则跳过（完整性检查在 tests/test_value_domain.py）。
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        # ExchangeID: NASDAQ, NYSE, AMEX, PCX + 别名 NSDQ → NASDAQ
+        self._write(
+            "atlas_finance_analytics.ExchangeID.json",
+            {
+                "model": "atlas_finance_analytics",
+                "field": "ExchangeID",
+                "status": "registered",
+                "snapshot_sha": "abc1234",
+                "generated_at": "2026-09-09T12:00:00+08:00",
+                "bound_dataset": "dim_security",
+                "source_table": "atlas.dwd.dim_security",
+                "source_column": "ExchangeID",
+                "distinct_count": 4,
+                "row_count": 1000,
+                "null_count": 0,
+                "max_cardinality": 200,
+                "skip_reason": None,
+                "values": [
+                    {"value": "NASDAQ", "count": 100},
+                    {"value": "NYSE", "count": 90},
+                    {"value": "AMEX", "count": 50},
+                    {"value": "PCX", "count": 30},
+                ],
+                "aliases": {"nsdq": "NASDAQ"},
+                "note": "",
+            },
+        )
+        # s_city: Midway, Fairview（用于 case 归一）
+        self._write(
+            "atlas_retail_analytics.s_city.json",
+            {
+                "model": "atlas_retail_analytics",
+                "field": "s_city",
+                "status": "registered",
+                "snapshot_sha": "abc1234",
+                "generated_at": "2026-09-09T12:00:00+08:00",
+                "bound_dataset": "dim_store",
+                "source_table": "atlas.dwd.dim_store",
+                "source_column": "s_city",
+                "distinct_count": 2,
+                "row_count": 100,
+                "null_count": 0,
+                "max_cardinality": 200,
+                "skip_reason": None,
+                "values": [{"value": "Midway", "count": 200}, {"value": "Fairview", "count": 100}],
+                "aliases": {},
+                "note": "",
+            },
+        )
+        # i_category: 10 个真实值（用于 unknown 反问）
+        self._write(
+            "atlas_retail_analytics.i_category.json",
+            {
+                "model": "atlas_retail_analytics",
+                "field": "i_category",
+                "status": "registered",
+                "snapshot_sha": "abc1234",
+                "generated_at": "2026-09-09T12:00:00+08:00",
+                "bound_dataset": "dim_item",
+                "source_table": "atlas.dwd.dim_item",
+                "source_column": "i_category",
+                "distinct_count": 10,
+                "row_count": 1000,
+                "null_count": 0,
+                "max_cardinality": 200,
+                "skip_reason": None,
+                "values": [
+                    {"value": "Books", "count": 100},
+                    {"value": "Sports", "count": 90},
+                    {"value": "Music", "count": 80},
+                    {"value": "Electronics", "count": 70},
+                    {"value": "Home", "count": 60},
+                    {"value": "Women", "count": 50},
+                    {"value": "Men", "count": 40},
+                    {"value": "Children", "count": 30},
+                    {"value": "Shoes", "count": 20},
+                    {"value": "Jewelry", "count": 10},
+                ],
+                "aliases": {},
+                "note": "",
+            },
+        )
+        # Branch: skipped（高基数，不校验）
+        self._write(
+            "atlas_finance_analytics.Branch.json",
+            {
+                "model": "atlas_finance_analytics",
+                "field": "Branch",
+                "status": "skipped",
+                "snapshot_sha": "abc1234",
+                "generated_at": "2026-09-09T12:00:00+08:00",
+                "bound_dataset": "dim_broker",
+                "source_table": "atlas.dwd.dim_broker",
+                "source_column": "Branch",
+                "distinct_count": 2715,
+                "row_count": 5000,
+                "null_count": 0,
+                "max_cardinality": 200,
+                "skip_reason": "distinct=2715 超过阈值 200",
+                "values": [],
+                "aliases": {},
+                "note": "",
+            },
+        )
+        self.finance_planner = Planner(MODEL, values_dir=self.dir)
+        self.retail_planner = Planner(RETAIL_MODEL, values_dir=self.dir)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _write(self, filename: str, payload: dict) -> None:
+        path = self.dir / filename
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def test_alias_normalization_with_notice(self) -> None:
+        """gold-171：NSDQ → NASDAQ（别名归一 + ValueNotice）。"""
+        from agent.planner import ValueNotice
+        result, notices = self.finance_planner.plan_with_notices(
+            "只看交易所 NSDQ 的 2013 年佣金收入是多少？"
+        )
+        self.assertIsInstance(result, Plan)
+        assert isinstance(result, Plan)
+        self.assertEqual(result.filters, (Filter("ExchangeID", "=", "NASDAQ"),))
+        self.assertEqual(len(notices), 1)
+        self.assertIsInstance(notices[0], ValueNotice)
+        self.assertEqual(notices[0].field, "ExchangeID")
+        self.assertEqual(notices[0].raw, "NSDQ")
+        self.assertEqual(notices[0].value, "NASDAQ")
+        self.assertEqual(notices[0].kind, "alias")
+
+    def test_unknown_value_clarification(self) -> None:
+        """gold-068：Toys 不在 i_category 值域 → 反问并附候选值样例。"""
+        result = self.retail_planner.plan("只看类别 Toys 的 1999 年销售额是多少？")
+        self.assertIsInstance(result, ClarificationRequest)
+        assert isinstance(result, ClarificationRequest)
+        self.assertIn("Toys", result.reasons[0])
+        self.assertIn("i_category", result.reasons[0])
+        self.assertGreater(len(result.candidates), 0)
+
+    def test_case_normalization(self) -> None:
+        """MIDWAY → Midway（case 归一 + ValueNotice）。"""
+        from agent.planner import ValueNotice
+        result, notices = self.retail_planner.plan_with_notices(
+            "只看城市 MIDWAY 的 2000 年销售额是多少？"
+        )
+        self.assertIsInstance(result, Plan)
+        assert isinstance(result, Plan)
+        self.assertEqual(result.filters, (Filter("s_city", "=", "Midway"),))
+        self.assertEqual(len(notices), 1)
+        self.assertIsInstance(notices[0], ValueNotice)
+        self.assertEqual(notices[0].raw, "MIDWAY")
+        self.assertEqual(notices[0].value, "Midway")
+        self.assertEqual(notices[0].kind, "case")
+
+    def test_skipped_column_passthrough(self) -> None:
+        """Branch 高基数跳过：planner 不做值校验，原值透传。"""
+        result = self.finance_planner.plan("只看分支 HQ 的 2013 年佣金收入是多少？")
+        self.assertIsInstance(result, Plan)
+        assert isinstance(result, Plan)
+        self.assertEqual(result.filters, (Filter("Branch", "=", "HQ"),))
+
+    def test_metric_threshold_unaffected(self) -> None:
+        """度量阈值（"超过 1000 万"）不参与维度值域校验，原样通过。"""
+        result = self.finance_planner.plan("2013 年佣金收入超过 1000 万的账户有多少？")
+        self.assertIsInstance(result, Plan)
+        assert isinstance(result, Plan)
+        self.assertEqual(result.filters, (Filter("commission_revenue", ">", 10000000),))
+
+
 if __name__ == "__main__":
     unittest.main()

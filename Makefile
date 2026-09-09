@@ -1,4 +1,4 @@
-.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance export plan compile ask eval paraphrase e2e retrieve extract-meta train train-distill train-dryrun report report-latest test adr rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify
+.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance export plan compile ask eval paraphrase e2e retrieve extract-meta train train-distill train-dryrun report report-latest test adr rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify profile-values
 
 PYTHON       ?= .venv/bin/python
 
@@ -111,6 +111,14 @@ plan:
 compile:
 	$(PYTHON) -m agent.cli compile query.plan.json
 
+# 一步问数（agent/cli.py query，本次新增）：Planner→Compiler→Guard→Doris 真连库
+# - 默认 finance 域；--domain retail 切零售；--format json 机读（含 SQL/rows/退出状态）
+# - 未知指标默认澄清（退出码 2）；--llm 走候选链（需 OPENAI_API_KEY）
+# - 行级策略：--role branch_manager --role-ctx branch=BR_A1（与 serving/rls_verify 同机制）
+# - 退出码：0 ok / 1 error / 2 clarify / 3 blocked（脚本可据此分流）
+query:
+	uv run --env-file .env python -m agent.cli query "$(Q)"
+
 # Data Agent 多轮问数（agent/cli.py ask，Day 49）：真实 Doris + 锁定快照
 # - 带问句参数单轮；省略进入交互会话（同一 session 连续多轮，空行退出）
 # - 快照绑定当前 git HEAD meta；缺 meta 直接报错（AGENTS.md N6）
@@ -149,6 +157,12 @@ e2e:
 # - 产出 eval/reports/<git sha>.json；dry 模式：uv run python -m eval.runner --dry
 eval:
 	$(PYTHON) -m eval.runner
+
+# 维度值域画像（ADR-0016，B4）：从锁定快照 SELECT DISTINCT 生成 semantic/values/*.json
+# 前置 `data/snapshot.py --check`（数据指纹与已锁快照不一致 → 拒绝生成）
+# 纪律：重新锁快照后必须重跑（否则 make lint [values] 红）
+profile-values:
+	$(PYTHON) -m data.value_profile
 
 # 同义改写鲁棒性评测（High1）：Planner-only，不需 Doris；测量注册口径内改写掉落率
 paraphrase:

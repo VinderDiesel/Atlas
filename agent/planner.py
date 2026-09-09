@@ -31,6 +31,12 @@
   （"排除/不含 X"）、度量阈值（"超过/低于 N"，HAVING 语义）；值含中文或
   过滤短语无法归属维度字段时不产生 filter（仅当维度词命中而**值**模糊时才
   反问，如 gold-155「核心分支」）；自由双指标比较不支持
+- filter 值域校验（ADR-0016，批次 B4）：维度值 filter 的值在归属阶段对
+  `semantic/values/` 的快照值域做校验——命中值本体 → 通过；命中人工别名或
+  大小写折叠唯一命中 → **归一**（记录由 `plan_with_notices()` 返回，不改值本体
+  类型）；既非值也非别名（含折叠多命中）→ ClarificationRequest 附候选值样例
+  （与 KL #29 同一条原则，零新机制）。未注册与被跳过的列（大基数）**不校验**，
+  值原样透传（安全默认：不为无证据的列制造反问，见 agent/value_domain.py）
 - 指代消解（ADR-0014 ②，多轮追问）：followup() 仅处理**同构残句**——全量
   解析 unmatched（句内无指标词）且命中链接词形态（"那 X 呢 / 换成 X /
   按 X 呢"）时，复用上轮 Plan 的 metric/过滤/排序结构，只替换本轮解析出的
@@ -43,8 +49,10 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
+from agent import value_domain
 from agent.compiler import (
     Filter,
     OrderSpec,
@@ -285,20 +293,67 @@ class ClarificationRequest:
     kind: Literal["ambiguous", "relative_time", "unmatched"] = "ambiguous"
 
 
+@dataclass(frozen=True)
+class ValueNotice:
+    """值域归一记录（ADR-0016 §②）：问句原文写法 → 值域归一后的值。
+
+    只记录**发生了归一**的 filter 值（kind=alias/case）；精确命中与未注册列不记录
+    （无信息量）。消费方（Agent 解释链路 / 评测报告）据此向用户展示
+    "你说 NSDQ，我按值域理解为 NASDAQ"，不静默改写口径。
+    """
+
+    field: str
+    raw: str
+    value: object
+    kind: Literal["alias", "case"]
+
+
 class Planner:
     """问句 → Plan 的确定性解析器。"""
 
-    def __init__(self, model: SemanticModel) -> None:
+    def __init__(
+        self, model: SemanticModel, values_dir: Path | None = None
+    ) -> None:
+        """values_dir：值域注册表目录，缺省 = `semantic/values/`（仅测试注入 tmp 目录）。"""
         self.model = model
+        self.values_dir = values_dir or value_domain.VALUES_DIR
 
     def plan(
         self, question: str, locale: str | None = None
     ) -> Plan | ClarificationRequest:
         """解析问句。返回 Plan；无法唯一确定时返回 ClarificationRequest。
 
+        需要同时拿到值域归一记录（ADR-0016）时调 `plan_with_notices()`；本入口
+        保持历史签名不变（CLI / HTTP / 图路由 / 521 条契约测试零改动）。
+        """
+        result, _ = self.plan_with_notices(question, locale)
+        return result
+
+    def plan_with_notices(
+        self, question: str, locale: str | None = None
+    ) -> tuple[Plan | ClarificationRequest, tuple[ValueNotice, ...]]:
+        """plan() 的全部行为 + filter 值域归一记录（ADR-0016 §②）。
+
+        notices 只包含发生归一的 filter 值；反问路径上可能已追加过记录
+        （前面的 filter 已归一、后面的 filter 触发澄清），调用方仅在拿到
+        Plan 时才读它。
+        """
+        notices: list[ValueNotice] = []
+        result = self._plan_impl(question, locale, notices)
+        return result, tuple(notices)
+
+    def _plan_impl(
+        self,
+        question: str,
+        locale: str | None,
+        notices: list[ValueNotice],
+    ) -> Plan | ClarificationRequest:
+        """解析主体（五阶段：指标 → 时间 → 维度 → filter → TopN）。
+
         locale："zh"/"en" 显式指定（评测 runner 按样本 tags lang_en 传，确定性
         优先）；缺省 None → 自动检测（句中含任意中文字符 → zh，否则 → en，
-        CLI/API 便利）。
+        CLI/API 便利）。notices 由 filter 值域校验就地追加，不入返回值（本函数
+        在反问路径上也只 return ClarificationRequest，调用方靠 notices 列表取记录）。
         """
         locale = self._resolve_locale(question, locale)
         # 1. 指标匹配（同义词子串命中，必须唯一）
@@ -341,7 +396,7 @@ class Planner:
         dimensions = self._parse_dimensions(question, locale)
 
         # 4. filter 解析（ADR-0014 ①）；值模糊 → 反问
-        filters = self._parse_filters(question, metric, locale)
+        filters = self._parse_filters(question, metric, locale, notices)
         if isinstance(filters, ClarificationRequest):
             return filters
 
@@ -577,16 +632,21 @@ class Planner:
         )
 
     def _parse_filters(
-        self, question: str, metric: str, locale: str
+        self,
+        question: str,
+        metric: str,
+        locale: str,
+        notices: list[ValueNotice],
     ) -> tuple[Filter, ...] | ClarificationRequest:
         """filter 解析（ADR-0014 ①）。返回顺序固定：度量阈值在前，维度值在后。
 
         维度词命中而**值**模糊（含中文/为空）→ ClarificationRequest（gold-155）；
         过滤短语整体无法归属任何维度字段时不产生 filter（"只看/仅"等前缀
         也可能是强调语，不做过度澄清）——两类不猜测边界见模块 docstring。
+        值已归属列后还要过一道值域校验（ADR-0016），归一记到 notices。
         """
         if locale == "en":
-            return self._parse_filters_en(question, metric)
+            return self._parse_filters_en(question, metric, notices)
         filters: list[Filter] = []
         m = _THRESHOLD_GT_RE.search(question)
         if m:
@@ -621,11 +681,16 @@ class Planner:
             value: str | int = raw_value
             if re.fullmatch(r"\d+", raw_value):
                 value = int(raw_value)
-            filters.append(Filter(field, op, value))
+            resolved = self._resolve_filter_value(
+                field, value, locale, question, notices
+            )
+            if isinstance(resolved, ClarificationRequest):
+                return resolved
+            filters.append(Filter(field, op, resolved))
         return tuple(filters)
 
     def _parse_filters_en(
-        self, question: str, metric: str
+        self, question: str, metric: str, notices: list[ValueNotice]
     ) -> tuple[Filter, ...] | ClarificationRequest:
         """英文 filter 解析（only/excluding + 维度值；over/under… + 量级词）。
 
@@ -673,8 +738,55 @@ class Planner:
             value: str | int = raw_value
             if re.fullmatch(r"\d+", raw_value):
                 value = int(raw_value)
-            filters.append(Filter(field, op, value))
+            resolved = self._resolve_filter_value(
+                field, value, "en", question, notices
+            )
+            if isinstance(resolved, ClarificationRequest):
+                return resolved
+            filters.append(Filter(field, op, resolved))
         return tuple(filters)
+
+    def _resolve_filter_value(
+        self,
+        field: str,
+        value: str | int,
+        locale: str,
+        question: str,
+        notices: list[ValueNotice],
+    ) -> object | ClarificationRequest:
+        """值域校验/归一（ADR-0016 §②）；返回归一后的值或 ClarificationRequest。
+
+        未注册/skipped 列（无 profile 或超基数阈值）→ 原值透传，不产生反问；
+        unknown → 反问并附按频次排序的候选值样例（用户可直接改成其中一个重问）。
+        """
+        res = value_domain.resolve(
+            self.model.name, field, value, self.values_dir
+        )
+        if res.kind in ("unregistered", "exact"):
+            return res.value
+        if res.kind in ("alias", "case"):
+            notices.append(
+                ValueNotice(field=field, raw=str(value), value=res.value, kind=res.kind)
+            )
+            return res.value
+        profile = res.profile
+        path = value_domain.display_path(self.model.name, field, self.values_dir)
+        listed = len(profile.values) if profile is not None else 0
+        if locale == "en":
+            return ClarificationRequest(
+                question,
+                (f"'{value}' is neither a registered value nor a known alias of "
+                 f"{field} ({listed} registered values in the locked snapshot: "
+                 f"{', '.join(res.candidates)}). See {path}",),
+                candidates=tuple(res.candidates),
+            )
+        return ClarificationRequest(
+            question,
+            (f"「{value}」不是 {field} 的已注册取值，也不是已登记别名"
+             f"（当前快照共 {listed} 个取值，候选：{', '.join(res.candidates)}；"
+             f"完整值域见 {path}）",),
+            candidates=tuple(res.candidates),
+        )
 
     def _match_dim_value(
         self, phrase: str, locale: str

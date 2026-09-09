@@ -130,6 +130,9 @@ class SemanticModel:
     def __init__(self, path: Path = FINANCE_MODEL) -> None:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         model = doc["semantic_model"][0]
+        # 模型名：值域注册表（semantic/values/<model>.<field>.json，ADR-0016）的
+        # 绑定键。与 ossie 文件名解耦——文件名是部署约定，模型名是语义身份。
+        self.name = str(model["name"])
         self.datasets: dict[str, Dataset] = {}
         self.relationships: list[Relationship] = []
         self.metrics: dict[str, str] = {}
