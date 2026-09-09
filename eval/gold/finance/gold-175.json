@@ -1,0 +1,28 @@
+{
+  "id": "gold-175",
+  "question": "2015年7月交易额环比",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "201507",
+  "expected_comparison": {
+    "kind": "pop"
+  },
+  "expected_sql": null,
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "comparison",
+    "pop"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "交易额以货币金额度量"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "id": "gold-173",
+  "question": "2015年各分支交易额同比",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": ["Branch"],
+  "expected_time": "2015",
+  "expected_comparison": {"kind": "yoy"},
+  "expected_sql": null,
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": ["aggregation", "dimension_group_by", "time_range", "comparison", "yoy"],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "交易额以货币金额度量"
+    },
+    {
+      "term": "分支",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "分支维度分组"
+    }
+  ]
+}

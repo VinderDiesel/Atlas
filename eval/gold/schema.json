@@ -24,6 +24,14 @@
         }
       }
     },
+    "expected_comparison": {
+      "type": ["object", "null"],
+      "description": "时间智能比较声明（B5 ADR-0017）：kind ∈ yoy/pop/cumulative/rank；缺省 null 表示无比较（兼容 B5 前旧样本），提供后要求与 Plan.comparison 完全一致",
+      "properties": {
+        "kind": { "type": "string", "enum": ["yoy", "pop", "cumulative", "rank"] }
+      },
+      "required": ["kind"]
+    },
     "result_hash": { "type": ["string", "null"], "description": "固定快照下执行结果的哈希" },
     "snapshot_sha": { "type": "string", "description": "数据快照 git sha，保证可复现" },
     "tags": { "type": "array", "items": { "type": "string" } },

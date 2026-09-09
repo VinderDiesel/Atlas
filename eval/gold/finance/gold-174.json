@@ -1,0 +1,34 @@
+{
+  "id": "gold-174",
+  "question": "2015年第二季度交易额环比",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": "2015Q2",
+  "expected_comparison": {
+    "kind": "pop"
+  },
+  "expected_sql": null,
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "time_range",
+    "comparison",
+    "pop"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "交易额以货币金额度量"
+    },
+    {
+      "term": "环比",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "环比 = 与上一期间比较"
+    }
+  ]
+}

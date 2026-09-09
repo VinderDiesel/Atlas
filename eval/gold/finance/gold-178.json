@@ -1,0 +1,37 @@
+{
+  "id": "gold-178",
+  "question": "2015年各交易所交易量排名",
+  "expected_metric": "total_trade_quantity",
+  "expected_dimensions": [
+    "ExchangeID"
+  ],
+  "expected_time": "2015",
+  "expected_comparison": {
+    "kind": "rank"
+  },
+  "expected_sql": null,
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "time_range",
+    "comparison",
+    "rank"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "交易量",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "role": "measure",
+      "note": "交易量以证券数量度量"
+    },
+    {
+      "term": "交易所",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "role": "dimension",
+      "note": "交易所维度排名"
+    }
+  ]
+}

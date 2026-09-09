@@ -1,0 +1,25 @@
+{
+  "id": "gold-179",
+  "question": "交易额同比",
+  "expected_metric": "total_trade_value",
+  "expected_dimensions": [],
+  "expected_time": null,
+  "expected_comparison": null,
+  "expected_sql": null,
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "comparison",
+    "clarify"
+  ],
+  "ambiguous": true,
+  "clarification": "同比需要绝对时间锚点（固定快照评测下相对时间会漂移），请指定具体年份",
+  "fibo_concepts": [
+    {
+      "term": "交易额",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "role": "measure",
+      "note": "交易额以货币金额度量"
+    }
+  ]
+}

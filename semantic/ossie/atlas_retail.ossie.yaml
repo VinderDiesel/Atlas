@@ -19,6 +19,10 @@
 #   （composite 模式：year=列等值、quarter/month=year 列拆位 + qoy/moy 列双等值）。
 # 2026-09-05 修改（P6 英文样本）：total_sales_price quality.gold_test_cases 补入
 #   英文样本 gold-063~067（lang_en，语言 = 样本 tags 属性，不新增目录维度）。
+# 2026-09-09 修改（B5 时间智能，评测先行 ADR-0010）：total_sales_price
+#   gold_test_cases 补入时间智能样本 gold-072~077（同比/环比/累计/排名，
+#   governance_validate 双向对齐）；歧义样本 gold-078（无时间锚点 → 反问）
+#   不属任何指标 expected_metric，按既有约定不入 gold_test_cases。
 
 version: "0.2.0.dev0"
 
@@ -468,7 +472,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-001", "gold-051", "gold-056", "gold-057", "gold-058", "gold-059", "gold-060", "gold-061", "gold-062", "gold-063", "gold-064", "gold-065", "gold-066", "gold-067"],
+                  "gold_test_cases": ["gold-001", "gold-051", "gold-056", "gold-057", "gold-058", "gold-059", "gold-060", "gold-061", "gold-062", "gold-063", "gold-064", "gold-065", "gold-066", "gold-067", "gold-072", "gold-073", "gold-074", "gold-075", "gold-076", "gold-077"],
                   "expected_value_snapshot_sha": "<待填写>"
                 }
               }

@@ -31,6 +31,11 @@
 # 2026-09-05 修改（P6 英文样本）：total_trade_value/commission_revenue/cash_balance/
 #   trade_count 四指标 quality.gold_test_cases 补入英文样本 gold-163~170
 #   （lang_en，语言 = 样本 tags 属性，不新增目录维度）。
+# 2026-09-09 修改（B5 时间智能，评测先行 ADR-0010）：total_trade_value
+#   gold_test_cases 补入时间智能样本 gold-172~177（同比/环比/累计/排名，
+#   governance_validate 双向对齐）；total_trade_quantity 补入 gold-178（排名）；
+#   歧义样本 gold-179（无时间锚点 → 反问）不属任何指标 expected_metric，
+#   按既有约定不入 gold_test_cases。
 # 2026-09-09 修改（B4 维度值域注册，评测先行 ADR-0010）：commission_revenue
 #   gold_test_cases 补入值域别名样本 gold-171（NSDQ → NASDAQ，governance_validate
 #   双向对齐）；零售域歧义样本 gold-068（值不存在 → 反问）不属任何指标 expected_metric，
@@ -1196,7 +1201,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-101", "gold-116", "gold-123", "gold-124", "gold-141", "gold-146", "gold-152", "gold-163", "gold-164", "gold-165"],
+                  "gold_test_cases": ["gold-101", "gold-116", "gold-123", "gold-124", "gold-141", "gold-146", "gold-152", "gold-163", "gold-164", "gold-165", "gold-172", "gold-173", "gold-174", "gold-175", "gold-176", "gold-177"],
                   "expected_value_snapshot_sha": "30b8344"
                 }
               }
@@ -1388,7 +1393,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-105", "gold-117", "gold-125", "gold-126", "gold-144", "gold-150"],
+                  "gold_test_cases": ["gold-105", "gold-117", "gold-125", "gold-126", "gold-144", "gold-150", "gold-178"],
                   "expected_value_snapshot_sha": "30b8344"
                 }
               }
