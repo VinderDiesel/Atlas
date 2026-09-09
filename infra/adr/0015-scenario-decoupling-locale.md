@@ -64,7 +64,8 @@ fibo_alignment / time_dimension）。同义词不是治理属性，为塞它而�
   `dimension_synonyms: {<字段名>: [措辞, ...]}`，两节均**可缺省**（视为空表）；
 - `semantic/synonyms/zh_cn.yml`：**当前为空占位**。中文同义词是口径定义的一部分，
   权威源是模型 `ai_context.synonyms`，抄进词典即制造双权威源（违反 ADR-0002）。
-  它的用途是承载 B3a 的中文**形态触发词**（形态词不属口径定义，属 locale 词典）；
+  中文的**形态触发词**不属口径定义，它们落在独立的 `patterns_zh_cn.yml`（§②）——
+  措辞层与形态层分文件，前者可被模型注记覆盖、后者只能被词典定义；
 - 加载入口 `agent/compiler.py::load_locale_synonyms(locale)`（与模型注记同一入口）：
   locale 为**封闭注册表**（未注册名直接报错，不拼接文件名）；顶层键白名单；值必须
   是"名称 → 字符串列表"；空措辞/重复措辞报错。**已注册但文件缺失 = 报错，不静默
@@ -72,13 +73,34 @@ fibo_alignment / time_dimension）。同义词不是治理属性，为塞它而�
 - **声明顺序即语义**：合并语义逐字保持原实现（`en = 模型注记 + 表内顺序`追加；
   `zh = 模型注记`）。词典顺序影响最长命中集合，YAML 头注释已写明"调整顺序需连同评测复验"。
 
-### ② 形态触发词词典（B3 预留，本 ADR 一并定名）
+### ② 形态触发词词典（B3a 中文已落地 / B3b 英文待落）
 
-B3 把 planner 内的形态字面量外置为 `semantic/synonyms/patterns_<locale>.yml`，
-按**能力分节**（`grouping` / `filter_include` / `filter_exclude` / `threshold` /
-`magnitude` / `topn` / `followup` / `relative_time_reject`），每节是正则模式字符串
-数组；planner 启动时编译为等价正则，**解析顺序与声明顺序严格一致**。
-本 ADR 只裁定落点与顺序契约，正则等价性对照表随 B3 细化设计单独出页。
+planner 内的形态字面量外置为 `semantic/synonyms/patterns_<locale>.yml`，按**能力
+分节**，每节是正则模式串或词表；解析顺序 = 声明顺序（结构即顺序，消除“变量名
+暗示顺序”的隐性依赖）。
+
+**实际落的节名与本节初稿的差异（B3a 实现时定形，已回写本 ADR）**：初稿列的是八
+个平级节（含 `relative_time_reject`），实现时改为**七个平级节 + `time` 内两子节**：
+
+| 节 | 内容 | 为什么这样分 |
+|---|---|---|
+| `time.relative_reject.words` | 相对时间词表（命中即反问） | 拒答与解析是**同一个解析阶段**的两面（`_parse_time`），拆成平级节会让一能力两节 |
+| `time.patterns[]` | 有序 `[{kind, pattern}]` | kind 显式化才能把“顺序”与“构造口径”分开锁定（见下） |
+| `grouping` / `topn` / `filter_include` / `filter_exclude` | 单 `pattern` | 与初稿一致 |
+| `threshold.greater` / `threshold.less` | 各含单 `pattern` | 上下界同节，避免两个平级节可缺其一 |
+| `magnitude.cn_units` / `cn_numerals` | 词→整数倍率 映射 | 与初稿一致（量级不参与匹配顺序，只做换算） |
+| `followup.prefixes` / `dim_pattern` | 词表 + 单 `pattern` | 与初稿一致 |
+
+加载入口 `agent/compiler.py::load_locale_patterns(locale)`：locale 封闭注册表；
+**缺节/多节/正则不可编译/词表含空词或重复/倍率非整数 → 一律报错**（静默降级等于
+某类问句在无人察觉时不再被解析）。kind 一致性在 planner 侧锁：
+`{词典 kind} == set(_TIME_DISPATCH)`，不等即导入失败——新形态必须“词典 + 分发表”
+同时落，不允许单边。
+
+约与初稿不变的两条硬约束：（a）**纯搬运**——模式串整串复制，不在代码里用词表
+重组正则；（b）planner 常量的**名与类型不变、值来自词典**，使使用点零改动，
+等价性可用对象同一性断言证明（`tests/test_locale_patterns.py`）。正则等价性
+对照表见 `docs/design/adr-0015-pattern-lexicon-zh.md`。
 
 ### ③ 幽灵语义定义：归档不删除，并由 lint 锁死
 
@@ -115,7 +137,8 @@ ADR-0002 前的自研 DSL 定义与其 JSON Schema，README 记录"为什么归�
 ## 验证方式
 
 - `make lint`（含 `[authority]`）全绿；
-- `make test` 全绿（B2 后 481 例，含词典加载器与防漂移契约测试）；
+- `make test` 全绿（B2 后 481 例，含词典加载器与防漂移契约测试；B3a 后 502 例，
+  新增 `tests/test_locale_patterns.py`，**既有中/英 planner 用例断言一字未改**）；
 - `python -m eval.runner --dry` 双域 summary 与 b933e20 口径一致（**实测**：
   finance `plan_acc 65/65`、`clarify 5/5`（zh 57/57 + 5/5，en 8/8）、
   retail `18/18`、`1/1`（zh 13/13 + 1/1，en 5/5）、`exec_errors 0`；非 EX 维度

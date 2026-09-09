@@ -22,8 +22,11 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import sqlglot
 import yaml
@@ -270,6 +273,201 @@ def load_locale_synonyms(locale: str) -> dict[str, dict[str, tuple[str, ...]]]:
         "dimension_synonyms": _section("dimension_synonyms"),
     }
     _LOCALE_CACHE[locale] = loaded
+    return loaded
+
+
+# ---------------------------------------------------------------------------
+# locale 形态触发词词典（代码外配置，ADR-0015 §②，批次 B3a/B3b）
+#
+# 与同义词表同一纪律：locale 是封闭注册表，节缺失/形态串不可编译一律报错——
+# 静默降级等于让某类问句在无人察觉时不再被解析（口径风险）。
+# ---------------------------------------------------------------------------
+
+_PATTERN_FILES = {"zh_cn": "patterns_zh_cn.yml"}
+
+# 每 locale 的必需节（缺任何一节 = 该能力形态失去触发词）与顺序无关的白名单
+_PATTERN_SECTIONS: dict[str, tuple[str, ...]] = {
+    "zh_cn": (
+        "time",
+        "grouping",
+        "topn",
+        "filter_include",
+        "filter_exclude",
+        "threshold",
+        "magnitude",
+        "followup",
+    ),
+}
+
+_PATTERNS_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _pattern_doc(path: Path, locale: str) -> dict[str, Any]:
+    """读并粗校验形态词典文件（存在性 + 顶层映射 + 节白名单）。"""
+    if not path.exists():
+        raise ValueError(f"locale={locale} 的形态词典缺失：{path}")
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(doc, dict):
+        raise ValueError(f"形态词典顶层必须是映射：{path}")
+    required = _PATTERN_SECTIONS[locale]
+    missing = [key for key in required if key not in doc]
+    if missing:
+        raise ValueError(f"形态词典缺节 {missing}（必需节：{list(required)}）：{path}")
+    unknown = sorted(set(doc) - set(required))
+    if unknown:
+        raise ValueError(f"形态词典不支持的顶层键 {unknown}：{path}")
+    return doc
+
+
+def _compile_pattern(raw: Any, where: str, path: Path) -> re.Pattern[str]:
+    """模式串 → 已编译正则。**不做 strip**：首尾空白在正则里有语义。"""
+    if not isinstance(raw, str) or not raw:
+        raise ValueError(f"{where} 必须是非空正则字符串：{path}")
+    try:
+        return re.compile(raw)
+    except re.error as exc:
+        raise ValueError(f"{where} 不是合法正则（{exc}）：{path}") from exc
+
+
+def _pattern_words(raw: Any, where: str, path: Path) -> tuple[str, ...]:
+    """词表（相对时间词/追问前缀词）→ 元组；禁止首尾空白与重复。"""
+    if isinstance(raw, str) or not isinstance(raw, (list, tuple)) or not raw:
+        raise ValueError(f"{where} 必须是非空字符串列表：{path}")
+    words = tuple(str(x) for x in raw)
+    if any(not w or w != w.strip() for w in words):
+        raise ValueError(f"{where} 含空词或首尾空白：{path}")
+    if len(set(words)) != len(words):
+        raise ValueError(f"{where} 词条重复：{path}")
+    return words
+
+
+def _pattern_map(raw: Any, where: str, path: Path) -> dict[str, int]:
+    """量级/中文编号映射 → dict[str, int]（bool 不算 int）。"""
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError(f"{where} 必须是 词→整数倍率 映射：{path}")
+    out: dict[str, int] = {}
+    for key, value in raw.items():
+        name = str(key)
+        if not name or name != name.strip():
+            raise ValueError(f"{where} 含空键或首尾空白键：{path}")
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{where}.{name} 必须是整数：{path}")
+        out[name] = value
+    return out
+
+
+def _single_node(node: Any, where: str, path: Path) -> re.Pattern[str]:
+    """单 pattern 节（`grouping` / `threshold.greater` 等）：必须恰含 pattern 一键。"""
+    if not isinstance(node, dict) or set(node) != {"pattern"}:
+        raise ValueError(f"{where} 必须恰含 pattern 一键：{path}")
+    return _compile_pattern(node["pattern"], f"{where}.pattern", path)
+
+
+def _load_zh_patterns(path: Path) -> dict[str, Any]:
+    """中文形态词典 → 归一化结构（节名与 planner 解析阶段一一对应）。
+
+    `time.patterns` 保留为**有序** (kind, 已编译正则) 元组：解析按声明顺序逐个
+    尝试，短模式先跑会截获长模式的输入（"2013 年 7 月" 被读成年份），顺序即语义。
+    kind 与解析器实现的一致性由 planner 校验（分发表在此处不可见）。
+    """
+    doc = _pattern_doc(path, "zh_cn")
+
+    time_doc = doc["time"]
+    if not isinstance(time_doc, dict) or set(time_doc) != {"relative_reject", "patterns"}:
+        raise ValueError(f"time 必须恰含 relative_reject 与 patterns 两键：{path}")
+    reject = time_doc["relative_reject"]
+    if not isinstance(reject, dict) or set(reject) != {"words"}:
+        raise ValueError(f"time.relative_reject 必须恰含 words 一键：{path}")
+    items = time_doc["patterns"]
+    if isinstance(items, str) or not isinstance(items, (list, tuple)) or not items:
+        raise ValueError(f"time.patterns 必须是 非空的 kind/pattern 列表：{path}")
+    kinds: list[str] = []
+    compiled: list[tuple[str, re.Pattern[str]]] = []
+    for index, item in enumerate(items):
+        where = f"time.patterns[{index}]"
+        if not isinstance(item, dict) or set(item) != {"kind", "pattern"}:
+            raise ValueError(f"{where} 必须恰含 kind 与 pattern 两键：{path}")
+        kind = str(item["kind"])
+        if not kind or kind != kind.strip():
+            raise ValueError(f"{where}.kind 非法（空或含首尾空白）：{path}")
+        if kind in kinds:
+            raise ValueError(f"time.patterns kind 重复：{kind}（{path}）")
+        kinds.append(kind)
+        compiled.append(
+            (kind, _compile_pattern(item["pattern"], f"{where}.pattern", path))
+        )
+
+    magnitude = doc["magnitude"]
+    if not isinstance(magnitude, dict) or set(magnitude) != {"cn_units", "cn_numerals"}:
+        raise ValueError(f"magnitude 必须恰含 cn_units 与 cn_numerals 两键：{path}")
+
+    threshold = doc["threshold"]
+    if not isinstance(threshold, dict) or set(threshold) != {"greater", "less"}:
+        raise ValueError(f"threshold 必须恰含 greater 与 less 两键：{path}")
+
+    followup = doc["followup"]
+    if not isinstance(followup, dict) or set(followup) != {"prefixes", "dim_pattern"}:
+        raise ValueError(f"followup 必须恰含 prefixes 与 dim_pattern 两键：{path}")
+
+    return {
+        "time": {
+            "relative_reject": {
+                "words": _pattern_words(
+                    reject["words"], "time.relative_reject.words", path
+                )
+            },
+            "patterns": tuple(compiled),
+        },
+        "grouping": {"pattern": _single_node(doc["grouping"], "grouping", path)},
+        "topn": {"pattern": _single_node(doc["topn"], "topn", path)},
+        "filter_include": {
+            "pattern": _single_node(doc["filter_include"], "filter_include", path)
+        },
+        "filter_exclude": {
+            "pattern": _single_node(doc["filter_exclude"], "filter_exclude", path)
+        },
+        "threshold": {
+            side: {
+                "pattern": _single_node(threshold[side], f"threshold.{side}", path)
+            }
+            for side in ("greater", "less")
+        },
+        "magnitude": {
+            "cn_units": _pattern_map(magnitude["cn_units"], "magnitude.cn_units", path),
+            "cn_numerals": _pattern_map(
+                magnitude["cn_numerals"], "magnitude.cn_numerals", path
+            ),
+        },
+        "followup": {
+            "prefixes": _pattern_words(followup["prefixes"], "followup.prefixes", path),
+            "dim_pattern": _compile_pattern(
+                followup["dim_pattern"], "followup.dim_pattern", path
+            ),
+        },
+    }
+
+
+_PATTERN_LOADERS: dict[str, Callable[[Path], dict[str, Any]]] = {"zh_cn": _load_zh_patterns}
+
+
+def load_locale_patterns(locale: str) -> dict[str, Any]:
+    """读 `semantic/synonyms/patterns_<locale>.yml` → 形态触发词词典（一次加载）。
+
+    返回按节组织的归一化结构，模式串已编译为 `re.Pattern`（顺序保留）。
+    locale 封闭注册表：未注册 → ValueError（不拼接任意文件名）；已注册但文件
+    缺失 → ValueError（宁可启动即失败，不出口径）。B3a 只注册 zh_cn——英文形态
+    词典属 B3b，届时 planner 的英文常量一并接线。
+    """
+    if locale in _PATTERNS_CACHE:
+        return _PATTERNS_CACHE[locale]
+    if locale not in _PATTERN_FILES:
+        raise ValueError(
+            f"未知 patterns locale {locale!r}（已注册：{', '.join(sorted(_PATTERN_FILES))}；"
+            f"新增 locale 需同步 ADR-0015 与本注册表）"
+        )
+    path = SYNONYMS_DIR / _PATTERN_FILES[locale]
+    loaded = _PATTERN_LOADERS[locale](path)
+    _PATTERNS_CACHE[locale] = loaded
     return loaded
 
 

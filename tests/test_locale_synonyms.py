@@ -119,8 +119,17 @@ class TestRealRepoFiles(unittest.TestCase):
         self.assertEqual(zh, {"metric_synonyms": {}, "dimension_synonyms": {}})
 
     def test_registry_matches_files_on_disk(self) -> None:
-        """注册表与实际文件一一对应（新增 YAML 不注册 = 加载不到，反之缺文件报错）。"""
-        files = {p.name for p in compiler_mod.SYNONYMS_DIR.glob("*.yml")}
+        """注册表与实际文件一一对应（新增 YAML 不注册 = 加载不到，反之缺文件报错）。
+
+        synonyms/ 目录同时托管**形态词典**（`patterns_*.yml`，ADR-0015 §②，
+        B3a/B3b），那部分由 tests/test_locale_patterns.py 的同名断言锁定；
+        本测试只管同义词表族（`<locale>.yml`）。
+        """
+        files = {
+            p.name
+            for p in compiler_mod.SYNONYMS_DIR.glob("*.yml")
+            if not p.name.startswith("patterns_")
+        }
         self.assertEqual(files, set(compiler_mod._LOCALE_FILES.values()))
 
 

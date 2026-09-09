@@ -16,7 +16,9 @@
   语言自动检测（句中含任意中文字符 → zh，否则 → en），CLI/API 无需显式参数；
   评测 runner 按样本 tags lang_en 显式传 locale（确定性优先）。英文同义词
   外置在 `semantic/synonyms/en_us.yml`（ADR-0015，由 compiler.load_locale_synonyms
-  加载；YAML ai_context 是中文注记域，英文措辞属解析器形态层）
+  加载；YAML ai_context 是中文注记域，英文措辞属解析器形态层）；中文形态
+  触发词（分组/filter/TopN/追问/时间）外置在 `semantic/synonyms/patterns_zh_cn.yml`
+  （ADR-0015 §②，B3a 纯搬运，由 compiler.load_locale_patterns 加载）
 - 英文 filter 边界：值须为**精确值**（"only for branch X"），裸实体复数词
   （customers/branches 等）作值后缀裁剪；无维度词短语（强调语）不产生 filter，
   与中文同构（见 _EN_ONLY_RE/_EN_EXCL_RE）
@@ -38,6 +40,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -47,60 +50,107 @@ from agent.compiler import (
     Plan,
     SemanticModel,
     TimeSpec,
+    load_locale_patterns,
     load_locale_synonyms,
 )
 
 # ---------------------------------------------------------------------------
 # 中文形态（zh，P6 locale 化后仍为主路径；行为与 2026-09-04 前逐字一致）
+#
+# 形态触发词已从本文件外置到 `semantic/synonyms/patterns_zh_cn.yml`（ADR-0015 §②，
+# 批次 B3a）——**纯搬运**：常量名与类型不变，值来自词典，解析算法本体未动。
+# 因此新场景增删触发词只改 YAML，不改 planner（B7 前提）。逐条等价性证明与
+# 验收口径见 docs/design/adr-0015-pattern-lexicon-zh.md。
 # ---------------------------------------------------------------------------
 
-# 中文数字 → 阿拉伯数字（季度编号）
-_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4}
+_ZH_PATTERNS = load_locale_patterns("zh_cn")
 
-# 时间解析正则（顺序敏感：date → quarter → month → year，避免短模式先截获长模式）
-_DATE_RE = re.compile(r"(\d{4}) 年 (\d{1,2}) 月 (\d{1,2}) 日")
-_ISO_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
-_QUARTER_RE = re.compile(r"(\d{4}) 年?第?([一二三四])季度")
-_ISO_QUARTER_RE = re.compile(r"(\d{4})\s*[Qq]([1-4])")
-_MONTH_RE = re.compile(r"(\d{4}) 年 (\d{1,2}) 月")
-_YEAR_RE = re.compile(r"(\d{4}) 年")
-_RELATIVE_TIME = (
-    "上个月",
-    "上季度",
-    "上月",
-    "上旬",
-    "去年",
-    "今年",
-    "最近",
-    "本月",
-    "本周",
-    "昨天",
-    "今天",
-    "近",
-)
+# 量级与中文编号映射（词典 magnitude 节）
+# - 量级词优先匹配长形（千万 → 万）由 threshold 正则的交替顺序保证，
+#   本表只做倍率换算，不参与匹配顺序
+_CN_UNIT = _ZH_PATTERNS["magnitude"]["cn_units"]
+# - 中文数字 → 阿拉伯数字（季度编号）；季度正则的取组仅限本表键，
+#   若 YAML 改了 `[一二三四]` 而本表未跟进，解析会响亮报错（不静默降级）
+_CN_NUM = _ZH_PATTERNS["magnitude"]["cn_numerals"]
+
+# 时间形态：`time.patterns` 是**有序** (kind, 已编译正则) 列表，解析按声明顺序
+# 逐个尝试（短模式若先跑会截获长模式的输入，"2013 年 7 月"会被读成年份）。
+_TIME_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = _ZH_PATTERNS["time"]["patterns"]
+
+
+def _tp_date(m: re.Match[str]) -> TimeSpec:
+    """中文全写日期"2013 年 7 月 5 日"→ 月/日补零后作 ISO date。"""
+    return TimeSpec("date", f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}")
+
+
+def _tp_iso_date(m: re.Match[str]) -> TimeSpec:
+    """ISO 日期"2013-07-05"（中英共享）。"""
+    return TimeSpec("date", m.group(0))
+
+
+def _tp_quarter(m: re.Match[str]) -> TimeSpec:
+    """中文季度"2013 年第三季度"。"""
+    return TimeSpec("quarter", f"{m.group(1)}Q{_CN_NUM[m.group(2)]}")
+
+
+def _tp_iso_quarter(m: re.Match[str]) -> TimeSpec:
+    """ISO 季度"2013Q2" / "2013 Q2"（阿拉伯数字编号）。"""
+    return TimeSpec("quarter", f"{m.group(1)}Q{m.group(2)}")
+
+
+def _tp_month(m: re.Match[str]) -> TimeSpec:
+    """年月"2013 年 7 月"（month = 年*100+月）。"""
+    return TimeSpec("month", int(m.group(1)) * 100 + int(m.group(2)))
+
+
+def _tp_year(m: re.Match[str]) -> TimeSpec:
+    """年份兜底"2013 年"。"""
+    return TimeSpec("year", int(m.group(1)))
+
+
+# kind 分发表：解析器已实现形态的唯一权威。词典与本表不一致 = 某类时间形态
+# 要么写了却没实现、要么实现了却没词——加载失败（不静默丢形态）。
+_TIME_DISPATCH: dict[str, Callable[[re.Match[str]], TimeSpec]] = {
+    "date": _tp_date,
+    "iso_date": _tp_iso_date,
+    "quarter": _tp_quarter,
+    "iso_quarter": _tp_iso_quarter,
+    "month": _tp_month,
+    "year": _tp_year,
+}
+if {kind for kind, _ in _TIME_PATTERNS} != set(_TIME_DISPATCH):
+    raise ValueError(
+        "patterns_zh_cn.yml 的 time.patterns kind 与解析器实现不一致："
+        f"词典 {sorted(kind for kind, _ in _TIME_PATTERNS)} vs "
+        f"实现 {sorted(_TIME_DISPATCH)}（新增形态需同时补 _TIME_DISPATCH 分支）"
+    )
+
+# ISO 形态中英共享（英文侧 `_parse_time_en` 直接用），同源于 zh 词典不复制第二份
+_TIME_BY_KIND = dict(_TIME_PATTERNS)
+_ISO_DATE_RE = _TIME_BY_KIND["iso_date"]
+_ISO_QUARTER_RE = _TIME_BY_KIND["iso_quarter"]
+
+# 相对时间词：命中即反问（固定快照评测下必然漂移，ADR-0014 ③ 设计性不支持）
+_RELATIVE_TIME = _ZH_PATTERNS["time"]["relative_reject"]["words"]
 
 # 显式分组结构词："按分支统计 / 按客户等级分组"
-_GROUP_RE = re.compile(r"按(.+?)(?:统计|分组|维度|来看|看)")
-_TOP_N_RE = re.compile(r"前\s*(\d+)\s*名")
+_GROUP_RE = _ZH_PATTERNS["grouping"]["pattern"]
+_TOP_N_RE = _ZH_PATTERNS["topn"]["pattern"]
 
 # filter 触发结构（ADR-0014 ①；顺序无关，逐形态独立扫描）
 # - 维度值等值/排除：前缀词 + 目标短语，到分隔符截断
-_EQ_FILTER_RE = re.compile(r"(?:只看|只统计|仅统计|仅看|仅保留|仅取)\s*(.+?)(?=的|，|,|$)")
-_EXC_FILTER_RE = re.compile(r"(?:排除|不含|除去)\s*(.+?)(?=后|的|外|，|,|$)")
+_EQ_FILTER_RE = _ZH_PATTERNS["filter_include"]["pattern"]
+_EXC_FILTER_RE = _ZH_PATTERNS["filter_exclude"]["pattern"]
 # - 度量阈值（HAVING 语义）：比较词 + 数值 + 可选中文量级（"1000 万"）
-_THRESHOLD_GT_RE = re.compile(r"(?:超过|大于|高于|不小于|不低于)\s*([\d.]+)\s*(亿|千万|百万|万)?")
-_THRESHOLD_LT_RE = re.compile(r"(?:低于|小于|不足|不超过|不高于)\s*([\d.]+)\s*(亿|千万|百万|万)?")
-# 量级词须先匹配长形（千万 → 万），regex 交替顺序即优先级
-_CN_UNIT = {"亿": 100_000_000, "千万": 10_000_000, "百万": 1_000_000, "万": 10_000}
+_THRESHOLD_GT_RE = _ZH_PATTERNS["threshold"]["greater"]["pattern"]
+_THRESHOLD_LT_RE = _ZH_PATTERNS["threshold"]["less"]["pattern"]
 
 # 指代追问（ADR-0014 ②；仅全量解析 unmatched 的残句才进入，见 followup()）：
 # - 链接词开头（那/那么/换成/改成/改为/按）或"呢"结尾 = 口语残句形态
-_FOLLOWUP_PREFIXES = ("那", "那么", "换成", "改成", "改为", "按")
+_FOLLOWUP_PREFIXES = _ZH_PATTERNS["followup"]["prefixes"]
 # - 换维壳：换成/改成/改为/按 引导的短语（可带"那"前缀与"统计/分组/呢"尾缀）；
 #   $ 锚防非贪婪截断过早（"按客户等级统计呢"须整体消费到句尾）
-_FOLLOWUP_DIM_RE = re.compile(
-    r"(?:那|那么)?(?:换成|改成|改为|按)\s*(.+?)(?:统计|分组)?\s*呢?\s*$"
-)
+_FOLLOWUP_DIM_RE = _ZH_PATTERNS["followup"]["dim_pattern"]
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +475,11 @@ class Planner:
     def _parse_time(
         self, question: str, locale: str
     ) -> TimeSpec | None | ClarificationRequest:
-        """绝对时间解析（zh/en 分片）；相对时间返回 ClarificationRequest。"""
+        """绝对时间解析（zh/en 分片）；相对时间返回 ClarificationRequest。
+
+        zh 侧按词典声明顺序逐个尝试形态（顺序即语义，见 `_TIME_PATTERNS` 注记），
+        命中后按 kind 分发到对应构造函数——与原「逐正则 if-m」链逐字等价。
+        """
         if locale == "en":
             return self._parse_time_en(question)
         if any(t in question for t in _RELATIVE_TIME):
@@ -434,24 +488,10 @@ class Planner:
                 ("不支持相对时间（固定快照评测下会漂移，请使用绝对日期）",),
                 kind="relative_time",
             )
-        m = _DATE_RE.search(question)
-        if m:
-            return TimeSpec("date", f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}")
-        m = _ISO_DATE_RE.search(question)
-        if m:
-            return TimeSpec("date", m.group(0))
-        m = _QUARTER_RE.search(question)
-        if m:
-            return TimeSpec("quarter", f"{m.group(1)}Q{_CN_NUM[m.group(2)]}")
-        m = _ISO_QUARTER_RE.search(question)
-        if m:
-            return TimeSpec("quarter", f"{m.group(1)}Q{m.group(2)}")
-        m = _MONTH_RE.search(question)
-        if m:
-            return TimeSpec("month", int(m.group(1)) * 100 + int(m.group(2)))
-        m = _YEAR_RE.search(question)
-        if m:
-            return TimeSpec("year", int(m.group(1)))
+        for kind, regex in _TIME_PATTERNS:
+            m = regex.search(question)
+            if m:
+                return _TIME_DISPATCH[kind](m)
         return None
 
     def _parse_time_en(
