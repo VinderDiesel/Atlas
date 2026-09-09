@@ -12,8 +12,8 @@
       "value": "NASDAQ"
     }
   ],
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "cae7d072fe434b404ed4868aaaa4213ae3c9f5bce3e47f27cbe07d0993deed21",
+  "snapshot_sha": "5d1e22b",
   "tags": [
     "aggregation",
     "filter",

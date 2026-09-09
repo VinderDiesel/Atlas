@@ -1,0 +1,93 @@
+{
+  "sha": "5d1e22b",
+  "created_at": "2026-09-09T11:41:38+08:00",
+  "source_report": "eval/reports/5d1e22b.json",
+  "gold_inventory": {
+    "total": 91,
+    "finance": 71,
+    "retail": 20
+  },
+  "main_summary": {
+    "finance": {
+      "total": 71,
+      "plan_acc": "66/66",
+      "clarify": "5/5",
+      "ex": "65/65",
+      "ex_anchored": 1,
+      "exec_errors": 0,
+      "by_lang": {
+        "zh": {
+          "total": 63,
+          "plan_acc": "58/58",
+          "clarify": "5/5",
+          "ex": "57/57",
+          "ex_anchored": 1,
+          "exec_errors": 0
+        },
+        "en": {
+          "total": 8,
+          "plan_acc": "8/8",
+          "clarify": "0/0",
+          "ex": "8/8",
+          "ex_anchored": 0,
+          "exec_errors": 0
+        }
+      }
+    },
+    "retail": {
+      "total": 20,
+      "plan_acc": "18/18",
+      "clarify": "2/2",
+      "ex": "18/18",
+      "ex_anchored": 0,
+      "exec_errors": 0,
+      "by_lang": {
+        "zh": {
+          "total": 15,
+          "plan_acc": "13/13",
+          "clarify": "2/2",
+          "ex": "13/13",
+          "ex_anchored": 0,
+          "exec_errors": 0
+        },
+        "en": {
+          "total": 5,
+          "plan_acc": "5/5",
+          "clarify": "0/0",
+          "ex": "5/5",
+          "ex_anchored": 0,
+          "exec_errors": 0
+        }
+      }
+    }
+  },
+  "analysis": {
+    "finance": {
+      "deterministic_coverage": "71/71",
+      "plan_hit": "66/66",
+      "clarify": "5/5",
+      "ex": "65/65",
+      "exec_errors": 0,
+      "sample_classes": {
+        "resolved_deterministically": 66,
+        "clarified_honestly": 5,
+        "ex_fail": 0,
+        "exec_errors": 0
+      }
+    },
+    "retail": {
+      "deterministic_coverage": "20/20",
+      "plan_hit": "18/18",
+      "clarify": "2/2",
+      "ex": "18/18",
+      "exec_errors": 0,
+      "sample_classes": {
+        "resolved_deterministically": 18,
+        "clarified_honestly": 2,
+        "ex_fail": 0,
+        "exec_errors": 0
+      }
+    }
+  },
+  "conclusion": "注册语义域（目录即域声明，按域分节不混报）内：finance 域确定性链零 LLM 覆盖 71/71（解析命中 66/66 + 歧义反问 5/5），EX 65/65；retail 域确定性链零 LLM 覆盖 20/20（解析命中 18/18 + 歧义反问 2/2），EX 18/18，与锚定快照一致。此结论不推断域外泛化：未见指标/复合分析/新措辞问句不在基线内，是 Day 31-34 RAG+LLM 候选生成器的对照实验对象。"
+}

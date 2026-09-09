@@ -2,8 +2,8 @@
   "model": "atlas_finance_analytics",
   "field": "Status",
   "status": "registered",
-  "snapshot_sha": "160795d",
-  "generated_at": "2026-09-09T11:39:15+08:00",
+  "snapshot_sha": "5d1e22b",
+  "generated_at": "2026-09-09T11:40:47+08:00",
   "bound_dataset": "fact_trades",
   "source_table": "atlas.dwd.fact_trades",
   "source_column": "Status",
@@ -19,5 +19,5 @@
     }
   ],
   "aliases": {},
-  "note": "值域派生自锁定快照 160795d 的 atlas.dwd.fact_trades.Status；DISTINCT 实测 1 个非空取值、NULL 行数 0。同名字段出现在 2 个数据集 ['fact_trades', 'dim_account']，编译器按 datasets 顺序绑定首个 fact_trades（其余数据集的同名列不参与本值域）。"
+  "note": "值域派生自锁定快照 5d1e22b 的 atlas.dwd.fact_trades.Status；DISTINCT 实测 1 个非空取值、NULL 行数 0。同名字段出现在 2 个数据集 ['fact_trades', 'dim_account']，编译器按 datasets 顺序绑定首个 fact_trades（其余数据集的同名列不参与本值域）。"
 }
