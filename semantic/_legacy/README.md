@@ -11,7 +11,7 @@
 | 事实 | 后果 |
 |---|---|
 | `metrics/gmv.yml` 仍标 `status: active` | 读者/新工具会以为 GMV 口径仍由它定义 |
-| 引用 `dwd.fact_order_line` / `dwd.dim_order` / `dwd.dim_region` | 锁定快照 `7d48dcb` 的 25 张表里**一张都不存在** |
+| 引用 `dwd.fact_order_line` / `dwd.dim_order` / `dwd.dim_region` | 全库快照里**一张都不存在**：当前锁定基准 `b933e20`（29 表 = dwd 12 + tpcdi 17）与零售装载前的历史快照 `7d48dcb`（25 表）均逐一核对 |
 | `metrics/gmv.yml` 引用 `gold/gmv_by_region_month.yml` | 黄金集里没有该文件（悬空引用） |
 | `semantic/lint.py` 不覆盖本目录 | 漂移无人报警 |
 | 全仓零代码引用（`grep` 核实） | 删不掉只是因为"留着当对照"，不是因为有消费者 |

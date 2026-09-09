@@ -22,7 +22,8 @@
 
 同一批实测还发现第二类问题：ADR-0002 之前的自研 DSL 定义并未真正退场——
 `semantic/metrics/gmv.yml` 仍标 `status: active`，引用的 `dwd.fact_order_line` /
-`dwd.dim_order` / `dwd.dim_region` 在锁定快照 `7d48dcb` 的 25 张表里一张都不存在，
+`dwd.dim_order` / `dwd.dim_region` 在任何已锁快照里都不存在（当前锁定基准
+`b933e20`：29 表 = dwd 12 + tpcdi 17；零售装载前的历史快照 `7d48dcb`：25 表），
 `gold/gmv_by_region_month.yml` 也不存在；`semantic/lint.py` 不覆盖这些目录，
 全仓零代码引用。幽灵定义不会报错，但会让读者与新工具误以为口径仍由它定义。
 
