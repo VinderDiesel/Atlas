@@ -31,6 +31,10 @@
 # 2026-09-05 修改（P6 英文样本）：total_trade_value/commission_revenue/cash_balance/
 #   trade_count 四指标 quality.gold_test_cases 补入英文样本 gold-163~170
 #   （lang_en，语言 = 样本 tags 属性，不新增目录维度）。
+# 2026-09-08 修改（同义改写评测 pp-comm-2 发现的注册缺口）：commission_revenue 补裸
+#   同义词「手续费」，同时给 commission_rate 补「手续费率」——两者必须成对注册：
+#   仅加裸「手续费」会让「手续费率」被最长命中误判为 commission_revenue（静默错口径）。
+#   既有样本零影响（最长命中：「手续费收入」/「佣金率」形态不变）。
 
 version: "0.2.0.dev0"
 
@@ -1205,6 +1209,7 @@ semantic_model:
             - "佣金收入"
             - "佣金"
             - "手续费收入"
+            - "手续费"
         custom_extensions:
           - vendor_name: ATLAS
             data: |
@@ -1705,6 +1710,7 @@ semantic_model:
           synonyms:
             - "佣金率"
             - "佣金费率"
+            - "手续费率"
         custom_extensions:
           - vendor_name: ATLAS
             data: |
