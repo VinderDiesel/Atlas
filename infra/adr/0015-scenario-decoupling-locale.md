@@ -165,7 +165,8 @@ ADR-0002 前的自研 DSL 定义与其 JSON Schema，README 记录"为什么归�
 
 - `make lint`（含 `[authority]`）全绿；
 - `make test` 全绿（B2 后 481 例，含词典加载器与防漂移契约测试；B3a 后 502 例，
-  新增 `tests/test_locale_patterns.py`，**既有中/英 planner 用例断言一字未改**）；
+  新增 `tests/test_locale_patterns.py`；B3b 后 521 例，同文件再加 19 例覆盖 `ref`/
+  `flags`/`months` 交叉不变量与英文时间形态；两批都**既有中/英 planner 用例断言一字未改**）；
 - `python -m eval.runner --dry` 双域 summary 与 b933e20 口径一致（**实测**：
   finance `plan_acc 65/65`、`clarify 5/5`（zh 57/57 + 5/5，en 8/8）、
   retail `18/18`、`1/1`（zh 13/13 + 1/1，en 5/5）、`exec_errors 0`；非 EX 维度
@@ -175,5 +176,10 @@ ADR-0002 前的自研 DSL 定义与其 JSON Schema，README 记录"为什么归�
   `samples[].domain`（`9cb8913` 起 runner 新增字段）外**逐字段相等**，包括 89 条出口
   SQL 文本与每行结果 hash——这是"形态外置零行为变化"的最强探针（数据指纹未变，
   新锁 `7051ef6.meta.json` 与 `b933e20.meta.json` 逐字段相等）；
+- B3b 同口径复验：**实测** `eval/reports/40b71e2.json`（EX finance `65/65` + retail
+  `18/18`、`exec_errors 0`）与 `b933e20.json` 剔除上述元数据字段后**零差异**（脚本
+  比对，差异数 0）；`make e2e` 7 场景（含多轮追问 S7）与历史报告逐字段比对差异仅
+  时间戳与 `latency_ms`——注意 e2e 的 `summary.passed` 是"跑完即计数"，真正的证据
+  是逐字段比对（见 `docs/design/adr-0015-pattern-lexicon-en.md` §4.1）；
 - 能证伪本决策的数据：任一同义词用例断言变化，或 dry summary 与 b933e20 出现非 EX
   维度差异——都说明搬运不是等价的，本批必须回退重做。

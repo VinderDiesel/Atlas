@@ -65,7 +65,7 @@
 | 2 `make test` | ✅ 481 → **502 全绿**（新增 `tests/test_locale_patterns.py` 21 例）；既有中/英 planner 用例**断言零改动**（`git show` 核实：`tests/test_planner.py` 本批不在改动集内） |
 | 3 dry 一致性 | ✅ 非 EX 维度与 `eval/reports/b933e20.json` 逐样本逐字段**完全一致**：finance `65/65` + `5/5`（zh 57/57 + 5/5、en 8/8）、retail `18/18` + `1/1`（zh 13/13 + 1/1、en 5/5） |
 | 4 非 dry EX | ✅ `EX` finance `65/65`、retail `18/18`，`exec_errors 0`（`eval/reports/7051ef6.json`）；**全量报告比对（含 sql / hash / row_count / columns）与 b933e20 逐字相等**，89/89 条 SQL 文本一致 |
-| 5 `make e2e` | ⏭ 留给 B3b 收尾统一跑（英文形态未外置前，中文段已由上述 4 项覆盖） |
+| 5 `make e2e` | ✅ 随 B3b 收尾统一跑：7/7 场景完成，与历史报告逐字段比对差异仅时间戳与 `latency_ms`（详见 `adr-0015-pattern-lexicon-en.md` §4.1） |
 
 附：两份报告的唯一结构差异是 `samples[].domain`——该字段由 `9cb8913`（晚于
 b933e20）在 runner 里添加，与本批无关（已 `git merge-base --is-ancestor` 核实）。

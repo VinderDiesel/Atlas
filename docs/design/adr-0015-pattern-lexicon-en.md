@@ -42,6 +42,11 @@
 - `ref` 只能指向 zh 词典已声明的 kind，指向不存在的 kind = 加载失败；
 - `ref` 不携带 `pattern`，因此不允许"先抄一份再用 ref 校对"这种半搬运动作。
 
+中文词典里的 ISO 形态在 planner 侧原本还有一层 `_ISO_DATE_RE` / `_ISO_QUARTER_RE`
+别名（B3a 留下的，**只**为英文 if-chain 服务）。英文改走自己的有序表后，别名成了
+死代码，随本批删除；"中英同源"这一事实改由对象同一性断言锁定
+（`test_planner_en_constants_come_from_lexicon`：英文表里取到的就是中文词典那个对象）。
+
 ### 2.2 `flags`：唯一的大小写不敏感形态
 
 12 个月份名是全仓唯一需要 `re.IGNORECASE` 的形态（客户会写 `may 2014`）。flags 是
@@ -70,6 +75,25 @@ zh 校验器保持"恰含 kind 与 pattern"的严格形态，不把未经验证�
 4. `make eval`（非 dry，真实 Doris）：`EX` finance `65/65`、retail `18/18`、`exec_errors 0`，
    并与 b933e20 逐字段比对（含出口 SQL 与结果 hash）；报告随本批入库；
 5. `make e2e`（plan 指定的 B3 收尾项）：5 场景 + handoff 多轮追问无回归。
+
+### 4.1 实测结果（2026-09-09，commit `40b71e2`）
+
+| 验收项 | 结果 |
+|---|---|
+| 1 `make lint` | ✅ 4 项全绿（`[authority]` 已覆盖 `patterns_en_us.yml`） |
+| 2 `make test` | ✅ 502 → **521 全绿**（`tests/test_locale_patterns.py` 新增 19 例）；既有中/英 planner 用例**断言零改动**（`tests/test_planner.py` 不在本批改动集内，116 例直接通过） |
+| 3 dry 一致性 | ✅ 与 `eval/reports/b933e20.json` 非 EX 维度逐样本逐字段相等，差异仅 `created_at` / `sha` / `dry` 三处元数据：finance `65/65` + `5/5`（zh 57/57 + 5/5、en 8/8）、retail `18/18` + `1/1`（zh 13/13 + 1/1、en 5/5） |
+| 4 非 dry EX | ✅ `EX` finance `65/65`、retail `18/18`，`exec_errors 0`（`eval/reports/40b71e2.json`）；剔除 sha/时间戳与 `samples[].domain`（`9cb8913` 新增字段）后**全量报告零差异**，89 条出口 SQL 与逐行结果 hash 全等 |
+| 5 `make e2e` | ✅ 7/7 场景执行完成（S1–S7 含 handoff 与多轮追问）；与历史报告 `eval/reports/e2e-acceptance.json` 逐字段比对，差异**仅** `created_at` 与各场景 `latency_ms`（kind / metric / SQL / row_count / result_hash / guard 全等）→ 无回归；产物存新文件 `eval/reports/e2e-acceptance-40b71e2.json`，**不覆盖历史报告** |
+
+两个必须如实说清的地方：
+
+1. `make e2e` 的 `summary.passed` 是"脚本跑完即计数"（`run_scenario` 不吞异常，
+   逐场景断言在场景函数里），因此真正的无回归证据是**与历史报告逐字段比对**，
+   不是 `7/7` 这个分数；
+2. `eval/e2e_acceptance.py` 的 `SNAPSHOT_META` 硬指向 `7d48dcb.meta.json`（零售装载
+   前的历史锁），所以新报告的 `snapshot_sha` 标签沿用该值——非本批引入，登记为
+   后续修正项（今日数据指纹与 `b933e20` / `40b71e2` 锁逐字段相等，结果本身不受影响）。
 
 ## 5. 本表能证伪什么
 

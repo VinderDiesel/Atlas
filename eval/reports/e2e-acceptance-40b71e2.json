@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "purpose": "Day 43-49 批次端到端验收（README §3.3） + ADR-0014 ② 多轮同构追问",
+  "snapshot_sha": "7d48dcb",
+  "created_at": "2026-09-09T024227Z",
+  "engine": "真实 Doris（eval/runner.execute_sql）+ 确定性链路（无 LLM）",
+  "scenarios": [
+    {
+      "id": "S1",
+      "title": "正常提问（确定性链路）",
+      "goal": "注册域问句 → answer",
+      "question": "按分支统计 2013 年佣金收入，列出前 5 名",
+      "kind": "answer",
+      "metric": "commission_revenue",
+      "path": "deterministic",
+      "engine": "deterministic",
+      "sql": "SELECT dim_broker.Branch AS Branch, SUM(fact_trades.Commission) AS commission_revenue FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2013 GROUP BY dim_broker.Branch ORDER BY commission_revenue DESC LIMIT 5",
+      "row_count": 5,
+      "rows_sample": [
+        [
+          "jKgsNAQeUQpTwGTOJGUBqRQF",
+          "372849.61"
+        ],
+        [
+          null,
+          "172777.70"
+        ],
+        [
+          "wjYPZaGSUHUxxicvCRtQYjjLIIoEQx",
+          "99531.57"
+        ]
+      ],
+      "result_hash": "557479f4a0f2",
+      "latency_ms": 349.2,
+      "executor_calls": 1,
+      "explanation": {
+        "metric_expression": "SUM(fact_trades.Commission)",
+        "dimensions": [
+          "Branch"
+        ],
+        "filters": [],
+        "tables": [
+          "atlas.dwd.fact_trades",
+          "atlas.dwd.dim_date",
+          "atlas.dwd.dim_broker"
+        ],
+        "data_version": "7d48dcb",
+        "data_refreshed_at": "2026-09-03T09:53:50+08:00",
+        "latency_ms": 349.2
+      }
+    },
+    {
+      "id": "S2",
+      "title": "反问（歧义不猜）",
+      "goal": "歧义问句 → clarify",
+      "question": "最近交易情况怎么样？",
+      "kind": "clarify",
+      "clarification_kind": "unmatched",
+      "reasons": [
+        "无法确定指标口径（问句未命中任何指标同义词）"
+      ],
+      "candidates": [
+        "total_trade_tax",
+        "trade_count",
+        "total_trade_value",
+        "active_account_count",
+        "average_trade_value"
+      ],
+      "executor_calls": 0
+    },
+    {
+      "id": "S3",
+      "title": "权限拒绝（Guard 纵深）",
+      "goal": "白名单缩窄 → blocked",
+      "question": "按分支统计 2013 年佣金收入，列出前 5 名",
+      "kind": "blocked",
+      "block_reason": "UnsafeQuery: 表不在白名单内：atlas.dwd.fact_trades",
+      "narrowed_tables": 1,
+      "executor_calls": 0
+    },
+    {
+      "id": "S4",
+      "title": "校验失败修复（多轮）",
+      "goal": "反问 → 补口径 → answer",
+      "turn1": {
+        "question": "最近交易情况怎么样？",
+        "kind": "clarify"
+      },
+      "turn2": {
+        "question": "按分支统计 2013 年佣金收入，列出前 5 名",
+        "kind": "answer",
+        "metric": "commission_revenue",
+        "row_count": 5,
+        "turns_in_session": 2,
+        "result_hash": "557479f4a0f2"
+      },
+      "guard_layer": {
+        "rogue_sql": "SELECT * FROM atlas.dwd.fact_balances LIMIT 5",
+        "rogue_rejected_as": "UnsafeQuery",
+        "repaired_enforce": "pass"
+      }
+    },
+    {
+      "id": "S5",
+      "title": "图表 + 解释",
+      "goal": "answer → 确定性图表 + 归因",
+      "question": "按分支统计 2013 年佣金收入，列出前 5 名",
+      "kind": "answer",
+      "chart": {
+        "type": "bar",
+        "x": "Branch",
+        "y": [
+          "commission_revenue"
+        ],
+        "data_points": 5,
+        "data_sample": [
+          {
+            "x": "jKgsNAQeUQpTwGTOJGUBqRQF",
+            "y": "372849.61"
+          },
+          {
+            "x": null,
+            "y": "172777.70"
+          },
+          {
+            "x": "wjYPZaGSUHUxxicvCRtQYjjLIIoEQx",
+            "y": "99531.57"
+          }
+        ],
+        "note": null,
+        "sql_sha256": "de3aff6548ca"
+      },
+      "explanation": {
+        "metric": "commission_revenue",
+        "tables": [
+          "atlas.dwd.fact_trades",
+          "atlas.dwd.dim_date",
+          "atlas.dwd.dim_broker"
+        ],
+        "row_count": 5,
+        "latency_ms": 229.9,
+        "data_version": "7d48dcb",
+        "data_refreshed_at": "2026-09-03T09:53:50+08:00",
+        "path": "deterministic"
+      }
+    },
+    {
+      "id": "S6",
+      "title": "人工接管（handoff）",
+      "goal": "0 候选 → 显式转人工",
+      "question": "2013年各分支机构的绩效奖金总额排名",
+      "kind": "handoff",
+      "handoff_reason": "本回合无法自动完成：schema linking 未检索到注册域候选指标；LLM 候选生成无素材、反问无候选可澄清，系统不空转不编造——已转人工接管",
+      "executor_calls": 0
+    },
+    {
+      "id": "S7",
+      "title": "多轮同构追问（ADR-0014 ②）",
+      "goal": "2013 口径 → 那 2014 年呢 → 同构 answer",
+      "turn1": {
+        "question": "按分支统计 2013 年佣金收入，列出前 5 名",
+        "kind": "answer",
+        "result_hash": "557479f4a0f2",
+        "row_count": 5
+      },
+      "turn2": {
+        "question": "那 2014 年呢",
+        "kind": "answer",
+        "metric": "commission_revenue",
+        "turns_in_session": 2,
+        "dimensions": [
+          "Branch"
+        ],
+        "row_count": 5,
+        "sql": "SELECT dim_broker.Branch AS Branch, SUM(fact_trades.Commission) AS commission_revenue FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2014 GROUP BY dim_broker.Branch ORDER BY commission_revenue DESC LIMIT 5",
+        "result_hash": "a758904750cc",
+        "rows_sample": [
+          [
+            "FGdaQnSVoGPBrEdxLiCsEqC",
+            "317687.06"
+          ],
+          [
+            "dyOXSdNzGsXRFxaGeJgNoBBBxNQ",
+            "283872.96"
+          ],
+          [
+            null,
+            "210358.75"
+          ]
+        ],
+        "latency_ms": 224.8
+      },
+      "guard": {
+        "enforce_again": "pass",
+        "outside_tables": [],
+        "tables": [
+          "atlas.dwd.fact_trades",
+          "atlas.dwd.dim_date",
+          "atlas.dwd.dim_broker"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "total": 7,
+    "passed": 7
+  }
+}
