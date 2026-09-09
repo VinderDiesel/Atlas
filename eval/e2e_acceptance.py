@@ -7,7 +7,7 @@
 场景与验收口径（README §3.3 Day 43-49 勾选 + ADR-0014 ② 多轮追问）
     S1 正常提问  ：注册域问句 → kind=answer；Guard 出口 SQL 的表全部在锁定
                    快照白名单内；真实执行行数 ≤ SQL LIMIT
-    S2 反问      ：歧义问句（eval/gold/gold-104.json 同源）→ kind=clarify，
+    S2 反问      ：歧义问句（eval/gold/finance/gold-104.json 同源）→ kind=clarify，
                    反问轮不执行 SQL（不猜答）
     S3 权限拒绝  ：白名单缩窄（不含 fact_trades）→ Guard blocked；被拒 SQL
                    不达执行器；block_reason 不携带被拒 SQL
@@ -48,8 +48,8 @@ REPO = Path(__file__).resolve().parent.parent
 SNAPSHOT_META = REPO / "data/snapshots" / "7d48dcb.meta.json"
 
 # 场景问句（与 eval/gold/ 同源，防文档问句漂移；标注 gold 出处）
-GOLD102_Q = "按分支统计 2013 年佣金收入，列出前 5 名"  # eval/gold/gold-102.json
-GOLD104_Q = "最近交易情况怎么样？"  # eval/gold/gold-104.json（歧义样本）
+GOLD102_Q = "按分支统计 2013 年佣金收入，列出前 5 名"  # eval/gold/finance/gold-102.json
+GOLD104_Q = "最近交易情况怎么样？"  # eval/gold/finance/gold-104.json（歧义样本）
 OUT_OF_DOMAIN_Q = "2013年各分支机构的绩效奖金总额排名"  # 域外：真实检索 0 候选
 
 # 执行器同构（同 eval/runner.execute_sql）

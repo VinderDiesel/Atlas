@@ -1,6 +1,6 @@
 """Planner 契约测试（unittest，零依赖；pytest 亦可发现运行）。
 
-覆盖 eval/gold/gold-101~104 的「问句 → Plan」确定性解析链路：
+覆盖 eval/gold/finance/gold-101~104 的「问句 → Plan」确定性解析链路：
 - gold-101/102/103：与黄金集 expected_metric / expected_dimensions / expected_time 对照（Plan Acc）
 - gold-104：歧义问句必须返回 ClarificationRequest（反问，不猜）
 """

@@ -31,7 +31,7 @@
 
 ### S1 正常提问（确定性链路）
 
-- **问句**：按分支统计 2013 年佣金收入，列出前 5 名（与 eval/gold/gold-102.json 同源）
+- **问句**：按分支统计 2013 年佣金收入，列出前 5 名（与 eval/gold/finance/gold-102.json 同源）
 - **轨迹**：plan(命中) → execute(compile→Guard→Doris) → explain，path=`deterministic`
 - **Guard 出口 SQL**（`eval/runner.execute_sql` 实际执行）：
 
@@ -61,7 +61,7 @@ ORDER BY commission_revenue DESC LIMIT 5
 
 ### S2 反问（歧义不猜）
 
-- **问句**：最近交易情况怎么样？（与 eval/gold/gold-104.json 同源，歧义样本）
+- **问句**：最近交易情况怎么样？（与 eval/gold/finance/gold-104.json 同源，歧义样本）
 - **轨迹**：plan(判定 unmatched) → clarify 终端
 - **结果**：kind=`clarify`，clarification_kind=`unmatched`，reasons=`["无法确定指标口径（问句未命中任何指标同义词）"]`，
   candidates（确定性检索，0 LLM token）= `[total_trade_tax, trade_count, total_trade_value, active_account_count, average_trade_value]`

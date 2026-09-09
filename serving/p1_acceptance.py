@@ -46,7 +46,7 @@ from semantic.governance_validate import collect_metric_governance  # noqa: E402
 from serving.auth import resolve_policy, sign_token  # noqa: E402
 
 QUESTION = "按分支统计 2013 年佣金收入，列出前 5 名"
-GOLD_FILE = REPO_ROOT / "eval" / "gold" / "gold-102.json"
+GOLD_FILE = REPO_ROOT / "eval" / "gold" / "finance" / "gold-102.json"
 MODEL_FILE = REPO_ROOT / "semantic" / "ossie" / "atlas_finance.ossie.yaml"
 EXPECTED_METRIC = "commission_revenue"
 EXPECTED_METRIC_ID = "commission_revenue@v1"

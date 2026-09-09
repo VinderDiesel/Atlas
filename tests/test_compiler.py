@@ -1,6 +1,6 @@
 """Compiler 契约测试（unittest，零依赖；pytest 亦可发现运行）。
 
-覆盖 eval/gold/gold-101~103 的 Plan → SQL 确定性编译链路。
+覆盖 eval/gold/finance/gold-101~103 的 Plan → SQL 确定性编译链路。
 """
 
 from __future__ import annotations
