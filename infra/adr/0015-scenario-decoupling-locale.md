@@ -76,8 +76,8 @@ fibo_alignment / time_dimension）。同义词不是治理属性，为塞它而�
 ### ② 形态触发词词典（B3a 中文已落地 / B3b 英文待落）
 
 planner 内的形态字面量外置为 `semantic/synonyms/patterns_<locale>.yml`，按**能力
-分节**，每节是正则模式串或词表；解析顺序 = 声明顺序（结构即顺序，消除“变量名
-暗示顺序”的隐性依赖）。
+分节**，每节是正则模式串或词表；解析顺序 = 声明顺序（结构即顺序，消除"变量名
+暗示顺序"的隐性依赖）。
 
 **实际落的节名与本节初稿的差异（B3a 实现时定形，已回写本 ADR）**：初稿列的是八
 个平级节（含 `relative_time_reject`），实现时改为**七个平级节 + `time` 内两子节**：
@@ -85,7 +85,7 @@ planner 内的形态字面量外置为 `semantic/synonyms/patterns_<locale>.yml`
 | 节 | 内容 | 为什么这样分 |
 |---|---|---|
 | `time.relative_reject.words` | 相对时间词表（命中即反问） | 拒答与解析是**同一个解析阶段**的两面（`_parse_time`），拆成平级节会让一能力两节 |
-| `time.patterns[]` | 有序 `[{kind, pattern}]` | kind 显式化才能把“顺序”与“构造口径”分开锁定（见下） |
+| `time.patterns[]` | 有序 `[{kind, pattern}]` | kind 显式化才能把"顺序"与"构造口径"分开锁定（见下） |
 | `grouping` / `topn` / `filter_include` / `filter_exclude` | 单 `pattern` | 与初稿一致 |
 | `threshold.greater` / `threshold.less` | 各含单 `pattern` | 上下界同节，避免两个平级节可缺其一 |
 | `magnitude.cn_units` / `cn_numerals` | 词→整数倍率 映射 | 与初稿一致（量级不参与匹配顺序，只做换算） |
@@ -94,10 +94,10 @@ planner 内的形态字面量外置为 `semantic/synonyms/patterns_<locale>.yml`
 加载入口 `agent/compiler.py::load_locale_patterns(locale)`：locale 封闭注册表；
 **缺节/多节/正则不可编译/词表含空词或重复/倍率非整数 → 一律报错**（静默降级等于
 某类问句在无人察觉时不再被解析）。kind 一致性在 planner 侧锁：
-`{词典 kind} == set(_TIME_DISPATCH)`，不等即导入失败——新形态必须“词典 + 分发表”
+`{词典 kind} == set(_TIME_DISPATCH)`，不等即导入失败——新形态必须"词典 + 分发表"
 同时落，不允许单边。
 
-约与初稿不变的两条硬约束：（a）**纯搬运**——模式串整串复制，不在代码里用词表
+两条与初稿一致的硬约束：（a）**纯搬运**——模式串整串复制，不在代码里用词表
 重组正则；（b）planner 常量的**名与类型不变、值来自词典**，使使用点零改动，
 等价性可用对象同一性断言证明（`tests/test_locale_patterns.py`）。正则等价性
 对照表见 `docs/design/adr-0015-pattern-lexicon-zh.md`。
@@ -143,5 +143,10 @@ ADR-0002 前的自研 DSL 定义与其 JSON Schema，README 记录"为什么归�
   finance `plan_acc 65/65`、`clarify 5/5`（zh 57/57 + 5/5，en 8/8）、
   retail `18/18`、`1/1`（zh 13/13 + 1/1，en 5/5）、`exec_errors 0`；非 EX 维度
   逐域逐语言与 `eval/reports/b933e20.json` **完全相等**，EX 列 dry 下不执行故不比对）；
+- B3a 额外要求非 dry 全量复验（`make eval`，真实 Doris + 当前锁定快照）：
+  **实测** `eval/reports/7051ef6.json` 与 `eval/reports/b933e20.json` 除 sha/时间戳与
+  `samples[].domain`（`9cb8913` 起 runner 新增字段）外**逐字段相等**，包括 89 条出口
+  SQL 文本与每行结果 hash——这是"形态外置零行为变化"的最强探针（数据指纹未变，
+  新锁 `7051ef6.meta.json` 与 `b933e20.meta.json` 逐字段相等）；
 - 能证伪本决策的数据：任一同义词用例断言变化，或 dry summary 与 b933e20 出现非 EX
   维度差异——都说明搬运不是等价的，本批必须回退重做。

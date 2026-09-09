@@ -41,8 +41,11 @@
   `threshold` / `magnitude` / `followup`，**缺节 = 报错**（B3a 要求 zh 词典完整，
   静默缺节会让某类形态在无人察觉时不再解析）；
 - 模式串必须可 `re.compile`，失败即报错并带节名；
-- `time.patterns[].kind` 必须落在解析器已实现的 kind 集合内；
-- 结果缓存（进程内一次读取），返回前深拷贝不受影响（调用方只读）。
+- `time.patterns[].kind` 必须落在解析器已实现的 kind 集合内（一致性断言在 planner 侧：
+  `{词典 kind} == set(_TIME_DISPATCH)`，不等即导入失败）；
+- 结果缓存（进程内一次读取），**返回缓存对象本身**——不深拷贝，因为 planner 在模块
+  导入时绑定常量且 `test_planner_constants_come_from_lexicon` 靠对象同一性断言证据；
+  因此约定调用方**只读**（不得就地改词典派生结构）。
 
 ## 4. 验收（B3a，plan 原文 + 本表补充）
 
@@ -54,7 +57,26 @@
    报告随本批 commit 入库（文件名 = 绑定 sha）；
 5. `make e2e` 多轮场景无回归（B3b 收尾时统一跑，见 plan 的 B3b 验收）。
 
+### 4.1 实测结果（2026-09-09，commit `7051ef6`）
+
+| 验收项 | 结果 |
+|---|---|
+| 1 `make lint` | ✅ 4 项全绿（含 `[authority]`） |
+| 2 `make test` | ✅ 481 → **502 全绿**（新增 `tests/test_locale_patterns.py` 21 例）；既有中/英 planner 用例**断言零改动**（`git show` 核实：`tests/test_planner.py` 本批不在改动集内） |
+| 3 dry 一致性 | ✅ 非 EX 维度与 `eval/reports/b933e20.json` 逐样本逐字段**完全一致**：finance `65/65` + `5/5`（zh 57/57 + 5/5、en 8/8）、retail `18/18` + `1/1`（zh 13/13 + 1/1、en 5/5） |
+| 4 非 dry EX | ✅ `EX` finance `65/65`、retail `18/18`，`exec_errors 0`（`eval/reports/7051ef6.json`）；**全量报告比对（含 sql / hash / row_count / columns）与 b933e20 逐字相等**，89/89 条 SQL 文本一致 |
+| 5 `make e2e` | ⏭ 留给 B3b 收尾统一跑（英文形态未外置前，中文段已由上述 4 项覆盖） |
+
+附：两份报告的唯一结构差异是 `samples[].domain`——该字段由 `9cb8913`（晚于
+b933e20）在 runner 里添加，与本批无关（已 `git merge-base --is-ancestor` 核实）。
+快照侧：`data/snapshots/7051ef6.meta.json` 与 `b933e20.meta.json` 除 sha/时间戳外
+**逐字段相等**（29 表同一指纹）→ 未重建数据，仅按纪律在新 sha 上重锁。
+
 ## 5. 本表能证伪什么
 
 若第 1 节任一条的"等价性证明方式"失败（尤其 ③：时间形态用例需要改断言才能通过），
 说明搬运引入了语义变化——本批回退重做，不允许以"顺带修好"的名义继续。
+
+第 4.1 节的实测结果中，"全量报告逐字相等"是本表最强的证伪探针：它同时覆盖
+Plan 结构与出口 SQL 与执行结果 hash，任何解析侧的隐性变化（包括顺序变化）
+都会在此暴露，而不需要额外发明对比机制。
