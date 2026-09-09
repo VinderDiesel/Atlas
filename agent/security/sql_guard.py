@@ -417,13 +417,19 @@ def apply_time_range(tree: exp.Expr, budget: Budget, model: object | None = None
     referenced = time_table in existing or time_table in aliases.values()
     if not referenced:
         return tree
-    # 已有对该时间表列的谓词 → 跳过（避免双重约束）
-    if any(
-        isinstance(col, exp.Column)
-        and (col.table == time_table or aliases.get(str(col.table)) == time_table)
-        for col in tree.find_all(exp.Column)
-    ):
-        return tree
+    # 已有对该时间列的谓词 → 跳过（避免双重约束）。判定**只看 WHERE/HAVING 且必须是
+    # 时间列本身**：JOIN ON 里引用时间维表（如 fact.d = dim_date.d）是连接键不是时间
+    # 约束，若把任意列引用当作已约束，默认时间窗对"join 了维表但无时间过滤"的查询
+    # 永远不会生效（纵深防御形同空转）。
+    for scope in (tree.find(exp.Where), tree.find(exp.Having)):
+        if scope is None:
+            continue
+        if any(
+            col.name == time_col
+            and (col.table == time_table or aliases.get(str(col.table)) == time_table)
+            for col in scope.find_all(exp.Column)
+        ):
+            return tree
 
     tree = tree.copy()
     days = budget.default_time_window_days
