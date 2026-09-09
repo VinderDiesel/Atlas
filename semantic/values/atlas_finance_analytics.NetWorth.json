@@ -1,0 +1,18 @@
+{
+  "model": "atlas_finance_analytics",
+  "field": "NetWorth",
+  "status": "skipped",
+  "snapshot_sha": "160795d",
+  "generated_at": "2026-09-09T11:39:17+08:00",
+  "bound_dataset": "dim_customer",
+  "source_table": "atlas.dwd.dim_customer",
+  "source_column": "NetWorth",
+  "distinct_count": 675,
+  "row_count": 3056,
+  "null_count": 2381,
+  "max_cardinality": 200,
+  "skip_reason": "distinct=675 超过阈值 200",
+  "values": [],
+  "aliases": {},
+  "note": "值域派生自锁定快照 160795d 的 atlas.dwd.dim_customer.NetWorth；DISTINCT 实测 675 个非空取值、NULL 行数 2381。 distinct 值数超过阈值 200，按 ADR-0016 §① 跳过注册：planner 对该列不做值校验（值原样透传）。"
+}

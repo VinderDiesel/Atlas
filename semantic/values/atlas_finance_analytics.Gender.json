@@ -1,0 +1,115 @@
+{
+  "model": "atlas_finance_analytics",
+  "field": "Gender",
+  "status": "registered",
+  "snapshot_sha": "160795d",
+  "generated_at": "2026-09-09T11:39:17+08:00",
+  "bound_dataset": "dim_customer",
+  "source_table": "atlas.dwd.dim_customer",
+  "source_column": "Gender",
+  "distinct_count": 24,
+  "row_count": 3056,
+  "null_count": 1571,
+  "max_cardinality": 200,
+  "skip_reason": null,
+  "values": [
+    {
+      "value": "m",
+      "count": 389
+    },
+    {
+      "value": "F",
+      "count": 364
+    },
+    {
+      "value": "f",
+      "count": 352
+    },
+    {
+      "value": "M",
+      "count": 348
+    },
+    {
+      "value": "X",
+      "count": 3
+    },
+    {
+      "value": "Z",
+      "count": 3
+    },
+    {
+      "value": "c",
+      "count": 3
+    },
+    {
+      "value": "i",
+      "count": 3
+    },
+    {
+      "value": "B",
+      "count": 2
+    },
+    {
+      "value": "L",
+      "count": 2
+    },
+    {
+      "value": "O",
+      "count": 2
+    },
+    {
+      "value": "y",
+      "count": 2
+    },
+    {
+      "value": "A",
+      "count": 1
+    },
+    {
+      "value": "J",
+      "count": 1
+    },
+    {
+      "value": "N",
+      "count": 1
+    },
+    {
+      "value": "R",
+      "count": 1
+    },
+    {
+      "value": "b",
+      "count": 1
+    },
+    {
+      "value": "d",
+      "count": 1
+    },
+    {
+      "value": "e",
+      "count": 1
+    },
+    {
+      "value": "h",
+      "count": 1
+    },
+    {
+      "value": "l",
+      "count": 1
+    },
+    {
+      "value": "o",
+      "count": 1
+    },
+    {
+      "value": "r",
+      "count": 1
+    },
+    {
+      "value": "v",
+      "count": 1
+    }
+  ],
+  "aliases": {},
+  "note": "值域派生自锁定快照 160795d 的 atlas.dwd.dim_customer.Gender；DISTINCT 实测 24 个非空取值、NULL 行数 1571。"
+}

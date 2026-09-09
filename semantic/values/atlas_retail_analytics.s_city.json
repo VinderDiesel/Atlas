@@ -1,0 +1,27 @@
+{
+  "model": "atlas_retail_analytics",
+  "field": "s_city",
+  "status": "registered",
+  "snapshot_sha": "160795d",
+  "generated_at": "2026-09-09T11:39:18+08:00",
+  "bound_dataset": "dim_store",
+  "source_table": "atlas.dwd.dim_store",
+  "source_column": "s_city",
+  "distinct_count": 2,
+  "row_count": 12,
+  "null_count": 0,
+  "max_cardinality": 200,
+  "skip_reason": null,
+  "values": [
+    {
+      "value": "Midway",
+      "count": 9
+    },
+    {
+      "value": "Fairview",
+      "count": 3
+    }
+  ],
+  "aliases": {},
+  "note": "值域派生自锁定快照 160795d 的 atlas.dwd.dim_store.s_city；DISTINCT 实测 2 个非空取值、NULL 行数 0。"
+}

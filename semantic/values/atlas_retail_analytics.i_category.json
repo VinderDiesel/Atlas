@@ -1,0 +1,59 @@
+{
+  "model": "atlas_retail_analytics",
+  "field": "i_category",
+  "status": "registered",
+  "snapshot_sha": "160795d",
+  "generated_at": "2026-09-09T11:39:18+08:00",
+  "bound_dataset": "dim_item",
+  "source_table": "atlas.dwd.dim_item",
+  "source_column": "i_category",
+  "distinct_count": 10,
+  "row_count": 18000,
+  "null_count": 43,
+  "max_cardinality": 200,
+  "skip_reason": null,
+  "values": [
+    {
+      "value": "Music",
+      "count": 1860
+    },
+    {
+      "value": "Shoes",
+      "count": 1835
+    },
+    {
+      "value": "Electronics",
+      "count": 1812
+    },
+    {
+      "value": "Men",
+      "count": 1811
+    },
+    {
+      "value": "Home",
+      "count": 1807
+    },
+    {
+      "value": "Women",
+      "count": 1790
+    },
+    {
+      "value": "Children",
+      "count": 1786
+    },
+    {
+      "value": "Sports",
+      "count": 1783
+    },
+    {
+      "value": "Jewelry",
+      "count": 1740
+    },
+    {
+      "value": "Books",
+      "count": 1733
+    }
+  ],
+  "aliases": {},
+  "note": "值域派生自锁定快照 160795d 的 atlas.dwd.dim_item.i_category；DISTINCT 实测 10 个非空取值、NULL 行数 43。"
+}

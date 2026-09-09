@@ -1,0 +1,31 @@
+{
+  "model": "atlas_finance_analytics",
+  "field": "TaxStatus",
+  "status": "registered",
+  "snapshot_sha": "160795d",
+  "generated_at": "2026-09-09T11:39:16+08:00",
+  "bound_dataset": "dim_account",
+  "source_table": "atlas.dwd.dim_account",
+  "source_column": "TaxStatus",
+  "distinct_count": 3,
+  "row_count": 6094,
+  "null_count": 0,
+  "max_cardinality": 200,
+  "skip_reason": null,
+  "values": [
+    {
+      "value": "1",
+      "count": 4298
+    },
+    {
+      "value": "2",
+      "count": 1195
+    },
+    {
+      "value": "0",
+      "count": 601
+    }
+  ],
+  "aliases": {},
+  "note": "值域派生自锁定快照 160795d 的 atlas.dwd.dim_account.TaxStatus；DISTINCT 实测 3 个非空取值、NULL 行数 0。"
+}
