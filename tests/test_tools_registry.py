@@ -118,11 +118,12 @@ class TestCompileSql(unittest.TestCase):
         self.assertIn("LIMIT 100", r["sql"])
 
     def test_compile_rejects_unknown_key(self) -> None:
-        """未知键拒绝（filters 未开放）：不静默忽略（防拼写漂移）。"""
+        """未知键拒绝：不静默忽略（防拼写漂移）。filters 已于 B1 开放，
+        改用仍未开放的 having 做样本（防止“错键被当作合法”静默吞掉）。"""
         with self.assertRaises(ToolError) as ctx:
-            self.tools.compile_sql({**GOLD102_PLAN, "filters": []})
+            self.tools.compile_sql({**GOLD102_PLAN, "having": []})
         self.assertIn("不支持的键", str(ctx.exception))
-        self.assertIn("filters", str(ctx.exception))
+        self.assertIn("having", str(ctx.exception))
 
     def test_compile_rejects_bad_metric(self) -> None:
         with self.assertRaises(ToolError) as ctx:
@@ -163,6 +164,82 @@ class TestCompileSql(unittest.TestCase):
         with self.assertRaises(ToolError) as ctx:
             self.tools.compile_sql({"metric": "no_such_metric"})
         self.assertIn("参数校验失败", str(ctx.exception))
+
+
+class TestCompileSqlFilters(unittest.TestCase):
+    """filters 已开放（B1）：工具层形态与 Planner/Compiler 能力对齐。
+
+    样本形态直接取黄金集已锚定样本（gold-151 度量阈值、gold-153 维度等值），
+    不造新口径；这些 Plan 过去只能由 Planner 产出，现在工具/MCP 消费方也能传入。
+    """
+
+    def setUp(self) -> None:
+        self.tools = DeterministicTools(model=MODEL, executor=FakeExecutor(), budget=BUDGET)
+
+    def test_dimension_filter_compiles_to_where(self) -> None:
+        """gold-153 形态：维度等值 → WHERE 谓词（值以字面量入 AST，非拼接）。"""
+        r = self.tools.compile_sql(
+            {
+                "metric": "commission_revenue",
+                "dimensions": ["Branch"],
+                "time": {"granularity": "year", "value": 2014},
+                "filters": [{"column": "Tier", "op": "=", "value": 3}],
+                "limit": 5,
+            }
+        )
+        self.assertIn("WHERE", r["sql"])
+        self.assertIn("Tier", r["sql"])
+
+    def test_metric_threshold_compiles_to_having(self) -> None:
+        """gold-151 形态：column == metric 名 → 度量阈值走 HAVING（不是 WHERE）。"""
+        r = self.tools.compile_sql(
+            {
+                "metric": "commission_revenue",
+                "dimensions": ["Branch"],
+                "time": {"granularity": "year", "value": 2013},
+                "filters": [{"column": "commission_revenue", "op": ">", "value": 10000000}],
+                "limit": 5,
+            }
+        )
+        self.assertIn("HAVING", r["sql"])
+        self.assertIn("10000000", r["sql"])
+
+    def test_exclusion_filter_supported(self) -> None:
+        """gold-150 形态：!= 排除（字符串值）。"""
+        r = self.tools.compile_sql(
+            {
+                "metric": "total_trade_quantity",
+                "time": {"granularity": "year", "value": 2013},
+                "filters": [
+                    {"column": "Branch", "op": "!=", "value": "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"}
+                ],
+            }
+        )
+        self.assertIn("Branch", r["sql"])
+
+    def test_rejects_malformed_filters(self) -> None:
+        """结构拒绝面：非数组 / 缺键 / 多余键 / 非法 op / 伪列 / 嵌套值 / bool / 空串。"""
+        base = {"metric": "commission_revenue"}
+        bad: list[tuple[Any, str]] = [
+            ("not-a-list", "对象数组"),
+            ([{"column": "Tier", "op": "="}], "恰为"),  # 缺 value
+            ([{"column": "Tier", "op": "=", "value": 3, "sql": "1=1"}], "恰为"),  # 多余键
+            ([{"column": "Tier", "op": "LIKE", "value": "3"}], "filters.op"),
+            ([{"column": "NoSuchCol", "op": "=", "value": 1}], "已注册字段"),
+            ([{"column": "Tier", "op": "=", "value": {"nested": 1}}], "数字或非空字符串"),
+            ([{"column": "Tier", "op": "=", "value": True}], "数字或非空字符串"),
+            ([{"column": "Tier", "op": "=", "value": "  "}], "空字符串"),
+        ]
+        for value, expect in bad:
+            with self.subTest(filters=value):
+                with self.assertRaises(ToolError) as ctx:
+                    self.tools.compile_sql({**base, "filters": value})
+                self.assertIn(expect, str(ctx.exception))
+
+    def test_none_filters_treated_as_empty(self) -> None:
+        """filters=None 等价于缺省（与 dimensions/time 同形态容错）。"""
+        r = self.tools.compile_sql({"metric": "cash_balance", "filters": None})
+        self.assertNotIn("WHERE", r["sql"])
 
 
 class TestExecuteReadonly(unittest.TestCase):

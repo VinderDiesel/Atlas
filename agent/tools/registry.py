@@ -12,13 +12,15 @@ execute_readonly 四件套（Day 45 以 MCP 风格暴露，本层是参数校验
   暴露层生成（可能被诱导/伪造），本层以白名单键 + 类型 + 取值域校验兜底，
   未知键一律拒绝（不静默忽略，防拼写漂移）。
 - **输出 JSON 可序列化**（rows 转 list）：供 MCP 层/调用方直接消费。
+- **filters 与 Planner 同能力（ADR-0014 ①）**：形态为
+  `[{"column", "op", "value"}, ...]`，op 限 = != < <= > >=；column 必须是已注册
+  字段或本 Plan 的 metric 名（后者为度量阈值，编译为 HAVING）。结构非法即拒，
+  **不接受任何嵌套对象/裸 SQL 片段**（参数化进 AST，不拼接字符串）。
 
 已知边界（MVP，诚实声明）
 ------------------------
 - describe_metric 返回**表达式定义层**信息（口径表达式/同义词/owner），不含
   物理表清单——表由 Compile/执行 SQL 展开（Day 46 explain 归因展示）。
-- filters 未开放（Planner 的 filter 解析未实现，见 agent/planner.py docstring）；
-  白名单校验会拒绝任何 filters 键。
 - compile_sql 输出**纯净查询**（Compile 语义，同 agent/compiler.py）：
   LIMIT 等 Guard 注入发生在执行环节（enforce），不在编译层。
 """
@@ -30,7 +32,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent.compiler import Compiler, OrderSpec, Plan, SemanticModel, TimeSpec
+from agent.compiler import Compiler, Filter, OrderSpec, Plan, SemanticModel, TimeSpec
 from agent.security.sql_guard import Budget, BudgetExceeded, UnsafeQuery, enforce
 
 # 执行器同构约定（与 eval/runner.execute_sql / agent/graph.py 一致）
@@ -39,8 +41,11 @@ Executor = Callable[[str], tuple[list[tuple[Any, ...]], list[str]]]
 # compile_sql 支持的时间粒度（TimeSpec 固定集合；列映射由模型 time_dimension
 # 声明驱动，见 agent/compiler.py；拒绝未知粒度）
 _GRANULARITIES = ("year", "quarter", "month", "date")
-# compile_sql 白名单键（filters 未开放，见模块 docstring）
-_PLAN_KEYS = frozenset({"metric", "dimensions", "time", "order_by", "limit"})
+# compile_sql 白名单键（filters 已开放，形态校验见 _filters）
+_PLAN_KEYS = frozenset({"metric", "dimensions", "time", "filters", "order_by", "limit"})
+# 允许的过滤操作符（与 agent/compiler.py._compare 的 ops 表逐字一致；
+# 不在此集内 compiler 会拒，工具层提前拒是为了给出可读参数错误）
+_FILTER_OPS = ("=", "!=", "<", "<=", ">", ">=")
 _MAX_LIMIT = 1000  # 上限与 Guard max_rows 数量级一致（10_000 的 1/10）
 
 
@@ -151,6 +156,9 @@ class DeterministicTools:
                 "dimensions": [str, ...],            # 可缺省；维度字段名
                 "time": {"granularity": str,         # 可缺省；year/quarter/
                         "value": int | str},         #   month/date（见 Compiler）
+                "filters": [{"column": str,          # 可缺省；维度过滤→WHERE，
+                             "op": str,              #   column==metric 时→HAVING；
+                             "value": int|float|str}],  #   op 见 _FILTER_OPS
                 "order_by": [{"column": str,         # 可缺省；metric 或维度名
                               "desc": bool}],        #   desc 缺省 False
                 "limit": int}                        # 可缺省；1..1000，默认 100
@@ -166,14 +174,15 @@ class DeterministicTools:
         unknown = set(plan) - _PLAN_KEYS
         if unknown:
             raise ToolError(
-                f"参数校验失败：不支持的键 {sorted(unknown)}"
-                f"（允许：{sorted(_PLAN_KEYS)}；filters 未开放）"
+                f"参数校验失败：不支持的键 {sorted(unknown)}（允许：{sorted(_PLAN_KEYS)}）"
             )
+        metric = self._require_metric(plan)
         try:
             compiled = Plan(
-                metric=self._require_metric(plan),
+                metric=metric,
                 dimensions=self._dimensions(plan),
                 time=self._time(plan),
+                filters=self._filters(plan, metric),
                 order_by=self._order_by(plan),
                 limit=self._limit(plan),
             )
@@ -184,7 +193,12 @@ class DeterministicTools:
             raise ToolError(f"编译失败：{exc}") from exc
         return self._logged(
             "compile_sql",
-            {"metric": compiled.metric, "limit": compiled.limit},
+            {
+                "metric": compiled.metric,
+                "limit": compiled.limit,
+                # 审计可见：带几条过滤（不带值，避免客户维度值落进调用留痕）
+                "filters": len(compiled.filters),
+            },
             {"sql": sql, "join_chain": list(notes)},
         )
 
@@ -221,6 +235,42 @@ class DeterministicTools:
         if not isinstance(value, (int, str)) or (isinstance(value, str) and not value.strip()):
             raise ToolError("参数校验失败：time.value 必须是 int 或非空 str")
         return TimeSpec(granularity, value)
+
+    def _filters(self, plan: dict[str, Any], metric: str) -> tuple[Filter, ...]:
+        """filters 形态校验（结构白名单，不接受裸 SQL 片段）。
+
+        column 允许两类：语义层已注册字段（→ WHERE 维度过滤），或等于本 Plan 的
+        metric 名（→ HAVING 度量阈值，compiler 按 column==metric 判定，见
+        agent/compiler.py 拆分规则）。value 仅标量（int/float/非空 str）：嵌套对象
+        会被 compiler 转成字面量字符串，属静默错口径，此处直接拒。
+        """
+        items = plan.get("filters", ())
+        if items is None:
+            return ()
+        if not isinstance(items, (list, tuple)):
+            raise ToolError("参数校验失败：filters 必须是对象数组")
+        out: list[Filter] = []
+        for item in items:
+            if not isinstance(item, dict) or set(item) != {"column", "op", "value"}:
+                raise ToolError(
+                    "参数校验失败：filters 元素必须恰为 "
+                    '{"column": str, "op": str, "value": 标量}'
+                )
+            column, op, value = item["column"], item["op"], item["value"]
+            if not isinstance(column, str) or not column.strip():
+                raise ToolError("参数校验失败：filters.column 必须是非空字符串")
+            if column != metric and self.model.find_field(column) is None:
+                raise ToolError(
+                    f"参数校验失败：filters.column 必须是已注册字段或本 Plan 的指标名：{column}"
+                )
+            if op not in _FILTER_OPS:
+                raise ToolError(f"参数校验失败：filters.op 必须是 {_FILTER_OPS}，收到 {op!r}")
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise ToolError("参数校验失败：filters.value 必须是数字或非空字符串")
+            if isinstance(value, str) and not value.strip():
+                raise ToolError("参数校验失败：filters.value 不能是空字符串")
+            out.append(Filter(column, op, value))
+        return tuple(out)
 
     def _order_by(self, plan: dict[str, Any]) -> tuple[OrderSpec, ...]:
         specs = plan.get("order_by", ())

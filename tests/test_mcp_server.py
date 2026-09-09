@@ -109,6 +109,21 @@ class TestHappyPath(unittest.TestCase):
         self.assertFalse(r["isError"])
         self.assertIn("LIMIT 5", text_of(r)["sql"])
 
+    def test_call_compile_sql_with_filters(self) -> None:
+        """filters 已经 MCP 层开放（schema 放行 + registry 编译出谓词）。"""
+        args = {
+            "metric": "commission_revenue",
+            "dimensions": ["Branch"],
+            "time": {"granularity": "year", "value": 2014},
+            "filters": [{"column": "Tier", "op": "=", "value": 3}],
+            "limit": 5,
+        }
+        r = self.server.call_tool("compile_sql", args)
+        self.assertFalse(r["isError"], str(r))
+        sql = text_of(r)["sql"]
+        self.assertIn("WHERE", sql)
+        self.assertIn("Tier", sql)
+
     def test_call_execute_readonly_guarded(self) -> None:
         sql = "SELECT SK_BrokerID FROM atlas.dwd.fact_trades LIMIT 3"
         r = self.server.call_tool("execute_readonly", {"sql": sql})
@@ -161,6 +176,23 @@ class TestValidationAndScope(unittest.TestCase):
             self._error_type("describe_metric", {"metric": "cash_balance", "extra": 1}),
             "validation_error",
         )
+
+    def test_validation_error_filter_shape(self) -> None:
+        """filters 形态在 schema 层就被拦（不达 registry）：非法 op / 非对象元素
+        / 缺键 / 嵌套值 / 未知键（裸 SQL 片段入口）。"""
+        bad: list[Any] = [
+            [{"column": "Tier", "op": "LIKE", "value": "3"}],  # 非法 op
+            ["Tier=3"],  # 元素非对象
+            [{"column": "Tier", "op": "="}],  # 缺 value
+            [{"column": "Tier", "op": "=", "value": {"nested": 1}}],  # 嵌套值
+            [{"column": "Tier", "op": "=", "value": "", "sql": "1=1"}],  # 空串+未知键
+        ]
+        for value in bad:
+            with self.subTest(filters=value):
+                self.assertEqual(
+                    self._error_type("compile_sql", {"metric": "cash_balance", "filters": value}),
+                    "validation_error",
+                )
 
     def test_validation_error_bad_types(self) -> None:
         self.assertEqual(self._error_type("compile_sql", {"metric": 123}), "validation_error")

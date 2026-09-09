@@ -64,6 +64,35 @@ _TIME_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+_FILTER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "column": {
+            "type": "string",
+            "minLength": 1,
+            "description": (
+                "过滤列：已注册字段（→ WHERE），或等于本 Plan 的 metric 名"
+                "（→ 度量阈值 HAVING）；具体清单由 registry 校验"
+            ),
+        },
+        "op": {
+            "type": "string",
+            "enum": ["=", "!=", "<", "<=", ">", ">="],
+            "description": "比较操作符（与 Compiler 支持集一致）",
+        },
+        "value": {
+            "anyOf": [
+                {"type": "integer"},
+                {"type": "number"},
+                {"type": "string", "minLength": 1},
+            ],
+            "description": "标量比较值（不接受对象/数组/null/布尔）",
+        },
+    },
+    "required": ["column", "op", "value"],
+    "additionalProperties": False,
+}
+
 _COMPILE_PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -77,6 +106,11 @@ _COMPILE_PLAN_SCHEMA: dict[str, Any] = {
             "description": "分组维度字段（可缺省）",
         },
         "time": _TIME_SCHEMA,
+        "filters": {
+            "type": "array",
+            "items": _FILTER_SCHEMA,
+            "description": "过滤条件（可缺省）：维度等值/阈值→WHERE，column==metric 时→HAVING",
+        },
         "order_by": {
             "type": "array",
             "items": {
@@ -150,8 +184,8 @@ _TOOLS = (
     ToolSpec(
         name="compile_sql",
         description=(
-            "把结构化 Plan（指标/维度/时间/排序/行数）确定性编译为只读 SQL。"
-            "不执行；执行请用 execute_readonly。filters 未开放。"
+            "把结构化 Plan（指标/维度/时间/过滤/排序/行数）确定性编译为只读 SQL。"
+            "不执行；执行请用 execute_readonly。"
         ),
         input_schema=_COMPILE_PLAN_SCHEMA,
     ),
