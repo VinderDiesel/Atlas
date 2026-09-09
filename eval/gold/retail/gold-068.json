@@ -1,0 +1,19 @@
+{
+  "id": "gold-068",
+  "question": "只看类别 Toys 的 1999 年销售额是多少？",
+  "expected_metric": null,
+  "expected_dimensions": [],
+  "expected_time": null,
+  "expected_sql": null,
+  "expected_filters": null,
+  "result_hash": null,
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "ambiguous",
+    "clarification",
+    "filter",
+    "value_domain_unknown"
+  ],
+  "ambiguous": true,
+  "clarification": "需要澄清：「Toys」不在品类维度的当前快照值域内，也不是其已登记别名——请给出值域内的精确取值（候选值随反问列出，来源 semantic/values/atlas_retail_analytics.i_category.json，ADR-0016）。"
+}

@@ -31,6 +31,10 @@
 # 2026-09-05 修改（P6 英文样本）：total_trade_value/commission_revenue/cash_balance/
 #   trade_count 四指标 quality.gold_test_cases 补入英文样本 gold-163~170
 #   （lang_en，语言 = 样本 tags 属性，不新增目录维度）。
+# 2026-09-09 修改（B4 维度值域注册，评测先行 ADR-0010）：commission_revenue
+#   gold_test_cases 补入值域别名样本 gold-171（NSDQ → NASDAQ，governance_validate
+#   双向对齐）；零售域歧义样本 gold-068（值不存在 → 反问）不属任何指标 expected_metric，
+#   按既有约定不入 gold_test_cases。
 # 2026-09-08 修改（同义改写评测 pp-comm-2 发现的注册缺口）：commission_revenue 补裸
 #   同义词「手续费」，同时给 commission_rate 补「手续费率」——两者必须成对注册：
 #   仅加裸「手续费」会让「手续费率」被最长命中误判为 commission_revenue（静默错口径）。
@@ -1225,7 +1229,7 @@ semantic_model:
                   "dependencies": []
                 },
                 "quality": {
-                  "gold_test_cases": ["gold-102", "gold-119", "gold-127", "gold-140", "gold-149", "gold-151", "gold-153", "gold-154", "gold-168", "gold-169", "gold-170"],
+                  "gold_test_cases": ["gold-102", "gold-119", "gold-127", "gold-140", "gold-149", "gold-151", "gold-153", "gold-154", "gold-168", "gold-169", "gold-170", "gold-171"],
                   "expected_value_snapshot_sha": "30b8344"
                 }
               }

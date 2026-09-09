@@ -1,0 +1,40 @@
+{
+  "id": "gold-171",
+  "question": "只看交易所 NSDQ 的 2013 年佣金收入是多少？",
+  "expected_metric": "commission_revenue",
+  "expected_dimensions": [],
+  "expected_time": "2013",
+  "expected_sql": "SELECT SUM(fact_trades.Commission) AS commission_revenue FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_security AS dim_security ON fact_trades.SK_SecurityID = dim_security.SK_SecurityID WHERE dim_date.CalendarYearID = 2013 AND dim_security.ExchangeID = 'NASDAQ' LIMIT 100",
+  "expected_filters": [
+    {
+      "column": "ExchangeID",
+      "op": "=",
+      "value": "NASDAQ"
+    }
+  ],
+  "result_hash": "<待执行后填写>",
+  "snapshot_sha": "<待锁定后填写>",
+  "tags": [
+    "aggregation",
+    "filter",
+    "equality_filter",
+    "value_domain_alias",
+    "time_range",
+    "fibo_alignment"
+  ],
+  "ambiguous": false,
+  "fibo_concepts": [
+    {
+      "term": "佣金收入",
+      "concept": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+      "role": "measure",
+      "note": "佣金是经纪服务收取的费用"
+    },
+    {
+      "term": "NSDQ",
+      "concept": "https://www.omg.org/spec/Commons/Organizations/Organization",
+      "role": "dimension",
+      "note": "值域别名载体：NSDQ 是交易所代码 NASDAQ 的旧缩写写法，归一由 semantic/values/ 的 aliases 映射驱动（ADR-0016）"
+    }
+  ]
+}
