@@ -22,7 +22,7 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from eval.runner import git_short_sha
 
@@ -387,14 +387,19 @@ def _section_meta(sha: str) -> list[str]:
     return lines
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    """生成 EVAL_REPORT.md（写 stdout）。
+
+    argv：参数列表（缺省 None = 读 sys.argv[1:]）；测试传入显式空列表以隔离
+    跑测器自身的 argv（unittest discover 的 `-s tests` 会被 argparse 拒收）。
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--latest",
         action="store_true",
         help="强制聚合最新一次/最近 N 次评测报告（跨 sha，避免 headline 报告为空）",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     sha = git_short_sha()
     lines: list[str] = [

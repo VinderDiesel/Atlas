@@ -57,10 +57,15 @@ class TestParaphraseStable(unittest.TestCase):
 
 
 class TestParaphraseGap(unittest.TestCase):
-    """OOV 口吻当前无法解析（诚实拒答 = drop，记录泛化缺口）。
+    """OOV 口吻当前无法按期望形态解析（= drop，记录泛化缺口）。
 
     这些用例是「已知弱点」的回归锁：若 Planner 后续支持这些措辞，测试会翻转，
     届时需同步更新 gold/paraphrase 预期并修订 README Known Limitations。
+
+    drop 判定用 `_plan_ok` 为 False，而非强要求返回 ClarificationRequest：
+    样本有两种诚实形态——完全拒答（pp-101-5/comm-3/comm-4 反问）与降级解析
+    （pp-dim-3「各网点」无分组结构词→解析成功但**丢维度**，note 已标“预期不分组”）；
+    两者都是“未得到期望 Plan”，均计为 drop。
     """
 
     GAP = ["pp-101-5", "pp-dim-3", "pp-comm-3", "pp-comm-4"]
@@ -68,8 +73,7 @@ class TestParaphraseGap(unittest.TestCase):
     def test_oov_untrained_phrasing_rejected(self) -> None:
         for qid in self.GAP:
             with self.subTest(qid=qid):
-                plan = Planner(MODEL).plan(_load(qid)["question"])
-                self.assertIsInstance(plan, ClarificationRequest)
+                self.assertFalse(_plan_ok(_load(qid)), f"{qid} OOV 形态已可解析——需同步更新预期与 KL")
 
 
 if __name__ == "__main__":

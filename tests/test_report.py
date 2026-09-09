@@ -36,7 +36,9 @@ def _render() -> str:
     """捕获 main() 的 stdout 输出。"""
     buf = io.StringIO()
     with redirect_stdout(buf):
-        rc = report_mod.main()
+        # 显式空 argv：main() 内部 argparse 若不传参会读 sys.argv，
+        # unittest discover 的 `-s tests` 会被当作未知参数拒收（pytest 下恰好不现）
+        rc = report_mod.main([])
     assert rc == 0
     return buf.getvalue()
 
