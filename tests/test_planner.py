@@ -11,7 +11,14 @@ import json
 import unittest
 from pathlib import Path
 
-from agent.compiler import Filter, OrderSpec, Plan, SemanticModel, TimeSpec
+from agent.compiler import (
+    Filter,
+    OrderSpec,
+    Plan,
+    SemanticModel,
+    TimeSpec,
+    load_locale_synonyms,
+)
 from agent.planner import ClarificationRequest, Planner
 
 REPO = Path(__file__).resolve().parent.parent
@@ -725,23 +732,53 @@ class TestEnglishPlanner(unittest.TestCase):
         self.assertEqual(result.kind, "unmatched")
 
     def test_en_synonym_keys_within_model(self) -> None:
-        """en 注册表键须在语义模型中存在（防 YAML 改名后漂移；金融∪零售）。"""
-        from agent.planner import _EN_DIM_SYNONYMS, _EN_METRIC_SYNONYMS
+        """英文同义词表（已外置 en_us.yml，ADR-0015）防漂移三锁：
+
+        1. 条数基线：17 个指标 + 15 个维度字段（与外置前代码常量逐字对应，
+           任何新增/删除都需连同评测复验，不默许漂）；
+        2. 键必须在语义模型（金融 ∪ 零售）已注册名字集内（YAML 改名即报红）；
+        3. 措辞不得与模型注记重叠（重叠=双源）；唯一例外是中英同形的
+           缩写词 AOV（模型注记与本表都有，外置前已如此，不顺手改）。
+        """
+        known_overlap = {("avg_order_value", "AOV")}
+        en = load_locale_synonyms("en_us")
+        metrics, dims = en["metric_synonyms"], en["dimension_synonyms"]
+        self.assertEqual(len(metrics), 17, "英文指标表条数基线")
+        self.assertEqual(len(dims), 15, "英文维度表条数基线")
 
         finance_keys = set(MODEL.metric_synonyms) | set(MODEL.dimension_synonyms)
         retail_keys = (
             set(RETAIL_MODEL.metric_synonyms) | set(RETAIL_MODEL.dimension_synonyms)
         )
-        for name in _EN_METRIC_SYNONYMS:
-            self.assertIn(name, finance_keys | retail_keys)
-        for name in _EN_DIM_SYNONYMS:
-            self.assertIn(name, finance_keys | retail_keys)
+        model_words = {
+            w
+            for syns in list(MODEL.metric_synonyms.values())
+            + list(MODEL.dimension_synonyms.values())
+            + list(RETAIL_MODEL.metric_synonyms.values())
+            + list(RETAIL_MODEL.dimension_synonyms.values())
+            for w in syns
+        }
+        for name, syns in {**metrics, **dims}.items():
+            self.assertIn(name, finance_keys | retail_keys, f"{name} 未注册于任何模型")
+            for word in syns:
+                if (name, word) in known_overlap:
+                    continue
+                self.assertNotIn(word, model_words, f"{name}: {word!r} 与模型注记重叠")
         # 零售键必须挂在零售模型（金融键挂在金融模型）
         for name in ("total_sales_price", "total_quantity", "net_profit",
                      "avg_order_value", "order_count"):
             self.assertIn(name, RETAIL_MODEL.metric_synonyms)
         for name in ("i_category", "i_brand", "s_state", "s_city"):
             self.assertIn(name, RETAIL_MODEL.dimension_synonyms)
+
+    def test_locale_synonym_files_registered(self) -> None:
+        """locale 注册表封闭：zh 表恒空（中文注记的唯一权威源是模型）。"""
+        zh = load_locale_synonyms("zh_cn")
+        self.assertEqual(zh["metric_synonyms"], {})
+        self.assertEqual(zh["dimension_synonyms"], {})
+        # zh 轨不并入英文表（防中文问句里的英文片段误命中）
+        with self.assertRaises(ValueError):
+            load_locale_synonyms("fr_fr")
 
     def test_invalid_locale_rejected(self) -> None:
         with self.assertRaises(ValueError):

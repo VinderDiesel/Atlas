@@ -31,6 +31,7 @@ from sqlglot import exp
 
 REPO = Path(__file__).resolve().parent.parent
 FINANCE_MODEL = REPO / "semantic" / "ossie" / "atlas_finance.ossie.yaml"
+SYNONYMS_DIR = REPO / "semantic" / "synonyms"
 
 
 class CompileError(Exception):
@@ -210,6 +211,66 @@ class SemanticModel:
             if field_name in ds.fields:
                 return ds.name, ds.fields[field_name]
         return None
+
+
+# ---------------------------------------------------------------------------
+# locale 同义词表（代码外配置，ADR-0015）
+# ---------------------------------------------------------------------------
+
+_LOCALE_FILES = {"zh_cn": "zh_cn.yml", "en_us": "en_us.yml"}
+_LOCALE_KEYS = frozenset({"metric_synonyms", "dimension_synonyms"})
+_LOCALE_CACHE: dict[str, dict[str, dict[str, tuple[str, ...]]]] = {}
+
+
+def load_locale_synonyms(locale: str) -> dict[str, dict[str, tuple[str, ...]]]:
+    """读 `semantic/synonyms/<locale>.yml` → 归一化同义词表（启动加载一次）。
+
+    locale 是**封闭注册表**（_LOCALE_FILES）：不在表内直接 ValueError，不拼接
+    任意文件名。语义模型仍是定义权威源（ossie/），本函数只加载解析器的 locale
+    形态层补充（英文措辞在 en_us.yml；模型 ai_context.synonyms 为中文注记）。
+    已注册但文件不存在 = 配置缺失 → ValueError（宁可启动即失败，不静默降级出
+    口径）。**声明顺序保留**——解析器按“模型注记 + 本表”顺序做最长命中匹配，
+    顺序影响歧义判定。
+    """
+    if locale in _LOCALE_CACHE:
+        return _LOCALE_CACHE[locale]
+    if locale not in _LOCALE_FILES:
+        raise ValueError(
+            f"未知 locale {locale!r}（已注册：{', '.join(sorted(_LOCALE_FILES))}；"
+            f"新增 locale 需同步 ADR-0015 与本注册表）"
+        )
+    path = SYNONYMS_DIR / _LOCALE_FILES[locale]
+    if not path.exists():
+        raise ValueError(f"locale={locale} 的同义词表缺失：{path}")
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(doc, dict):
+        raise ValueError(f"同义词表顶层必须是映射：{path}")
+    unknown = set(doc) - _LOCALE_KEYS
+    if unknown:
+        raise ValueError(f"同义词表不支持的顶层键 {sorted(unknown)}：{path}")
+
+    def _section(key: str) -> dict[str, tuple[str, ...]]:
+        raw = doc.get(key) or {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"同义词表 {key} 必须是 名称→[措辞, ...] 映射：{path}")
+        out: dict[str, tuple[str, ...]] = {}
+        for name, items in raw.items():
+            if isinstance(items, str) or not isinstance(items, (list, tuple)):
+                raise ValueError(f"{key}.{name} 必须是字符串列表：{path}")
+            words = tuple(str(x).strip() for x in items)
+            if any(not w for w in words):
+                raise ValueError(f"{key}.{name} 含空措辞：{path}")
+            if len(set(words)) != len(words):
+                raise ValueError(f"{key}.{name} 措辞重复：{path}")
+            out[str(name)] = words
+        return out
+
+    loaded = {
+        "metric_synonyms": _section("metric_synonyms"),
+        "dimension_synonyms": _section("dimension_synonyms"),
+    }
+    _LOCALE_CACHE[locale] = loaded
+    return loaded
 
 
 # ---------------------------------------------------------------------------

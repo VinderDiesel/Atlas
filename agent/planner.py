@@ -15,8 +15,8 @@
 - 语言（P6 locale 化，2026-09-05）：形态词表/正则按 locale 分片（zh/en），
   语言自动检测（句中含任意中文字符 → zh，否则 → en），CLI/API 无需显式参数；
   评测 runner 按样本 tags lang_en 显式传 locale（确定性优先）。英文同义词
-  注册在代码层 _EN_METRIC_SYNONYMS/_EN_DIM_SYNONYMS（键与语义模型对齐，
-  YAML ai_context 是中文注记域，英文措辞属解析器形态层）
+  外置在 `semantic/synonyms/en_us.yml`（ADR-0015，由 compiler.load_locale_synonyms
+  加载；YAML ai_context 是中文注记域，英文措辞属解析器形态层）
 - 英文 filter 边界：值须为**精确值**（"only for branch X"），裸实体复数词
   （customers/branches 等）作值后缀裁剪；无维度词短语（强调语）不产生 filter，
   与中文同构（见 _EN_ONLY_RE/_EN_EXCL_RE）
@@ -41,7 +41,14 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from agent.compiler import Filter, OrderSpec, Plan, SemanticModel, TimeSpec
+from agent.compiler import (
+    Filter,
+    OrderSpec,
+    Plan,
+    SemanticModel,
+    TimeSpec,
+    load_locale_synonyms,
+)
 
 # ---------------------------------------------------------------------------
 # 中文形态（zh，P6 locale 化后仍为主路径；行为与 2026-09-04 前逐字一致）
@@ -166,52 +173,19 @@ _EN_UNIT = {
 _EN_FOLLOWUP_WHAT_RE = re.compile(r"(?:what|how)\s+about\s+(.+?)\??\s*$")
 _EN_FOLLOWUP_INSTEAD_RE = re.compile(r"(.+?)\s+instead\??\s*$")
 
-# 英文同义词注册表（locale=en 时与模型中文同义词联合；键须与语义模型
-# dimension_synonyms/metric_synonyms 对齐，契约测试兜底防漂移）
-_EN_METRIC_SYNONYMS: dict[str, tuple[str, ...]] = {
-    # 金融
-    "total_trade_value": ("trade value", "total trade value", "transaction value"),
-    "commission_revenue": ("commission revenue", "commission income"),
-    "trade_count": ("trades", "number of trades", "trade count"),
-    "cash_balance": ("cash balance",),
-    "total_trade_quantity": ("trade quantity", "total trade quantity"),
-    "total_trade_tax": ("trade tax",),
-    "holdings_value": ("holdings value", "portfolio value"),
-    "holdings_quantity": ("holdings quantity",),
-    "average_trade_value": (
-        "average trade value", "avg trade value", "average value per trade",
-    ),
-    "average_commission_per_trade": (
-        "average commission per trade", "avg commission per trade",
-    ),
-    "commission_rate": ("commission rate",),
-    "avg_trade_price": ("average trade price", "avg trade price"),
-    # 零售
-    "total_sales_price": ("total sales", "sales", "sales amount", "revenue"),
-    "total_quantity": ("quantity", "total quantity", "units sold", "items sold"),
-    "net_profit": ("profit", "net profit", "gross profit"),
-    "avg_order_value": ("average order value", "avg order value", "AOV"),
-    "order_count": ("orders", "number of orders", "order count"),
-}
-_EN_DIM_SYNONYMS: dict[str, tuple[str, ...]] = {
-    # 金融（dim_* 表非时间字段；复数/词干形态按需注册）
-    "Branch": ("branch",),
-    "Office": ("office",),
-    "Tier": ("customer tier", "tier", "client tier"),
-    "TaxStatus": ("tax status",),
-    "Status": ("account status",),
-    "Gender": ("gender",),
-    "ExchangeID": ("exchange",),
-    "Issue": ("security type", "issue type"),
-    "Symbol": ("symbol", "ticker"),
-    "NetWorth": ("net worth",),
-    "CreditRating": ("credit rating",),
-    # 零售
-    "i_category": ("category", "categories", "product category"),
-    "i_brand": ("brand",),
-    "s_state": ("state", "store state"),
-    "s_city": ("city", "cities", "store city"),
-}
+# 同义词表外置（ADR-0015）：zh = 语义模型 ai_context 注记（实测全中文，唯一
+# 例外 GMV/AOV 中英通用）；en = 模型注记 ∪ `semantic/synonyms/en_us.yml`。
+# planner 内不保留任何硬编码措辞表——新场景接入英文措辞只改 YAML（B7 前提）。
+_LOCALE_SYNONYM_FILE = {"zh": "zh_cn", "en": "en_us"}
+
+
+def _locale_synonyms(locale: str, section: str) -> dict[str, tuple[str, ...]]:
+    """取本 locale 的同义词补充表（指标 metric_synonyms / 维度 dimension_synonyms）。
+
+    zh_cn.yml 当前为空占位（中文注记全部活在模型里，搬进词典属 B3a），
+    因此 en 以外的合并恒等于模型注记本体——行为与外置前逐字一致。
+    """
+    return load_locale_synonyms(_LOCALE_SYNONYM_FILE[locale])[section]
 
 
 @dataclass(frozen=True)
@@ -426,15 +400,16 @@ class Planner:
         )
 
     def _metric_synsets(self, locale: str) -> dict[str, tuple[str, ...]]:
-        """指标同义词集：zh=模型中文注记；en=模型 ∪ 代码层英文注册表。
+        """指标同义词集：zh=模型中文注记；en=模型 ∪ 英文同义词表（en_us.yml）。
 
         en 并集而非替换：模型同义词为中文，纯英文问句不可能命中，并集恒安全
         （zh 不并入 en——中文问句含英文维度值词时防误命中）。
         """
         if locale == "zh":
             return dict(self.model.metric_synonyms)
+        extra = _locale_synonyms(locale, "metric_synonyms")
         return {
-            name: syns + _EN_METRIC_SYNONYMS.get(name, ())
+            name: syns + extra.get(name, ())
             for name, syns in self.model.metric_synonyms.items()
         }
 
@@ -442,8 +417,9 @@ class Planner:
         """维度字段同义词集（与 _metric_synsets 同构）。"""
         if locale == "zh":
             return dict(self.model.dimension_synonyms)
+        extra = _locale_synonyms(locale, "dimension_synonyms")
         return {
-            name: syns + _EN_DIM_SYNONYMS.get(name, ())
+            name: syns + extra.get(name, ())
             for name, syns in self.model.dimension_synonyms.items()
         }
     def _parse_time(

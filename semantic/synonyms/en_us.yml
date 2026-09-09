@@ -1,0 +1,127 @@
+# 英文同义词表（locale=en_us）：指标名 / 维度字段名 → 英文措辞列表
+#
+# owner: agent（解析器形态层；非业务治理资产，故不进 ossie 治理扩展）
+# 最后修改: 2026-09-08 从 agent/planner.py 的 _EN_METRIC_SYNONYMS /
+#           _EN_DIM_SYNONYMS 外置为数据（ADR-0015）——**纯搬运，逐词等价**，
+#           目的是让新场景接入英文措辞时只改配置不改内核（B7 验收前提）。
+#
+# 为什么不写进 ossie 的 ai_context.synonyms：
+#   该列表在解析器里按 locale 分轨使用（zh = 模型注记；en = 模型 ∪ 本表）。
+#   模型注记实测全为中文（唯一例外 GMV/AOV 中英通用），zh 轨从不并入英文表；
+#   把英文措辞混排进 ai_context.synonyms 会让 locale=zh 的中文问句里出现的
+#   英文片段（如分支代码、值词）参与指标匹配 → 破防误命中隔离。
+# 为什么不写进治理扩展（custom_extensions）：
+#   atlas_governance.schema.json 顶层 additionalProperties: false，只登记 7 个扩展
+#   键（governance/lineage/freshness/policy/quality/fibo_alignment/time_dimension），
+#   同义词不属治理语义。
+#
+# 加载入口：agent/compiler.py::load_locale_synonyms("en_us")
+#   - 键必须是语义模型（金融 ∪ 零售）中已注册的指标名/维度字段名，
+#     由 tests/test_planner.py 的契约测试兜底防漂移（YAML 改名即报红）；
+#   - 列表**顺序即语义**：解析器按模型注记 + 本表顺序做最长命中匹配，
+#     调整顺序可能改变歧义判定，需连同评测复验；
+#   - 值只做小写化比较（解析器 side 处理），本文件按原样书写、不加引号转义技巧。
+
+metric_synonyms:
+  # ---- 金融（atlas_finance）----
+  total_trade_value:
+    - trade value
+    - total trade value
+    - transaction value
+  commission_revenue:
+    - commission revenue
+    - commission income
+  trade_count:
+    - trades
+    - number of trades
+    - trade count
+  cash_balance:
+    - cash balance
+  total_trade_quantity:
+    - trade quantity
+    - total trade quantity
+  total_trade_tax:
+    - trade tax
+  holdings_value:
+    - holdings value
+    - portfolio value
+  holdings_quantity:
+    - holdings quantity
+  average_trade_value:
+    - average trade value
+    - avg trade value
+    - average value per trade
+  average_commission_per_trade:
+    - average commission per trade
+    - avg commission per trade
+  commission_rate:
+    - commission rate
+  avg_trade_price:
+    - average trade price
+    - avg trade price
+  # ---- 零售（atlas_retail）----
+  total_sales_price:
+    - total sales
+    - sales
+    - sales amount
+    - revenue
+  total_quantity:
+    - quantity
+    - total quantity
+    - units sold
+    - items sold
+  net_profit:
+    - profit
+    - net profit
+    - gross profit
+  avg_order_value:
+    - average order value
+    - avg order value
+    - AOV
+  order_count:
+    - orders
+    - number of orders
+    - order count
+
+dimension_synonyms:
+  # ---- 金融（dim_* 表非时间字段；复数/词干形态按需注册）----
+  Branch:
+    - branch
+  Office:
+    - office
+  Tier:
+    - customer tier
+    - tier
+    - client tier
+  TaxStatus:
+    - tax status
+  Status:
+    - account status
+  Gender:
+    - gender
+  ExchangeID:
+    - exchange
+  Issue:
+    - security type
+    - issue type
+  Symbol:
+    - symbol
+    - ticker
+  NetWorth:
+    - net worth
+  CreditRating:
+    - credit rating
+  # ---- 零售 ----
+  i_category:
+    - category
+    - categories
+    - product category
+  i_brand:
+    - brand
+  s_state:
+    - state
+    - store state
+  s_city:
+    - city
+    - cities
+    - store city

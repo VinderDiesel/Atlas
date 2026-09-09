@@ -67,7 +67,16 @@ Ossie 文件定义"含义"，由 converter 编译成各平台的语义层。
 | `atlas_finance.ossie.yaml` | **主语义模型**（金融 TPC-DI + 17 条 FIBO 概念映射，ADR-0007） |
 | `atlas_retail.ossie.yaml` | 历史对照模型（零售 TPC-DS，不再扩展） |
 | `../governance/atlas_governance.schema.json` | Atlas 治理扩展的 JSON Schema（挂在 custom_extensions 下） |
-| `../schema/*.schema.json` | **已废弃**：早期自研 DSL，保留仅作设计演进对照 |
+| `../synonyms/en_us.yml` | 英文同义词表（代码外配置，ADR-0015；与模型 `ai_context.synonyms` 并集） |
+| `../policies/row_policy.yml` | 行级权限与脱敏策略声明 |
+| `../_legacy/` | **已归档**：ADR-0002 之前的自研 DSL 定义与 Schema，仅作演进对照，零代码引用 |
+
+## 权威源唯一（机械锁定）
+
+本目录是语义定义的**唯一权威源**。`semantic/lint.py` 的 `[authority]` 检查保证
+`semantic/` 下除 `ossie/`、`synonyms/`、`policies/`（与 `_*` 归档区）外不存在任何
+`*.yaml/*.yml` 语义定义文件——曾经长期挂着的 `status: active` 幽灵定义（引用不存
+在的表、lint 不覆盖）已集中到 `../_legacy/`，理由与清单见该目录 README。
 
 ## 校验
 

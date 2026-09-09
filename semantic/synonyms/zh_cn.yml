@@ -1,0 +1,25 @@
+# 中文同义词表（locale=zh_cn）：**当前为空占位，中文注记仍在语义模型里**
+#
+# owner: agent（解析器形态层）
+# 最后修改: 2026-09-08 随 ADR-0015 建立 locale 词典目录结构时创建为空表。
+#
+# 为什么存在但不携带内容：
+#   中文指标/维度同义词是**口径定义的一部分**，权威源是
+#   `semantic/ossie/*.ossie.yaml` 的 `ai_context.synonyms`（模型加载时进入
+#   SemanticModel.metric_synonyms / dimension_synonyms）。把它们再抄一份到词典
+#   会制造双权威源（与 ADR-0002"权威源唯一 = ossie/"冲突），故本文件保持空表。
+#   英文侧相反：模型注记实测全中文（唯一例外 GMV/AOV），英文措辞属解析器形态层，
+#   因此才外置到 en_us.yml（zh 轨从不并入 en 表，防中文问句里的英文片段误命中）。
+#
+# 本文件的内容计划（B3a 起）：中文**形态触发词**（分组结构词 / filter 触发词 /
+# 量级词 / TopN / 指代链接词 / 相对时间拒答词）不属口径定义、属 locale 词典，
+# 将从 planner 代码外置到此文件族的 patterns_zh_cn.yml（见 ADR-0015 §落地形态）。
+#
+# 约定（与 en_us.yml 一致，由 agent/compiler.py::load_locale_synonyms 校验）：
+#   - 键必须是语义模型中已注册的指标名/维度字段名；
+#   - 列表顺序即匹配顺序，调整需连同评测复验；
+#   - 顶层仅允许 metric_synonyms / dimension_synonyms 两个键。
+
+metric_synonyms: {}
+
+dimension_synonyms: {}

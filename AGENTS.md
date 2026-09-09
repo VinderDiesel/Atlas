@@ -75,13 +75,12 @@
 atlas-data-platform/
 ├── .github/workflows/   # GitHub Actions（lint / eval 回归 / tag 自动版本锚点）
 ├── semantic/            # 语义层定义（Git 唯一事实源）
-│   ├── schema/          # JSON Schema，CI 强制校验
-│   ├── models/          # SemanticModel：base_table / measures / joins
-│   ├── metrics/         # Metric 定义（核心资产）
-│   ├── dimensions/      # Dimension 定义
-│   ├── synonyms/        # 同义词表（业务术语 → Metric/Dimension）
-│   ├── policies/        # RowPolicy 行级权限
-│   └── migrations/      # 语义层变更记录（版本演进）
+│   ├── ossie/           # ✅ 权威语义模型（ADR-0002）：atlas_finance / atlas_retail
+│   ├── governance/      # ATLAS 治理扩展 JSON Schema（挂在 custom_extensions 下）
+│   ├── synonyms/        # locale 词典（英文同义词 en_us.yml；形态触发词见 ADR-0015）
+│   ├── policies/        # RowPolicy 行级权限与脱敏策略声明
+│   ├── migrations/      # 语义层变更记录（版本演进）
+│   └── _legacy/         # ❌ 已归档：ADR-0002 前的自研 DSL 定义，零引用，仅演进对照
 ├── sql/
 │   ├── tpcds_ddl/       # TPC-DS 原始 DDL（零售历史，只读，勿改）
 │   ├── dwd/             # 明细层
@@ -205,7 +204,9 @@ make adr TITLE="xxx"            # 新建 ADR 模板
 
 - 2 空格缩进，禁止 Tab
 - 每个文件顶部注释说明 owner 与最后修改原因
-- 必须通过 `semantic/schema/*.schema.json` 校验
+- 语义模型必须通过 `make lint`（ossie 结构 + 治理扩展 + 黄金集 schema +
+  **权威源唯一性**）；`semantic/` 下除 `ossie/`、`synonyms/`、`policies/` 与 `_*`
+  归档区外不得存在 `*.yaml/*.yml`（新增权威目录需先补 ADR，见 ADR-0015）
 - 日期用 ISO 8601，时区显式声明（`+08:00`）
 
 ### 7.4 提示词
