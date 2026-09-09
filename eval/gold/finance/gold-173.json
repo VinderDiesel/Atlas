@@ -1,14 +1,24 @@
 {
   "id": "gold-173",
-  "question": "2015年各分支交易额同比",
+  "question": "按分支统计 2015 年交易额同比",
   "expected_metric": "total_trade_value",
-  "expected_dimensions": ["Branch"],
+  "expected_dimensions": [
+    "Branch"
+  ],
   "expected_time": "2015",
-  "expected_comparison": {"kind": "yoy"},
+  "expected_comparison": {
+    "kind": "yoy"
+  },
   "expected_sql": null,
   "result_hash": "<待执行后填写>",
   "snapshot_sha": "<待锁定后填写>",
-  "tags": ["aggregation", "dimension_group_by", "time_range", "comparison", "yoy"],
+  "tags": [
+    "aggregation",
+    "dimension_group_by",
+    "time_range",
+    "comparison",
+    "yoy"
+  ],
   "ambiguous": false,
   "fibo_concepts": [
     {

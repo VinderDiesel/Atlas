@@ -1,6 +1,6 @@
 {
   "id": "gold-075",
-  "question": "2001年各月累计销售额",
+  "question": "2001 年各月累计销售额",
   "expected_metric": "total_sales_price",
   "expected_dimensions": [],
   "expected_time": "2001",

@@ -1,6 +1,6 @@
 {
   "id": "gold-175",
-  "question": "2015年7月交易额环比",
+  "question": "2015 年 7 月交易额环比",
   "expected_metric": "total_trade_value",
   "expected_dimensions": [],
   "expected_time": "201507",

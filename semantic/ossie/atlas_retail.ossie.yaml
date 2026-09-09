@@ -378,6 +378,10 @@ semantic_model:
             datatype: Integer
             dimension:
               is_time: false
+            ai_context:
+              synonyms:
+                - "店铺"
+                - "分店"
 
           - name: s_state
             expression:

@@ -54,6 +54,7 @@ from typing import Literal
 
 from agent import value_domain
 from agent.compiler import (
+    ComparisonSpec,
     Filter,
     OrderSpec,
     Plan,
@@ -136,6 +137,21 @@ if {kind for kind, _ in _TIME_PATTERNS} != set(_TIME_DISPATCH):
 
 # 相对时间词：命中即反问（固定快照评测下必然漂移，ADR-0014 ③ 设计性不支持）
 _RELATIVE_TIME = _ZH_PATTERNS["time"]["relative_reject"]["words"]
+
+# 时间智能触发词（B5 ADR-0017）：命中 + 时间已解析 → 设置 comparison；
+# 命中 + 时间未解析 → ClarificationRequest（同比/环比/累计需要绝对时间锚点）
+_COMPARISON_TRIGGERS_ZH: dict[str, tuple[str, ...]] = {
+    "yoy": ("同比", "年同比"),
+    "pop": ("环比", "月环比", "季环比"),
+    "cumulative": ("累计", "年初至今"),
+    "rank": ("排名", "排行"),
+}
+_COMPARISON_TRIGGERS_EN: dict[str, tuple[str, ...]] = {
+    "yoy": ("year-over-year", "yoy", "yearly comparison"),
+    "pop": ("period-over-period", "pop", "mom", "qoq"),
+    "cumulative": ("cumulative", "ytd", "mtd", "running total"),
+    "rank": ("rank", "ranking"),
+}
 
 # 显式分组结构词："按分支统计 / 按客户等级分组"
 _GROUP_RE = _ZH_PATTERNS["grouping"]["pattern"]
@@ -392,6 +408,11 @@ class Planner:
         if isinstance(time, ClarificationRequest):
             return time
 
+        # 2.5 时间智能触发词检测（B5 ADR-0017）
+        comparison = self._detect_comparison(question, time, locale)
+        if isinstance(comparison, ClarificationRequest):
+            return comparison
+
         # 3. 维度解析（显式分组结构 + 维度表同义词）
         dimensions = self._parse_dimensions(question, locale)
 
@@ -410,6 +431,7 @@ class Planner:
             filters=filters,
             order_by=order_by,
             limit=limit,
+            comparison=comparison,
         )
 
     def followup(
@@ -557,6 +579,41 @@ class Planner:
             name: syns + extra.get(name, ())
             for name, syns in self.model.dimension_synonyms.items()
         }
+
+    def _detect_comparison(
+        self, question: str, time: TimeSpec | None, locale: str
+    ) -> ComparisonSpec | None | ClarificationRequest:
+        """时间智能触发词检测（B5 ADR-0017）。
+
+        触发词命中 + time 已解析 → 返回 ComparisonSpec；
+        触发词命中 + time 为 None → ClarificationRequest（需绝对时间锚点）；
+        触发词未命中 → None（既有行为零变化）。
+        """
+        triggers = _COMPARISON_TRIGGERS_EN if locale == "en" else _COMPARISON_TRIGGERS_ZH
+        text = question if locale == "en" else question
+        text_lower = text.lower() if locale == "en" else text
+        for kind, words in triggers.items():
+            for w in words:
+                target = text_lower if locale == "en" else text
+                if w in target:
+                    if time is None:
+                        if locale == "en":
+                            return ClarificationRequest(
+                                question,
+                                (f"'{w}' requires an absolute time anchor "
+                                 "(drifts under frozen-snapshot evaluation); "
+                                 "please specify a year",),
+                                kind="relative_time",
+                            )
+                        return ClarificationRequest(
+                            question,
+                            (f"「{w}」需要绝对时间锚点（固定快照评测下会漂移，"
+                             "请指定具体年份）",),
+                            kind="relative_time",
+                        )
+                    return ComparisonSpec(kind=kind)
+        return None
+
     def _parse_time(
         self, question: str, locale: str
     ) -> TimeSpec | None | ClarificationRequest:

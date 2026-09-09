@@ -1,6 +1,6 @@
 {
   "id": "gold-176",
-  "question": "2015年各月累计交易额",
+  "question": "2015 年各月累计交易额",
   "expected_metric": "total_trade_value",
   "expected_dimensions": [],
   "expected_time": "2015",

@@ -2,8 +2,8 @@
   "model": "atlas_finance_analytics",
   "field": "Office",
   "status": "skipped",
-  "snapshot_sha": "5d1e22b",
-  "generated_at": "2026-09-09T11:40:49+08:00",
+  "snapshot_sha": "a11d779",
+  "generated_at": "2026-09-09T11:56:30+08:00",
   "bound_dataset": "dim_broker",
   "source_table": "atlas.dwd.dim_broker",
   "source_column": "Office",
@@ -14,5 +14,5 @@
   "skip_reason": "distinct=2324 超过阈值 200",
   "values": [],
   "aliases": {},
-  "note": "值域派生自锁定快照 5d1e22b 的 atlas.dwd.dim_broker.Office；DISTINCT 实测 2324 个非空取值、NULL 行数 139。 distinct 值数超过阈值 200，按 ADR-0016 §① 跳过注册：planner 对该列不做值校验（值原样透传）。"
+  "note": "值域派生自锁定快照 a11d779 的 atlas.dwd.dim_broker.Office；DISTINCT 实测 2324 个非空取值、NULL 行数 139。 distinct 值数超过阈值 200，按 ADR-0016 §① 跳过注册：planner 对该列不做值校验（值原样透传）。"
 }

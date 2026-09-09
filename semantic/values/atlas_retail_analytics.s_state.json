@@ -2,8 +2,8 @@
   "model": "atlas_retail_analytics",
   "field": "s_state",
   "status": "registered",
-  "snapshot_sha": "5d1e22b",
-  "generated_at": "2026-09-09T11:40:49+08:00",
+  "snapshot_sha": "a11d779",
+  "generated_at": "2026-09-09T11:56:31+08:00",
   "bound_dataset": "dim_store",
   "source_table": "atlas.dwd.dim_store",
   "source_column": "s_state",
@@ -19,5 +19,5 @@
     }
   ],
   "aliases": {},
-  "note": "值域派生自锁定快照 5d1e22b 的 atlas.dwd.dim_store.s_state；DISTINCT 实测 1 个非空取值、NULL 行数 0。"
+  "note": "值域派生自锁定快照 a11d779 的 atlas.dwd.dim_store.s_state；DISTINCT 实测 1 个非空取值、NULL 行数 0。"
 }

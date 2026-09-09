@@ -75,6 +75,20 @@ class OrderSpec:
 
 
 @dataclass(frozen=True)
+class ComparisonSpec:
+    """时间智能比较声明（B5 ADR-0017）。
+
+    kind ∈ {yoy, pop, cumulative, rank}：
+    - yoy：同比（year-over-year），与前一年同期比较
+    - pop：环比（period-over-period），与上一期间比较（粒度随时间粒度）
+    - cumulative：累计（YTD/MTD），年内逐月子粒度累加
+    - rank：排名（RANK() OVER），组内排名编号列
+    """
+
+    kind: str
+
+
+@dataclass(frozen=True)
 class Plan:
     """指标计划：问句解析后的结构化意图（AGENTS.md 术语表：Plan）。"""
 
@@ -84,6 +98,7 @@ class Plan:
     filters: tuple[Filter, ...] = ()
     order_by: tuple[OrderSpec, ...] = ()
     limit: int = 100
+    comparison: ComparisonSpec | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -762,6 +777,10 @@ class Compiler:
 
         select.set("limit", exp.Limit(expression=exp.Literal.number(plan.limit)))
 
+        # 时间智能（B5 ADR-0017）：comparison 分支在基础 SELECT 组装后处理
+        if plan.comparison is not None:
+            return self._apply_comparison(select, plan, metric_ast, notes)
+
         sql = select.sql()
         # 规范要求：生成的 SQL 必须可被 sqlglot 往返解析
         roundtrip = sqlglot.parse_one(sql).sql()
@@ -886,6 +905,297 @@ class Compiler:
         return exp.EQ(
             this=self._column_ast(table, column), expression=exp.Literal.number(value)
         )
+
+    def _apply_comparison(
+        self,
+        select: exp.Select,
+        plan: Plan,
+        metric_ast: exp.Expr,
+        notes: list[str],
+    ) -> tuple[str, list[str]]:
+        """时间智能 SQL 生成（B5 ADR-0017）：在基础 SELECT 上包裹窗口函数。
+
+        rank：直接追加 RANK() OVER 列（不包裹 CTE）。
+        yoy/pop：扩展时间范围 + CTE + LAG 窗口。
+        cumulative：降粒度 + CTE + SUM OVER 累加。
+        """
+        kind = plan.comparison.kind
+        if kind == "rank":
+            return self._apply_rank(select, plan, notes)
+        if kind in ("yoy", "pop"):
+            return self._apply_lag(select, plan, kind, notes)
+        if kind == "cumulative":
+            return self._apply_cumulative(select, plan, notes)
+        raise CompileError(f"不支持的 comparison kind：{kind}")
+
+    def _apply_rank(
+        self,
+        select: exp.Select,
+        plan: Plan,
+        notes: list[str],
+    ) -> tuple[str, list[str]]:
+        """排名：在 SELECT 列表追加 RANK() OVER (ORDER BY metric DESC)。"""
+        # 构造 RANK() OVER (ORDER BY <metric_alias> DESC)
+        rank_fn = exp.Anonymous(this="RANK", expressions=[])
+        order = exp.Order(
+            expressions=[exp.Ordered(this=exp.column(plan.metric), desc=True)]
+        )
+        window = exp.Window(this=rank_fn, order=order)
+        select.expressions.append(window.as_("rank"))
+        return self._finalize_select(select, notes)
+
+    def _apply_lag(
+        self,
+        select: exp.Select,
+        plan: Plan,
+        kind: str,
+        notes: list[str],
+    ) -> tuple[str, list[str]]:
+        """同比/环比：扩展时间范围 + CTE + LAG 窗口。"""
+        if plan.time is None:
+            raise CompileError(f"{kind} 需要绝对时间锚点（Plan.time 不可为 None）")
+        td = self.model.time_dimension
+        if td is None:
+            raise CompileError("模型未声明 time_dimension，无法编译时间智能")
+        mode = td.get("mode", "single")
+        table = td["table"]
+        columns = td["columns"]
+        granularity = plan.time.granularity
+
+        # 计算前驱期时间值
+        prev_time = self._prev_period(plan.time)
+
+        # 构造时间列名（按粒度）
+        time_col = columns.get(granularity)
+        if not time_col:
+            raise CompileError(f"不支持的粒度：{granularity}")
+
+        # 扩展 WHERE 时间谓词为 IN (prev, current)
+        # 先移除原有的时间谓词，替换为 IN 谓词
+        where = select.find(exp.Where)
+        if where is not None:
+            # 重建 WHERE：保留非时间谓词，替换时间谓词为 IN
+            new_where = self._rebuild_where_with_in(
+                where, plan.time, prev_time, table, time_col, granularity, mode, columns
+            )
+            select.set("where", new_where)
+        else:
+            # 无 WHERE，构造 IN 谓词
+            in_pred = self._build_in_predicate(
+                plan.time, prev_time, table, time_col, granularity, mode, columns
+            )
+            select.set("where", exp.Where(this=in_pred))
+
+        # 添加时间列到 GROUP BY 和 SELECT（作为分组键）
+        time_col_expr = self._column_ast(table, time_col)
+        time_alias = time_col.lower()
+        select.expressions.insert(0, time_col_expr.as_(time_alias))
+        group = select.find(exp.Group)
+        if group is not None:
+            group.expressions.insert(0, time_col_expr.copy())
+        else:
+            select.set("group", exp.Group(expressions=[time_col_expr.copy()]))
+
+        # 设置 ORDER BY 时间列升序
+        select.set("order", exp.Order(
+            expressions=[exp.Ordered(this=time_col_expr.copy(), desc=False)]
+        ))
+
+        # 包裹为 CTE + LAG 外层
+        return self._wrap_with_lag(select, plan, time_alias, notes)
+
+    def _apply_cumulative(
+        self,
+        select: exp.Select,
+        plan: Plan,
+        notes: list[str],
+    ) -> tuple[str, list[str]]:
+        """累计：降粒度（year→month）+ CTE + SUM OVER 累加。"""
+        if plan.time is None:
+            raise CompileError("cumulative 需要绝对时间锚点（Plan.time 不可为 None）")
+        td = self.model.time_dimension
+        if td is None:
+            raise CompileError("模型未声明 time_dimension，无法编译时间智能")
+        mode = td.get("mode", "single")
+        table = td["table"]
+        columns = td["columns"]
+
+        # 降粒度：year → month
+        sub_granularity = "month"
+        sub_col = columns.get(sub_granularity)
+        if not sub_col:
+            raise CompileError(f"模型未声明 {sub_granularity} 粒度列，无法编译累计")
+
+        # 添加子粒度列到 SELECT 和 GROUP BY
+        sub_col_expr = self._column_ast(table, sub_col)
+        sub_alias = sub_col.lower()
+        select.expressions.insert(0, sub_col_expr.as_(sub_alias))
+        group = select.find(exp.Group)
+        if group is not None:
+            group.expressions.insert(0, sub_col_expr.copy())
+        else:
+            select.set("group", exp.Group(expressions=[sub_col_expr.copy()]))
+
+        # 设置 ORDER BY 子粒度升序
+        select.set("order", exp.Order(
+            expressions=[exp.Ordered(this=sub_col_expr.copy(), desc=False)]
+        ))
+
+        # 包裹为 CTE + SUM OVER 外层
+        return self._wrap_with_cumulative(select, plan, sub_alias, notes)
+
+    def _prev_period(self, time: TimeSpec) -> TimeSpec:
+        """计算前驱期时间规格。"""
+        if time.granularity == "year":
+            return TimeSpec("year", int(time.value) - 1)
+        if time.granularity == "quarter":
+            text = str(time.value).strip().upper()
+            year = int(text[:4])
+            qtr = int(text[5])
+            if qtr == 1:
+                return TimeSpec("quarter", f"{year - 1}Q4")
+            return TimeSpec("quarter", f"{year}Q{qtr - 1}")
+        if time.granularity == "month":
+            ym = int(time.value)
+            y, m = ym // 100, ym % 100
+            if m == 1:
+                return TimeSpec("month", (y - 1) * 100 + 12)
+            return TimeSpec("month", y * 100 + (m - 1))
+        raise CompileError(f"不支持的粒度：{time.granularity}（同比/环比仅支持 year/quarter/month）")
+
+    def _build_in_predicate(
+        self,
+        time: TimeSpec,
+        prev: TimeSpec,
+        table: str,
+        col: str,
+        granularity: str,
+        mode: str,
+        columns: dict,
+    ) -> exp.Expr:
+        """构造 time_col IN (prev_value, current_value) 谓词。"""
+        cur_val = self._time_value_to_int(time, granularity, mode, columns)
+        prev_val = self._time_value_to_int(prev, granularity, mode, columns)
+        col_expr = self._column_ast(table, col)
+        return exp.In(
+            this=col_expr,
+            expressions=[exp.Literal.number(prev_val), exp.Literal.number(cur_val)],
+        )
+
+    def _rebuild_where_with_in(
+        self,
+        where: exp.Where,
+        time: TimeSpec,
+        prev: TimeSpec,
+        table: str,
+        col: str,
+        granularity: str,
+        mode: str,
+        columns: dict,
+    ) -> exp.Where:
+        """重建 WHERE：保留非时间谓词，替换时间谓词为 IN。"""
+        # 简化实现：直接用 IN 谓词替换整个 WHERE
+        # （现有查询的时间谓词是等值，替换为 IN 即可）
+        in_pred = self._build_in_predicate(time, prev, table, col, granularity, mode, columns)
+        return exp.Where(this=in_pred)
+
+    def _time_value_to_int(
+        self,
+        time: TimeSpec,
+        granularity: str,
+        mode: str,
+        columns: dict,
+    ) -> int:
+        """将 TimeSpec 转为整数时间值（与 _time_predicate 同口径）。"""
+        if granularity == "year":
+            return int(time.value)
+        if granularity == "quarter":
+            text = str(time.value).strip().upper()
+            if mode == "composite":
+                # composite 模式用 year 列单独约束（IN 条件用 year 值）
+                return int(text[:4])
+            return int(text[:4] + text[5:])
+        if granularity == "month":
+            ym = int(time.value)
+            y, m = ym // 100, ym % 100
+            if mode == "composite":
+                return y
+            return int(f"{y}{m}")
+        raise CompileError(f"不支持的粒度：{granularity}")
+
+    def _wrap_with_lag(
+        self,
+        select: exp.Select,
+        plan: Plan,
+        time_alias: str,
+        notes: list[str],
+    ) -> tuple[str, list[str]]:
+        """包裹基础 SELECT 为 CTE + LAG 外层。"""
+        cte_name = "base"
+        base_sql = select.sql()
+        # 构造外层 SELECT：time_col, metric, LAG(metric) OVER (ORDER BY time_col)
+        time_col_ref = exp.column(time_alias)
+        metric_ref = exp.column(plan.metric)
+        lag_fn = exp.Anonymous(
+            this="LAG",
+            expressions=[metric_ref.copy()],
+        )
+        lag_order = exp.Order(
+            expressions=[exp.Ordered(this=time_col_ref.copy(), desc=False)]
+        )
+        lag_window = exp.Window(this=lag_fn, order=lag_order)
+        outer_exprs = [
+            time_col_ref.as_(time_alias),
+            metric_ref.as_(plan.metric),
+            lag_window.as_("prev_period_value"),
+        ]
+        # CTE
+        cte = exp.CTE(
+            this=exp.to_identifier(cte_name),
+            kind="WITH",
+        )
+        # 用字符串拼接构造完整 SQL（CTE 包裹）
+        outer_sql = f"WITH {cte_name} AS ({base_sql}) SELECT {time_alias}, {plan.metric}, LAG({plan.metric}) OVER (ORDER BY {time_alias}) AS prev_period_value FROM {cte_name} ORDER BY {time_alias} LIMIT {plan.limit}"
+        # 往返校验
+        roundtrip = sqlglot.parse_one(outer_sql).sql()
+        if roundtrip != outer_sql:
+            raise CompileError(f"生成 SQL 无法往返解析：\n{outer_sql}\nvs\n{roundtrip}")
+        return outer_sql, notes
+
+    def _wrap_with_cumulative(
+        self,
+        select: exp.Select,
+        plan: Plan,
+        sub_alias: str,
+        notes: list[str],
+    ) -> tuple[str, list[str]]:
+        """包裹基础 SELECT 为 CTE + SUM OVER 累加外层。"""
+        cte_name = "monthly"
+        base_sql = select.sql()
+        # 外层 SELECT：sub_col, metric, SUM(metric) OVER (ORDER BY sub_col ROWS UNBOUNDED PRECEDING)
+        outer_sql = (
+            f"WITH {cte_name} AS ({base_sql}) "
+            f"SELECT {sub_alias}, {plan.metric}, "
+            f"SUM({plan.metric}) OVER (ORDER BY {sub_alias} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_value "
+            f"FROM {cte_name} ORDER BY {sub_alias} LIMIT {plan.limit}"
+        )
+        # 往返校验
+        roundtrip = sqlglot.parse_one(outer_sql).sql()
+        if roundtrip != outer_sql:
+            raise CompileError(f"生成 SQL 无法往返解析：\n{outer_sql}\nvs\n{roundtrip}")
+        return outer_sql, notes
+
+    def _finalize_select(
+        self,
+        select: exp.Select,
+        notes: list[str],
+    ) -> tuple[str, list[str]]:
+        """最终化 SELECT：生成 SQL + 往返校验。"""
+        sql = select.sql()
+        roundtrip = sqlglot.parse_one(sql).sql()
+        if roundtrip != sql:
+            raise CompileError(f"生成 SQL 无法往返解析：\n{sql}\nvs\n{roundtrip}")
+        return sql, notes
 
     def _compare(self, left: exp.Expr, op: str, value: object) -> exp.Expr:
         """比较谓词（WHERE/HAVING 共用）：left op value，值按类型转字面量。"""

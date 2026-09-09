@@ -963,7 +963,9 @@ semantic_model:
               synonyms:
                 - "分支"
                 - "营业部"
+                - "分行"
                 - "网点"
+                - "营业厅"
 
           - name: Office
             expression:

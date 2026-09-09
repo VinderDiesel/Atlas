@@ -1,14 +1,21 @@
 {
   "id": "gold-172",
-  "question": "2015年交易额同比",
+  "question": "2015 年交易额同比",
   "expected_metric": "total_trade_value",
   "expected_dimensions": [],
   "expected_time": "2015",
-  "expected_comparison": {"kind": "yoy"},
+  "expected_comparison": {
+    "kind": "yoy"
+  },
   "expected_sql": null,
   "result_hash": "<待执行后填写>",
   "snapshot_sha": "<待锁定后填写>",
-  "tags": ["aggregation", "time_range", "comparison", "yoy"],
+  "tags": [
+    "aggregation",
+    "time_range",
+    "comparison",
+    "yoy"
+  ],
   "ambiguous": false,
   "fibo_concepts": [
     {

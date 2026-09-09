@@ -1,6 +1,6 @@
 {
   "id": "gold-178",
-  "question": "2015年各交易所交易量排名",
+  "question": "按交易所统计 2015 年成交量排名",
   "expected_metric": "total_trade_quantity",
   "expected_dimensions": [
     "ExchangeID"

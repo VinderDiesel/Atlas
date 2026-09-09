@@ -127,6 +127,7 @@ class TestTimeDimensionDeclaration(unittest.TestCase):
                 "i_brand": ("品牌",),
                 "s_state": ("州", "省份", "门店州"),
                 "s_city": ("城市", "门店城市"),
+                "s_store_sk": ("店铺", "分店"),
             },
         )
         # d_year/d_moy/d_qoy is_time: true → 不入维度同义词（金融 L24-26 同款缺陷修复）

@@ -1,6 +1,6 @@
 {
   "id": "gold-074",
-  "question": "2001年第二季度销售额环比",
+  "question": "2001 年第二季度销售额环比",
   "expected_metric": "total_sales_price",
   "expected_dimensions": [],
   "expected_time": "2001Q2",

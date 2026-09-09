@@ -1,6 +1,6 @@
 {
   "id": "gold-174",
-  "question": "2015年第二季度交易额环比",
+  "question": "2015 年第二季度交易额环比",
   "expected_metric": "total_trade_value",
   "expected_dimensions": [],
   "expected_time": "2015Q2",

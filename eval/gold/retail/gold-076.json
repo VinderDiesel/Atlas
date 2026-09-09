@@ -1,6 +1,6 @@
 {
   "id": "gold-076",
-  "question": "2001年各门店销售额排名",
+  "question": "按门店统计 2001 年销售额排名",
   "expected_metric": "total_sales_price",
   "expected_dimensions": [
     "s_state"

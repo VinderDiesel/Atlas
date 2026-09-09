@@ -407,9 +407,16 @@ def apply_time_range(tree: exp.Expr, budget: Budget, model: object | None = None
     columns = td.get("columns")
     if not isinstance(time_table, str) or not isinstance(columns, dict) or not columns:
         return tree
-    # 时间列优先取 date 粒度列，否则取声明中的任一列
-    time_col = columns.get("date") or next(iter(columns.values()))
-    if not isinstance(time_col, str):
+    # 注入列：优先 date 粒度列（真实日期），否则取声明中的任一列
+    inject_col = columns.get("date") or next(iter(columns.values()))
+    if not isinstance(inject_col, str):
+        return tree
+    # 时间列族：模型声明的全部粒度列（year/quarter/month/date）。编译器对 year/quarter/
+    # month 用各自 ID 列（CalendarYearID 等），对 date 用 DateValue；只要 WHERE/HAVING 命中
+    # 任一即视为"已有时间约束"，不再叠加默认窗口——否则仅认 DateValue 会把历史年份查询
+    # 全排除（query 实测 2013 返回 null 的根因：730 天窗口下界 ≈ 2024 把 2012-2017 数据排除）。
+    time_cols = set(columns.values())
+    if not time_cols or not all(isinstance(c, str) for c in time_cols):
         return tree
 
     existing = {table.name for table in tree.find_all(exp.Table)}
@@ -417,7 +424,7 @@ def apply_time_range(tree: exp.Expr, budget: Budget, model: object | None = None
     referenced = time_table in existing or time_table in aliases.values()
     if not referenced:
         return tree
-    # 已有对该时间列的谓词 → 跳过（避免双重约束）。判定**只看 WHERE/HAVING 且必须是
+    # 已有对该时间列族的谓词 → 跳过（避免双重约束）。判定**只看 WHERE/HAVING 且必须是
     # 时间列本身**：JOIN ON 里引用时间维表（如 fact.d = dim_date.d）是连接键不是时间
     # 约束，若把任意列引用当作已约束，默认时间窗对"join 了维表但无时间过滤"的查询
     # 永远不会生效（纵深防御形同空转）。
@@ -425,7 +432,7 @@ def apply_time_range(tree: exp.Expr, budget: Budget, model: object | None = None
         if scope is None:
             continue
         if any(
-            col.name == time_col
+            col.name in time_cols
             and (col.table == time_table or aliases.get(str(col.table)) == time_table)
             for col in scope.find_all(exp.Column)
         ):
@@ -433,10 +440,12 @@ def apply_time_range(tree: exp.Expr, budget: Budget, model: object | None = None
 
     tree = tree.copy()
     days = budget.default_time_window_days
-    interval = exp.Interval(this=exp.Literal.string(f"{days} DAY"))
+    # 数字 + 单位的 Interval（渲染为 `INTERVAL 730 DAY`）；
+    # 不能用 Literal.string 包成 '730 DAY'——那是 Postgres 引号写法，Doris 解析失败。
+    interval = exp.Interval(this=exp.Literal.number(days), unit=exp.var("DAY"))
     date_expr = exp.Sub(this=exp.CurrentDate(), expression=interval)
     predicate = exp.GTE(
-        this=exp.column(time_col, table=time_table),
+        this=exp.column(inject_col, table=time_table),
         expression=date_expr,
     )
     where = tree.find(exp.Where)

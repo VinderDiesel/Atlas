@@ -491,7 +491,7 @@ atlas-data-platform/
 | `make plan Q="..."` | 问句 → 指标计划（不执行） |
 | `make compile` | 计划 → 只读 SQL |
 | `make ask` | Data Agent 多轮问数（真实 Doris + 锁定快照；无参数进交互会话） |
-| `make query Q="..."` | 一步问数（Planner→Compiler→Guard→Doris 真连库）：`--domain retail` 切零售、`--format json` 机读、未知指标默认澄清、`--role branch_manager --role-ctx branch=BR_A1` 注入行级策略；退出码 0/1/2/3 分流 |
+| `make query Q="..."` | 一步问数（Planner→Compiler→Guard→Doris 真连库）：`--domain retail` 切零售、`--format json` 机读、未知指标默认澄清、`--role branch_manager --role-ctx branch=BR_A1` 注入行级策略；退出码 0/1/2/3 分流。**依赖装好后也可直接 `atlas query "..."`：控制台入口基于 `__file__` 定位资源，可在任意目录执行，无需在仓库根** |
 | `make e2e` | Data Agent 端到端验收门禁：5 场景 + handoff（Day 48） |
 | `make eval` | 跑评测集，产出 report JSON |
 | `make retrieve` | 指标检索评测（BM25；`ENGINE=milvus` 走 Milvus 稀疏向量；`ENGINE=fuse` 走 RRF 双路融合；`ENGINE=rerank` 走元数据 Rerank） |

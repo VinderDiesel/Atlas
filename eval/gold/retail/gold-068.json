@@ -7,7 +7,7 @@
   "expected_sql": null,
   "expected_filters": null,
   "result_hash": null,
-  "snapshot_sha": "<待锁定后填写>",
+  "snapshot_sha": "5d1e22b",
   "tags": [
     "ambiguous",
     "clarification",

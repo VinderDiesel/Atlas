@@ -1,6 +1,6 @@
 {
   "id": "gold-177",
-  "question": "2015年各分支交易额排名",
+  "question": "按分支统计 2015 年交易额排名",
   "expected_metric": "total_trade_value",
   "expected_dimensions": [
     "Branch"
