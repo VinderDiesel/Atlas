@@ -45,6 +45,9 @@ query.plan.json
 # 服务面审计日志（本地 JSONL，非防篡改——生产应外置，见 README §9.1）
 serving/audit/
 
+# 会话持久化落盘（ADR-0020：SQLite checkpoint，进程态不入库）
+serving/state/
+
 # IDE / OS
 .idea/
 .vscode/
