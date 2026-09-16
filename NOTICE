@@ -1,0 +1,61 @@
+Atlas
+Copyright 2026 HyperionS
+
+Licensed under the Apache License, Version 2.0: see LICENSE
+(http://www.apache.org/licenses/LICENSE-2.0).
+
+This NOTICE file carries the attribution notices for third-party content
+referenced by or included in this repository.
+
+--------------------------------------------------------------------------------
+1. FIBO (Financial Industry Business Ontology) - referenced, not distributed
+--------------------------------------------------------------------------------
+
+This project uses concept IRIs from FIBO (FND / FBC / BE domains).
+- FIBO: MIT License (Copyright 2020 EDM Council).
+- FIBO is a trademark of EDM Council.
+FIBO source files are not distributed with this repository; users obtain
+them directly from EDM Council (see data/fibo/README.md). Only IRI
+identifier strings are stored in this repository.
+
+--------------------------------------------------------------------------------
+2. TPC-DS kit - file-level carve-out (scripts/tpcds_kit_sf01.patch)
+--------------------------------------------------------------------------------
+
+scripts/tpcds_kit_sf01.patch contains 48 lines of verbatim source code
+(16 removed + 32 context) from tools/r_params.c and tools/scaling.c of the
+TPC-DS kit (gregrahn/tpcds-kit @ 5a3a817, v2.10.0). Those 48 lines are
+subject to the TPC End User License Agreement Version 2.2 and are NOT
+licensed under the Apache License, Version 2.0.
+
+THE TPC SOFTWARE IS AVAILABLE WITHOUT CHARGE FROM TPC.
+
+The TPC-DS kit itself is not distributed with this repository; users clone
+it directly (see scripts/setup_tpcds.sh).
+
+--------------------------------------------------------------------------------
+3. Remotion - docs/outreach-video/
+--------------------------------------------------------------------------------
+
+docs/outreach-video/ uses Remotion (version 4.0.523), which is
+source-available under a two-tier license: the Remotion Free License applies
+to individuals, for-profit organizations with up to 3 employees, and
+non-profits; other use requires a Remotion Company License
+(https://www.remotion.dev/license). Remotion packages (node_modules) and
+rendered video outputs are excluded from version control.
+
+--------------------------------------------------------------------------------
+4. Dependencies
+--------------------------------------------------------------------------------
+
+Python dependencies are declared in pyproject.toml / uv.lock. A
+machine-generated license inventory (name / version / license / introducing
+path) is produced by:
+
+    make license-check REPORT=1  ->  exports/dependency-licenses.json
+
+The inventory is not reproduced here to avoid drifting out of date.
+Dependencies retained with file-level copyleft (MPL-2.0):
+- certifi (MPL-2.0)
+- pathspec (MPL-2.0)
+- orjson (MPL-2.0 AND (Apache-2.0 OR MIT))

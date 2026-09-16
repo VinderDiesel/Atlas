@@ -30,7 +30,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -40,6 +39,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from sqlglot import Tokenizer, exp  # noqa: E402
 from sqlglot import parse as sqlglot_parse  # noqa: E402
+
+from data.identity import git_short_sha  # noqa: E402
 
 _DIALECT_ORDER = ("doris", "spark", "mysql")
 _NUMERIC_TYPES = {
@@ -80,18 +81,6 @@ _MEASURE_HINTS = (
     "volume",
 )
 _HEADER_KEYS = ("功能", "用途", "说明", "重跑", "作者", "维护")
-
-
-def git_short_sha() -> str:
-    """当前 HEAD 短 sha（报告绑定，保证数字可追溯）。"""
-    out = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return out.stdout.strip()
 
 
 def _clean_identifier(name: str) -> str:

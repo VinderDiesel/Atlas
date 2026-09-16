@@ -380,6 +380,11 @@ semantic_model:
               is_time: false
             ai_context:
               synonyms:
+                # 「门店」为 P-1 收口补齐（ADR-0017 代价 ⑤ 裁定）：与事实表
+                # ss_store_sk 的同义共识一致；原缺词使「按门店统计」静默降级
+                # dims=()（gold-076）。与「门店城市」「门店州」的重叠由 planner
+                # 最长词优先归属防误伤（gold-057）。
+                - "门店"
                 - "店铺"
                 - "分店"
 

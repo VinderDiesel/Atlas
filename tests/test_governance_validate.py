@@ -5,10 +5,14 @@
 另覆盖 check_snapshot_anchor（expected_value_snapshot_sha 数值背书快照
 锚定校验，KL #16 收口）：已回填值必须指向已锁定快照，占位是机制未启用
 状态的如实声明。
+另覆盖 check_policy_consistency（ADR-0021 决策 ⑥：域 ↔ 策略 ↔ 角色 ↔
+claims 契约双向一致性）：正例吃真实 row_policy.yml + ROLE_DIRECTORY +
+两个 ossie 模型声明（make lint 同口径的单元版），四条检查各有单点反例。
 
 口径说明：指标演进一律采用**新名 + supersedes 指向旧名**（同名指标在
 ossie_validate 已被全局唯一约束拦截，不存在同名两代共存的合法形态）。
-纯函数级测试，不依赖语义层文件与文件系统。
+supersedes / snapshot 部分为纯函数级测试，不依赖语义层文件与文件系统；
+policy-consistency 正例直接读真实语义层文件以锁全绿。
 
 这些用例必须全部通过才能改 governance_validate.py。
 """
@@ -16,13 +20,25 @@ ossie_validate 已被全局唯一约束拦截，不存在同名两代共存的�
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from semantic.governance_validate import (
     PLACEHOLDER_SNAPSHOT_SHA,
     MetricGovernance,
+    check_policy_consistency,
     check_snapshot_anchor,
     check_supersedes_chains,
+    collect_referenced_policies,
+    load_policies_by_name,
 )
+from serving.auth import ROLE_DIRECTORY, RoleSpec
+
+REPO = Path(__file__).resolve().parent.parent
+POLICY_PATH = REPO / "semantic" / "policies" / "row_policy.yml"
+MODEL_YAMLS = [
+    REPO / "semantic" / "ossie" / "atlas_finance.ossie.yaml",
+    REPO / "semantic" / "ossie" / "atlas_retail.ossie.yaml",
+]
 
 
 def _rec(
@@ -180,6 +196,85 @@ class TestSnapshotAnchor(unittest.TestCase):
         # 无用例指标不强制锚定（无论占位还是已锁值都不报）
         self.assertEqual(check_snapshot_anchor(set(), None, {"30b8344"}, "m"), [])
         self.assertEqual(check_snapshot_anchor(set(), "ghost", {"30b8344"}, "m"), [])
+
+
+class TestPolicyConsistency(unittest.TestCase):
+    """ADR-0021 决策 ⑥ 四检查（判据 8）：真实数据正例 + 四条单点反例。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.roles = dict(ROLE_DIRECTORY)
+        cls.policies = load_policies_by_name(POLICY_PATH)
+
+    def _run(
+        self,
+        referenced: dict[str, set[str]] | None = None,
+        policies: dict[str, dict] | None = None,
+        roles: dict[str, RoleSpec] | None = None,
+    ) -> list[str]:
+        errors: list[str] = []
+        check_policy_consistency(
+            collect_referenced_policies(MODEL_YAMLS) if referenced is None else referenced,
+            self.policies if policies is None else policies,
+            self.roles if roles is None else roles,
+            errors,
+        )
+        return errors
+
+    def test_real_data_passes(self) -> None:
+        """正例：真实语义层全绿（落地后 make lint 全绿的单元版）。"""
+        self.assertEqual(
+            collect_referenced_policies(MODEL_YAMLS),
+            {
+                "rp_branch_visible": {"atlas_finance.ossie.yaml"},
+                "rp_dept_visible": {"atlas_retail.ossie.yaml"},
+            },
+        )
+        self.assertEqual(self._run(), [])
+
+    def test_check1_unregistered_role_rejected(self) -> None:
+        """反例 1：删掉 broker 注册 → 检查 1 报「未在 ROLE_DIRECTORY 注册」。"""
+        roles = {k: v for k, v in self.roles.items() if k != "broker"}
+        errors = self._run(roles=roles)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("broker 未在 ROLE_DIRECTORY 注册", errors[0])
+
+    def test_check2_orphan_registration_rejected(self) -> None:
+        """反例 2：注册一个 YAML 里不存在的角色 → 检查 2 报「注册孤儿」。"""
+        roles = dict(self.roles)
+        roles["ghost_role"] = RoleSpec(("x",), frozenset(), "ghost")
+        errors = self._run(roles=roles)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("ghost_role", errors[0])
+        self.assertIn("注册孤儿", errors[0])
+
+    def test_check3_required_claims_drift_rejected(self) -> None:
+        """反例 3a：required_claims 少键 → 检查 3 报「≠ 模板占位符」。"""
+        roles = dict(self.roles)
+        roles["category_analyst"] = RoleSpec(("region",), frozenset({"categories"}))
+        errors = self._run(roles=roles)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("required_claims", errors[0])
+
+    def test_check3_list_claims_drift_rejected(self) -> None:
+        """反例 3b：list_claims 缺 sql_in 键 → 检查 3 报「≠ 模板 sql_in 占位符」。"""
+        roles = dict(self.roles)
+        roles["category_analyst"] = RoleSpec(("region", "categories"), frozenset())
+        errors = self._run(roles=roles)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("list_claims", errors[0])
+
+    def test_check4_orphan_policy_rejected(self) -> None:
+        """反例 4：策略无模型引用 → 检查 4 报「策略孤儿」。"""
+        policies = dict(self.policies)
+        policies["rp_ghost"] = {
+            "name": "rp_ghost",
+            "roles": [{"name": "hq_admin", "condition": "1=1"}],
+        }
+        errors = self._run(policies=policies)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("rp_ghost", errors[0])
+        self.assertIn("策略孤儿", errors[0])
 
 
 if __name__ == "__main__":

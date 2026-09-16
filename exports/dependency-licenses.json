@@ -1,0 +1,660 @@
+{
+  "generated_by": "infra/license_check.py --report（ADR-0023 决策 ⑦）",
+  "package_count": 109,
+  "packages": [
+    {
+      "name": "aiosqlite",
+      "version": "0.22.1",
+      "license": "MIT License",
+      "引入路径": "langgraph-checkpoint-sqlite"
+    },
+    {
+      "name": "annotated-doc",
+      "version": "0.0.5",
+      "license": "MIT",
+      "引入路径": "fastapi"
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.8.0",
+      "license": "MIT",
+      "引入路径": "pydantic"
+    },
+    {
+      "name": "anyio",
+      "version": "4.14.2",
+      "license": "MIT",
+      "引入路径": "httpcore / httpcore2 / httpx / httpx2 / langsmith / starlette"
+    },
+    {
+      "name": "ast_serialize",
+      "version": "0.8.0",
+      "license": "MIT",
+      "引入路径": "mypy"
+    },
+    {
+      "name": "atlas",
+      "version": "0.1.3",
+      "license": "Apache-2.0",
+      "引入路径": "-"
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "license": "MIT",
+      "引入路径": "jsonschema / pytest / referencing"
+    },
+    {
+      "name": "cachetools",
+      "version": "7.1.8",
+      "license": "MIT",
+      "引入路径": "langsmith / pyiceberg / pymilvus"
+    },
+    {
+      "name": "certifi",
+      "version": "2026.7.22",
+      "license": "MPL-2.0",
+      "引入路径": "httpcore / httpx / requests"
+    },
+    {
+      "name": "cffi",
+      "version": "2.1.1",
+      "license": "MIT-0",
+      "引入路径": "cryptography / zstandard"
+    },
+    {
+      "name": "cfgv",
+      "version": "3.5.0",
+      "license": "MIT",
+      "引入路径": "pre_commit"
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.5.1",
+      "license": "MIT",
+      "引入路径": "requests"
+    },
+    {
+      "name": "click",
+      "version": "8.5.0",
+      "license": "BSD-3-Clause",
+      "引入路径": "httpx / httpx2 / pyiceberg / python-dotenv / uvicorn"
+    },
+    {
+      "name": "coverage",
+      "version": "7.16.0",
+      "license": "Apache-2.0",
+      "引入路径": "aiosqlite / idna / markdown-it-py / pluggy / pytest-cov"
+    },
+    {
+      "name": "cryptography",
+      "version": "50.0.1",
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "distlib",
+      "version": "0.4.3",
+      "license": "PSF-2.0",
+      "引入路径": "virtualenv"
+    },
+    {
+      "name": "distro",
+      "version": "1.9.0",
+      "license": "Apache License, Version 2.0",
+      "引入路径": "langsmith"
+    },
+    {
+      "name": "fastapi",
+      "version": "0.136.3",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "filelock",
+      "version": "3.32.5",
+      "license": "MIT",
+      "引入路径": "python-discovery / virtualenv"
+    },
+    {
+      "name": "fsspec",
+      "version": "2026.7.0",
+      "license": "BSD-3-Clause",
+      "引入路径": "pandas / pyiceberg"
+    },
+    {
+      "name": "googleapis-common-protos",
+      "version": "1.75.2",
+      "license": "Apache 2.0",
+      "引入路径": "opentelemetry-exporter-otlp-proto-grpc / opentelemetry-exporter-otlp-proto-http"
+    },
+    {
+      "name": "grpcio",
+      "version": "1.83.1",
+      "license": "Apache-2.0",
+      "引入路径": "googleapis-common-protos / opentelemetry-exporter-otlp-proto-grpc / pymilvus"
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "license": "MIT",
+      "引入路径": "httpcore / httpcore2 / uvicorn"
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "license": "BSD-3-Clause",
+      "引入路径": "httpx"
+    },
+    {
+      "name": "httpcore2",
+      "version": "2.12.0",
+      "license": "BSD-3-Clause",
+      "引入路径": "httpx2"
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "license": "BSD-3-Clause",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "httpx2",
+      "version": "2.12.0",
+      "license": "BSD-3-Clause",
+      "引入路径": "langsmith / starlette"
+    },
+    {
+      "name": "identify",
+      "version": "2.6.19",
+      "license": "MIT",
+      "引入路径": "pre_commit"
+    },
+    {
+      "name": "idna",
+      "version": "3.19",
+      "license": "BSD-3-Clause",
+      "引入路径": "anyio / httpx / httpx2 / jsonschema / requests"
+    },
+    {
+      "name": "iniconfig",
+      "version": "2.3.0",
+      "license": "MIT",
+      "引入路径": "pytest"
+    },
+    {
+      "name": "jsonpatch",
+      "version": "1.33",
+      "license": "Modified BSD License",
+      "引入路径": "langchain-core"
+    },
+    {
+      "name": "jsonpointer",
+      "version": "3.1.1",
+      "license": "Modified BSD License",
+      "引入路径": "jsonpatch / jsonschema"
+    },
+    {
+      "name": "jsonschema",
+      "version": "4.26.0",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "jsonschema-specifications",
+      "version": "2025.9.1",
+      "license": "MIT",
+      "引入路径": "jsonschema"
+    },
+    {
+      "name": "langchain-core",
+      "version": "1.6.2",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "langchain-protocol",
+      "version": "0.0.19",
+      "license": "MIT",
+      "引入路径": "langchain-core / langgraph-sdk"
+    },
+    {
+      "name": "langgraph",
+      "version": "1.2.11",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "langgraph-checkpoint",
+      "version": "4.2.0",
+      "license": "MIT",
+      "引入路径": "langgraph / langgraph-checkpoint-sqlite / langgraph-prebuilt"
+    },
+    {
+      "name": "langgraph-checkpoint-sqlite",
+      "version": "3.1.1",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "langgraph-prebuilt",
+      "version": "1.1.0",
+      "license": "MIT",
+      "引入路径": "langgraph"
+    },
+    {
+      "name": "langgraph-sdk",
+      "version": "0.4.4",
+      "license": "MIT",
+      "引入路径": "langgraph"
+    },
+    {
+      "name": "langsmith",
+      "version": "0.12.2",
+      "license": "MIT",
+      "引入路径": "langchain-core"
+    },
+    {
+      "name": "librt",
+      "version": "0.15.0",
+      "license": "MIT",
+      "引入路径": "mypy"
+    },
+    {
+      "name": "markdown-it-py",
+      "version": "4.2.0",
+      "license": "MIT License",
+      "引入路径": "rich"
+    },
+    {
+      "name": "mdurl",
+      "version": "0.1.2",
+      "license": "MIT License",
+      "引入路径": "markdown-it-py"
+    },
+    {
+      "name": "mmh3",
+      "version": "5.3.0",
+      "license": "MIT License",
+      "引入路径": "pyiceberg"
+    },
+    {
+      "name": "mypy",
+      "version": "2.3.1",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "mypy_extensions",
+      "version": "1.1.0",
+      "license": "MIT",
+      "引入路径": "mypy"
+    },
+    {
+      "name": "networkx",
+      "version": "3.6.1",
+      "license": "BSD-3-Clause",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "nodeenv",
+      "version": "1.10.0",
+      "license": "BSD",
+      "引入路径": "pre_commit"
+    },
+    {
+      "name": "numpy",
+      "version": "2.3.5",
+      "license": "BSD License",
+      "引入路径": "fsspec / networkx / pandas / pymilvus"
+    },
+    {
+      "name": "opentelemetry-api",
+      "version": "1.44.0",
+      "license": "Apache-2.0",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "opentelemetry-exporter-otlp",
+      "version": "1.44.0",
+      "license": "Apache-2.0",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "opentelemetry-exporter-otlp-proto-common",
+      "version": "1.44.0",
+      "license": "Apache-2.0",
+      "引入路径": "opentelemetry-exporter-otlp-proto-grpc / opentelemetry-exporter-otlp-proto-http"
+    },
+    {
+      "name": "opentelemetry-exporter-otlp-proto-grpc",
+      "version": "1.44.0",
+      "license": "Apache-2.0",
+      "引入路径": "opentelemetry-exporter-otlp"
+    },
+    {
+      "name": "opentelemetry-exporter-otlp-proto-http",
+      "version": "1.44.0",
+      "license": "Apache-2.0",
+      "引入路径": "langsmith / opentelemetry-exporter-otlp"
+    },
+    {
+      "name": "opentelemetry-proto",
+      "version": "1.44.0",
+      "license": "Apache-2.0",
+      "引入路径": "opentelemetry-exporter-otlp-proto-common / opentelemetry-exporter-otlp-proto-grpc / opentelemetry-exporter-otlp-proto-http"
+    },
+    {
+      "name": "opentelemetry-sdk",
+      "version": "1.44.0",
+      "license": "Apache-2.0",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "opentelemetry-semantic-conventions",
+      "version": "0.65b0",
+      "license": "Apache-2.0",
+      "引入路径": "opentelemetry-sdk"
+    },
+    {
+      "name": "orjson",
+      "version": "3.12.0",
+      "license": "MPL-2.0 AND (Apache-2.0 OR MIT)",
+      "引入路径": "langgraph-sdk / langsmith / mypy / pymilvus"
+    },
+    {
+      "name": "ormsgpack",
+      "version": "1.12.2",
+      "license": "Apache-2.0 OR MIT",
+      "引入路径": "langgraph-checkpoint"
+    },
+    {
+      "name": "packaging",
+      "version": "26.3",
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "引入路径": "langchain-core / langsmith / pytest"
+    },
+    {
+      "name": "pandas",
+      "version": "3.0.5",
+      "license": "BSD License",
+      "引入路径": "fsspec / mmh3 / networkx / pyiceberg / pymilvus / sqlglot"
+    },
+    {
+      "name": "pathspec",
+      "version": "1.1.1",
+      "license": "Mozilla Public License 2.0 (MPL 2.0)",
+      "引入路径": "mypy"
+    },
+    {
+      "name": "platformdirs",
+      "version": "4.11.7",
+      "license": "MIT",
+      "引入路径": "virtualenv"
+    },
+    {
+      "name": "pluggy",
+      "version": "1.6.0",
+      "license": "MIT",
+      "引入路径": "pytest / pytest-cov"
+    },
+    {
+      "name": "pre_commit",
+      "version": "4.6.2",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "prometheus_client",
+      "version": "0.26.0",
+      "license": "Apache-2.0 AND BSD-2-Clause",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "protobuf",
+      "version": "6.33.6",
+      "license": "3-Clause BSD License",
+      "引入路径": "googleapis-common-protos / opentelemetry-proto / pymilvus"
+    },
+    {
+      "name": "pyarrow",
+      "version": "25.0.1",
+      "license": "Apache-2.0",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0",
+      "license": "BSD-3-Clause",
+      "引入路径": "cffi"
+    },
+    {
+      "name": "pydantic",
+      "version": "2.13.5",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "pydantic_core",
+      "version": "2.46.5",
+      "license": "MIT",
+      "引入路径": "pydantic"
+    },
+    {
+      "name": "pydantic-settings",
+      "version": "2.15.0",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "Pygments",
+      "version": "2.21.0",
+      "license": "BSD-2-Clause",
+      "引入路径": "httpx / httpx2 / pytest / rich"
+    },
+    {
+      "name": "pyiceberg",
+      "version": "0.12.0",
+      "license": "Apache-2.0",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "pymilvus",
+      "version": "2.6.17",
+      "license": "Apache Software License",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "PyMySQL",
+      "version": "1.2.0",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "pyparsing",
+      "version": "3.3.2",
+      "license": "MIT",
+      "引入路径": "pyiceberg"
+    },
+    {
+      "name": "pyroaring",
+      "version": "1.1.0",
+      "license": "MIT",
+      "引入路径": "pyiceberg"
+    },
+    {
+      "name": "pytest",
+      "version": "9.1.1",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "pytest-cov",
+      "version": "7.1.0",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "python-dateutil",
+      "version": "2.9.0.post0",
+      "license": "Dual License",
+      "引入路径": "pandas / sqlglot / strictyaml"
+    },
+    {
+      "name": "python-discovery",
+      "version": "1.6.0",
+      "license": "MIT License",
+      "引入路径": "virtualenv"
+    },
+    {
+      "name": "python-dotenv",
+      "version": "1.2.3",
+      "license": "BSD-3-Clause",
+      "引入路径": "pydantic-settings / pymilvus / uvicorn"
+    },
+    {
+      "name": "PyYAML",
+      "version": "6.0.3",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "referencing",
+      "version": "0.37.0",
+      "license": "MIT",
+      "引入路径": "jsonschema / jsonschema-specifications"
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "license": "Apache-2.0",
+      "引入路径": "fsspec / langsmith / markdown-it-py / opentelemetry-exporter-otlp-proto-http / pyiceberg / pymilvus / pytest / requests-toolbelt"
+    },
+    {
+      "name": "requests-toolbelt",
+      "version": "1.0.0",
+      "license": "Apache 2.0",
+      "引入路径": "langsmith"
+    },
+    {
+      "name": "rich",
+      "version": "15.0.0",
+      "license": "MIT",
+      "引入路径": "httpx / httpx2 / langsmith / pyiceberg"
+    },
+    {
+      "name": "rpds-py",
+      "version": "2026.6.3",
+      "license": "MIT",
+      "引入路径": "jsonschema / referencing"
+    },
+    {
+      "name": "ruff",
+      "version": "0.16.5",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "six",
+      "version": "1.17.0",
+      "license": "MIT",
+      "引入路径": "python-dateutil"
+    },
+    {
+      "name": "sniffio",
+      "version": "1.3.1",
+      "license": "MIT OR Apache-2.0",
+      "引入路径": "langsmith"
+    },
+    {
+      "name": "sqlglot",
+      "version": "30.18.0",
+      "license": "MIT",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "sqlite-vec",
+      "version": "0.1.9",
+      "license": "MIT License, Apache License, Version 2.0",
+      "引入路径": "langgraph-checkpoint-sqlite"
+    },
+    {
+      "name": "starlette",
+      "version": "1.6.0",
+      "license": "BSD-3-Clause",
+      "引入路径": "fastapi"
+    },
+    {
+      "name": "strictyaml",
+      "version": "1.7.3",
+      "license": "MIT",
+      "引入路径": "pyiceberg"
+    },
+    {
+      "name": "tenacity",
+      "version": "9.1.4",
+      "license": "Apache 2.0",
+      "引入路径": "langchain-core / pyiceberg"
+    },
+    {
+      "name": "truststore",
+      "version": "0.10.4",
+      "license": "MIT",
+      "引入路径": "httpcore2 / httpx2"
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.16.0",
+      "license": "PSF-2.0",
+      "引入路径": "anyio / cryptography / fastapi / grpcio / httpx2 / langchain-core / langchain-protocol / langsmith / mypy / opentelemetry-api / opentelemetry-exporter-otlp-proto-grpc / opentelemetry-exporter-otlp-proto-http / opentelemetry-sdk / opentelemetry-semantic-conventions / pathspec / pydantic / pydantic_core / referencing / sqlglot / starlette / typing-inspection / uvicorn / virtualenv"
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.4",
+      "license": "MIT",
+      "引入路径": "fastapi / pydantic / pydantic-settings"
+    },
+    {
+      "name": "urllib3",
+      "version": "2.7.0",
+      "license": "MIT",
+      "引入路径": "fsspec / pymilvus / requests"
+    },
+    {
+      "name": "uuid_utils",
+      "version": "0.17.1",
+      "license": "BSD-3-Clause",
+      "引入路径": "langchain-core / langsmith"
+    },
+    {
+      "name": "uvicorn",
+      "version": "0.52.4",
+      "license": "BSD-3-Clause",
+      "引入路径": "atlas"
+    },
+    {
+      "name": "virtualenv",
+      "version": "21.7.8",
+      "license": "MIT",
+      "引入路径": "networkx / pre_commit / pytest-cov"
+    },
+    {
+      "name": "websockets",
+      "version": "16.1.1",
+      "license": "BSD-3-Clause",
+      "引入路径": "langgraph-sdk / langsmith / uvicorn"
+    },
+    {
+      "name": "xxhash",
+      "version": "4.0.1",
+      "license": "BSD-2-Clause",
+      "引入路径": "langgraph / langsmith / mmh3"
+    },
+    {
+      "name": "zstandard",
+      "version": "0.25.0",
+      "license": "BSD-3-Clause",
+      "引入路径": "fsspec / httpx / langsmith / pandas / pyiceberg"
+    }
+  ]
+}

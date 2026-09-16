@@ -360,14 +360,40 @@ def check_functions(tree: exp.Expr) -> None:
             raise UnsafeQuery(f"检测到禁止的函数：{name}")
 
 
+def _cte_names(tree: exp.Expr) -> frozenset[str]:
+    """CTE 定义名集合（ADR-0017 判据 1 / 代价 ①）。
+
+    sqlglot 把 CTE 引用（`FROM base`）解析为 exp.Table，与物理表同形；不豁免时
+    `check_tables` 会把 `base` / `monthly` 按物理表查白名单误拒（实测 yoy/pop
+    拒于 `base`、cumulative 拒于 `monthly`）。
+    """
+    return frozenset(cte.alias for cte in tree.find_all(exp.CTE) if cte.alias)
+
+
+def _is_cte_reference(table: exp.Table, cte_names: frozenset[str]) -> bool:
+    """裸名（无 catalog/db）且命中 CTE 定义名 → 是 CTE 引用，不是物理表。
+
+    豁免只认裸名：CTE 不可带前缀引用，故 `FROM db.base` 的 db 前缀已使其不可能
+    是 CTE 引用——照常按物理表查白名单，防「同名豁免」被扩到任意限定名。
+    """
+    return not table.catalog and not table.db and table.name in cte_names
+
+
 def check_tables(tree: exp.Expr, budget: Budget) -> None:
     """表白名单（如果配置了）。
+
+    CTE 名豁免（ADR-0017 判据 1）：CTE 定义名不是物理表，跳过白名单比对；
+    CTE 内部的物理表仍在同一 AST 上，照常受约束——`WITH base AS (SELECT ...
+    FROM secret) SELECT * FROM base` 拒的是 `secret`（防用 CTE 包装绕过 N3）。
 
     注意：视图展开可能绕过表白名单，需要递归解析视图定义（待实现）。
     """
     if not budget.allowed_tables:
         return
+    cte_names = _cte_names(tree)
     for table in tree.find_all(exp.Table):
+        if _is_cte_reference(table, cte_names):
+            continue
         full_name = ".".join(part for part in (table.catalog, table.db, table.name) if part)
         if full_name not in budget.allowed_tables:
             raise UnsafeQuery(f"表不在白名单内：{full_name}")
@@ -464,8 +490,13 @@ def estimate_cost(tree: exp.Expr, stats: dict[str, float] | None = None) -> floa
       （百万行单位），反映真实扫描体量；
     - 无统计时回退为扫描表数 / 8.0（表数代理：扫描越宽成本越高）。
     成本仅用于阈值护栏（异常宽扫描拒绝），不用于执行计划选择。
+
+    CTE 名不计成本（ADR-0017 判据 1 的同根因修正）：CTE 是虚拟表，不贡献
+    扫描体量；stats 分支查不到 CTE 名、本就贡献 0，此处让无 stats 分支与之
+    口径一致（否则 `WITH base … FROM base` 会多计 1 张表）。
     """
-    tables = [t for t in tree.find_all(exp.Table)]
+    cte_names = _cte_names(tree)
+    tables = [t for t in tree.find_all(exp.Table) if not _is_cte_reference(t, cte_names)]
     if stats:
         total = 0.0
         for t in tables:

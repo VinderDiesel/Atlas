@@ -681,12 +681,31 @@ class Planner:
         return self._dim_hits(m.group(1), "zh")
 
     def _dim_hits(self, phrase: str, locale: str) -> tuple[str, ...]:
-        """短语内命中的维度字段（dim_* 非时间字段同义词子串，多命中全取）。"""
-        return tuple(
-            name
-            for name, syns in self._dim_synsets(locale).items()
-            if any(s in phrase for s in syns)
-        )
+        """短语内命中的维度字段（dim_* 非时间字段同义词子串）。
+
+        重叠词条按**最长词优先**归属：被更长词条区间覆盖的短词不再计入。
+        「多命中全取」在重叠词条上是错误行为——「门店」（s_store_sk）是
+        「门店城市」（s_city）/「门店州」（s_state）的子串，全取会让
+        「按门店城市统计」双命中（gold-057 误伤，见 ADR-0017 代价 ⑤ 裁定）。
+        返回顺序仍按 synsets 迭代序（与既有行为一致，多维度样本零变化）。
+        """
+        spans: list[tuple[int, int, str]] = []
+        synsets = self._dim_synsets(locale)
+        for name, syns in synsets.items():
+            for syn in syns:
+                pos = phrase.find(syn)
+                while pos != -1:
+                    spans.append((pos, pos + len(syn), name))
+                    pos = phrase.find(syn, pos + 1)
+        accepted: list[tuple[int, int]] = []
+        hit_names: set[str] = set()
+        for start, end, name in sorted(spans, key=lambda s: s[1] - s[0], reverse=True):
+            # 与已接受区间重叠（含包含/被包含）→ 短词让位给最长词
+            if any(start < e and s < end for s, e in accepted):
+                continue
+            accepted.append((start, end))
+            hit_names.add(name)
+        return tuple(name for name in synsets if name in hit_names)
 
     def _parse_filters(
         self,

@@ -142,8 +142,15 @@ class Relationship:
 class SemanticModel:
     """从 ossie.yaml 加载的语义模型（Compiler / Planner 的只读输入）。"""
 
-    def __init__(self, path: Path = FINANCE_MODEL) -> None:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    def __init__(self, path: Path = FINANCE_MODEL, *, doc: dict | None = None) -> None:
+        """doc：已 safe_load 的 ossie YAML（None = 从 path 读取，历史行为不变）。
+
+        治理面（serving/governance.py）传入按 mtime 缓存的解析结果，避免每请求
+        重复读取与解析（实测 23.4 ms/次，ADR-0022 决策 ④ 的缓存清单）；解析器
+        本体（下方的转换逻辑）始终是本类，不因入口不同分成两份实现。
+        """
+        if doc is None:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         model = doc["semantic_model"][0]
         # 模型名：值域注册表（semantic/values/<model>.<field>.json，ADR-0016）的
         # 绑定键。与 ossie 文件名解耦——文件名是部署约定，模型名是语义身份。
@@ -156,6 +163,7 @@ class SemanticModel:
         self.metric_owners: dict[str, str] = {}
         self.dimension_synonyms: dict[str, tuple[str, ...]] = {}
         self.time_dimension: dict | None = None  # custom_extensions 声明（见下方解析）
+        self.default_row_policy: str | None = None  # 域 → 策略事实源（ADR-0021 决策 ②）
         for ds in model["datasets"]:
             fields: dict[str, Field] = {}
             for f in ds["fields"]:
@@ -214,6 +222,8 @@ class SemanticModel:
 
         # time_dimension：模型级声明（compiler 时间谓词的时间表/列来源，不再硬编码
         # dim_date + CalendarYearID 等；金融 single / 零售 composite，见各 YAML 头注记）
+        # default_row_policy：域 → 策略的唯一事实源（ADR-0021 决策 ②）。两者可能声明在
+        # 不同 ATLAS 扩展块，故**不 break**；各自「先出现者生效」（None 才覆盖）。
         for ext in model.get("custom_extensions", []):
             if ext.get("vendor_name") != "ATLAS":
                 continue
@@ -222,9 +232,14 @@ class SemanticModel:
             except (KeyError, json.JSONDecodeError) as exc:
                 raise CompileError(f"custom_extensions data JSON 解析失败：{exc}") from exc
             td = data.get("time_dimension")
-            if td is not None:
+            if td is not None and self.time_dimension is None:
                 self.time_dimension = td
-                break
+            policy_block = data.get("policy")
+            policy = (
+                policy_block.get("default_row_policy") if isinstance(policy_block, dict) else None
+            )
+            if policy and self.default_row_policy is None:
+                self.default_row_policy = str(policy)
 
     def find_field(self, field_name: str) -> tuple[str, Field] | None:
         """按逻辑字段名查找（维度解析：branch → dim_broker.Branch）。"""
@@ -788,6 +803,29 @@ class Compiler:
             raise CompileError(f"生成 SQL 无法往返解析：\n{sql}\nvs\n{roundtrip}")
         return sql, notes
 
+    def emitted_time_column(self, plan: Plan) -> str | None:
+        """编译产物中承载时间轴语义的列别名（无则 None；ADR-0025 决策 ①）。
+
+        入参：Plan（与 compile 同一实例）。返回：结果集首列别名（当 yoy/pop 取
+        时间粒度列、cumulative 取降粒度 month 列），rank/plain 或缺少时间锚点时
+        返回 None。不抛异常。`.lower()` 别名规则只在本方法内写一次；`_apply_lag`
+        与 `_apply_cumulative` 必须消费本方法结果，不得自行推导（单一调用点）。
+        """
+        if plan.comparison is None or plan.time is None:
+            return None
+        td = self.model.time_dimension
+        if td is None:
+            return None
+        columns: dict[str, str] = td["columns"]
+        kind = plan.comparison.kind
+        if kind in ("yoy", "pop"):
+            column = columns.get(plan.time.granularity)
+        elif kind == "cumulative":
+            column = columns.get("month")
+        else:
+            return None
+        return column.lower() if column else None
+
     # -- 内部实现 ----------------------------------------------------------
 
     def _table_ast(self, ds_name: str) -> exp.Table:
@@ -921,7 +959,7 @@ class Compiler:
         """
         kind = plan.comparison.kind
         if kind == "rank":
-            return self._apply_rank(select, plan, notes)
+            return self._apply_rank(select, plan, metric_ast, notes)
         if kind in ("yoy", "pop"):
             return self._apply_lag(select, plan, kind, notes)
         if kind == "cumulative":
@@ -932,16 +970,34 @@ class Compiler:
         self,
         select: exp.Select,
         plan: Plan,
+        metric_ast: exp.Expr,
         notes: list[str],
     ) -> tuple[str, list[str]]:
-        """排名：在 SELECT 列表追加 RANK() OVER (ORDER BY metric DESC)。"""
-        # 构造 RANK() OVER (ORDER BY <metric_alias> DESC)
+        """排名：在 SELECT 列表追加 RANK() OVER (ORDER BY <指标聚合表达式> DESC)。
+
+        窗口内 ORDER BY 放表达式本体而不是 SELECT 别名：实测 Doris 在窗口函数内
+        不认同层别名（`Unknown column 'total_trade_value' in 'table list' in
+        AGGREGATE clause`，2026-09-15 ccb4c8b 真链，gold-177/178/076/077 四条
+        rank 样本全部执行失败）；yoy/pop/cumulative 不受影响，因其经 CTE 包裹后
+        别名成为内层物化列。
+        """
         rank_fn = exp.Anonymous(this="RANK", expressions=[])
         order = exp.Order(
-            expressions=[exp.Ordered(this=exp.column(plan.metric), desc=True)]
+            expressions=[exp.Ordered(this=metric_ast.copy(), desc=True)]
         )
         window = exp.Window(this=rank_fn, order=order)
         select.expressions.append(window.as_("rank"))
+        # 外层默认按名次降序 + 维度 tie-breaker（ADR-0017 判据 4 真链锁）：
+        # 无 ORDER BY 时「前 100 名」的截断点取决于引擎扫描序（200+ 维度值
+        # 打满 LIMIT 实测 6 轮同 hash 属计划稳定巧合，非查询语义保证），且
+        # 名次结果无序不可读。用户显式 order_by 已在 compile 阶段设置则尊重之。
+        # 判定只看顶层 Order（exp.Window 内也含 exp.Order，不能对整树 find）。
+        if select.args.get("order") is None:
+            order_exprs: list[exp.Ordered] = [exp.Ordered(this=exp.column("rank"), desc=True)]
+            order_exprs += [
+                exp.Ordered(this=exp.column(dim), desc=False) for dim in plan.dimensions
+            ]
+            select.set("order", exp.Order(expressions=order_exprs))
         return self._finalize_select(select, notes)
 
     def _apply_lag(
@@ -965,9 +1021,10 @@ class Compiler:
         # 计算前驱期时间值
         prev_time = self._prev_period(plan.time)
 
-        # 构造时间列名（按粒度）
+        # 构造时间列名（按粒度）；别名规则收敛到 emitted_time_column（ADR-0025 决策 ①）
         time_col = columns.get(granularity)
-        if not time_col:
+        time_alias = self.emitted_time_column(plan)
+        if not time_col or time_alias is None:
             raise CompileError(f"不支持的粒度：{granularity}")
 
         # 扩展 WHERE 时间谓词为 IN (prev, current)
@@ -988,7 +1045,6 @@ class Compiler:
 
         # 添加时间列到 GROUP BY 和 SELECT（作为分组键）
         time_col_expr = self._column_ast(table, time_col)
-        time_alias = time_col.lower()
         select.expressions.insert(0, time_col_expr.as_(time_alias))
         group = select.find(exp.Group)
         if group is not None:
@@ -996,7 +1052,15 @@ class Compiler:
         else:
             select.set("group", exp.Group(expressions=[time_col_expr.copy()]))
 
-        # 设置 ORDER BY 时间列升序
+        # 维度分组（ADR-0017 判据 4 真链锁）：base 必须全量——`ORDER BY 时间
+        # LIMIT 100` 会把 200+ 维度值 × 2 期截成单期（gold-173 真跑实测 100 行
+        # 全是 2014、2015 被截光）；外层改由 _wrap_with_lag_by_dims 处理
+        if plan.dimensions:
+            select.set("order", None)
+            select.set("limit", None)
+            return self._wrap_with_lag_by_dims(select, plan, time_alias, notes)
+
+        # 无维度：时间列升序 + 保留 LIMIT（历史形态，已锚定样本字节不变）
         select.set("order", exp.Order(
             expressions=[exp.Ordered(this=time_col_expr.copy(), desc=False)]
         ))
@@ -1020,15 +1084,15 @@ class Compiler:
         table = td["table"]
         columns = td["columns"]
 
-        # 降粒度：year → month
+        # 降粒度：year → month；别名规则收敛到 emitted_time_column（ADR-0025 决策 ①）
         sub_granularity = "month"
         sub_col = columns.get(sub_granularity)
-        if not sub_col:
+        sub_alias = self.emitted_time_column(plan)
+        if not sub_col or sub_alias is None:
             raise CompileError(f"模型未声明 {sub_granularity} 粒度列，无法编译累计")
 
         # 添加子粒度列到 SELECT 和 GROUP BY
         sub_col_expr = self._column_ast(table, sub_col)
-        sub_alias = sub_col.lower()
         select.expressions.insert(0, sub_col_expr.as_(sub_alias))
         group = select.find(exp.Group)
         if group is not None:
@@ -1073,7 +1137,53 @@ class Compiler:
         mode: str,
         columns: dict,
     ) -> exp.Expr:
-        """构造 time_col IN (prev_value, current_value) 谓词。"""
+        """构造两期时间谓词（yoy/pop 的 WHERE）。
+
+        composite 季/月粒度：逐期 `(year = Y AND col = V)` 组合 or（ADR-0017
+        判据 4 真链锁）——`_time_value_to_int` 对 composite 返回**年值**（为
+        year 列设计），若直接 `col IN (prev, cur)` 会把年值塞进季度列产生
+        `d_qoy IN (2001, 2001)` 值域错位恒不命中（gold-074 真跑 0 行）。组合
+        谓词同时覆盖跨年场景 `(2014,Q4) OR (2015,Q1)`——取数范围正确（跨年
+        prev 方向为已登记未支持边界）。
+
+        single：`col IN (prev_value, cur_value)`（历史形态，已锚定样本字节不变）。
+        """
+        if mode == "composite" and granularity in ("quarter", "month"):
+            year_col = columns.get("year")
+            if not year_col:
+                raise CompileError("composite 模式缺 year 列，无法构造两期谓词")
+
+            def year_period(spec: TimeSpec) -> tuple[int, int]:
+                if granularity == "quarter":
+                    text = str(spec.value).strip().upper()
+                    return int(text[:4]), int(text[5])
+                ym = int(spec.value)
+                return ym // 100, ym % 100
+
+            py, pv = year_period(prev)
+            cy, cv = year_period(time)
+            return exp.or_(
+                exp.and_(
+                    exp.EQ(
+                        this=self._column_ast(table, year_col),
+                        expression=exp.Literal.number(py),
+                    ),
+                    exp.EQ(
+                        this=self._column_ast(table, col),
+                        expression=exp.Literal.number(pv),
+                    ),
+                ),
+                exp.and_(
+                    exp.EQ(
+                        this=self._column_ast(table, year_col),
+                        expression=exp.Literal.number(cy),
+                    ),
+                    exp.EQ(
+                        this=self._column_ast(table, col),
+                        expression=exp.Literal.number(cv),
+                    ),
+                ),
+            )
         cur_val = self._time_value_to_int(time, granularity, mode, columns)
         prev_val = self._time_value_to_int(prev, granularity, mode, columns)
         col_expr = self._column_ast(table, col)
@@ -1156,6 +1266,39 @@ class Compiler:
         )
         # 用字符串拼接构造完整 SQL（CTE 包裹）
         outer_sql = f"WITH {cte_name} AS ({base_sql}) SELECT {time_alias}, {plan.metric}, LAG({plan.metric}) OVER (ORDER BY {time_alias}) AS prev_period_value FROM {cte_name} ORDER BY {time_alias} LIMIT {plan.limit}"
+        # 往返校验
+        roundtrip = sqlglot.parse_one(outer_sql).sql()
+        if roundtrip != outer_sql:
+            raise CompileError(f"生成 SQL 无法往返解析：\n{outer_sql}\nvs\n{roundtrip}")
+        return outer_sql, notes
+
+    def _wrap_with_lag_by_dims(
+        self,
+        select: exp.Select,
+        plan: Plan,
+        time_alias: str,
+        notes: list[str],
+    ) -> tuple[str, list[str]]:
+        """维度感知的 LAG 外层（yoy/环比 + 分组维度，ADR-0017 判据 4 真链锁）。
+
+        与无维度路径（_wrap_with_lag）的差异（2026-09-15 ccb4c8b 真跑发现）：
+        - base 不带 ORDER BY/LIMIT（调用方已移除）：`ORDER BY 时间 LIMIT 100`
+          会把 200+ 维度值 × 2 期截成单期（gold-173 实测 100 行全是 2014）；
+        - 外层投影维度列：否则同时间多行无法辨识归属；
+        - LAG `PARTITION BY 维度`：无分区时「前一行」是任意维度的值（跨维度
+          串算；gold-173/073 六轮内分别出现 6/5 个不同 hash，行序不可复现）；
+        - `ORDER BY 维度, 时间`：行序唯一（= 分组键 + 时间），LIMIT 截断点确定。
+        """
+        cte_name = "base"
+        base_sql = select.sql()
+        dims = ", ".join(plan.dimensions)
+        outer_sql = (
+            f"WITH {cte_name} AS ({base_sql}) "
+            f"SELECT {dims}, {time_alias}, {plan.metric}, "
+            f"LAG({plan.metric}) OVER (PARTITION BY {dims} ORDER BY {time_alias}) "
+            f"AS prev_period_value FROM {cte_name} "
+            f"ORDER BY {dims}, {time_alias} LIMIT {plan.limit}"
+        )
         # 往返校验
         roundtrip = sqlglot.parse_one(outer_sql).sql()
         if roundtrip != outer_sql:

@@ -19,6 +19,12 @@
    指向 `data/snapshots/` 已锁定的快照 sha（防占位漂移/指向未锁快照）；
    占位 `<待填写>` 是机制未启用状态（如零售模型数据未装载）的如实声明，
    允许保留。
+8. **域 ↔ 策略 ↔ 角色 ↔ claims 契约双向一致性**（ADR-0021 决策 ⑥）：
+   被引用策略的每个角色必须在 `serving.auth.ROLE_DIRECTORY` 注册（反向同查：
+   注册角色必须至少属于一个被引用策略，防注册孤儿）；`RoleSpec` 的
+   required_claims / list_claims 必须等于条件模板的占位符集合（含 sql_in
+   区分，防代码元组与 YAML 漂移）；`row_policy.yml` 的每个策略必须被至少
+   一个语义模型引用（防策略孤儿）。
 
 用法：.venv/bin/python -m semantic.governance_validate semantic/ossie/*.ossie.yaml
 """
@@ -26,6 +32,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -35,12 +42,13 @@ from typing import Any
 import jsonschema
 import yaml
 
+from data.identity import SNAPSHOT_DIR
+
 REPO = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = REPO / "semantic" / "governance" / "atlas_governance.schema.json"
 REGISTRY_PATH = REPO / "data" / "fibo" / "iri_registry.json"
 POLICY_PATH = REPO / "semantic" / "policies" / "row_policy.yml"
 GOLD_DIR = REPO / "eval" / "gold"
-SNAPSHOT_DIR = REPO / "data" / "snapshots"
 PLACEHOLDER_SNAPSHOT_SHA = "<待填写>"
 
 
@@ -337,6 +345,117 @@ def check_supersedes_chains(records: list[MetricGovernance], errors: list[str]) 
             )
 
 
+# ---------------------------------------------------------------------------
+# ADR-0021 决策 ⑥：域 ↔ 策略 ↔ 角色 ↔ claims 契约双向一致性（4 条检查）
+# ---------------------------------------------------------------------------
+
+_PLACEHOLDER_RE = re.compile(r"\{\{ user\.([A-Za-z_][A-Za-z0-9_]*) \}\}")
+_SQL_IN_RE = re.compile(r"\{\{ user\.([A-Za-z_][A-Za-z0-9_]*) \| sql_in \}\}")
+
+
+def _placeholder_contract(condition: str) -> tuple[set[str], set[str]]:
+    """条件模板 → (标量占位符集, sql_in 占位符集)（claims 契约的 YAML 一侧）。"""
+    list_keys = set(_SQL_IN_RE.findall(condition))
+    scalar_keys = set(_PLACEHOLDER_RE.findall(condition)) - list_keys
+    return scalar_keys, list_keys
+
+
+def collect_referenced_policies(paths: list[Path]) -> dict[str, set[str]]:
+    """被语义模型引用的策略名 → 引用它的文件名集（模型级 default_row_policy）。"""
+    refs: dict[str, set[str]] = {}
+    for p in paths:
+        for _, data, metric_name in iter_payloads(p):
+            if metric_name is not None or "_parse_error" in data:
+                continue
+            ref = data.get("policy", {}).get("default_row_policy")
+            if isinstance(ref, str) and ref:
+                refs.setdefault(ref, set()).add(p.name)
+    return refs
+
+
+def load_policies_by_name(policy_path: Path = POLICY_PATH) -> dict[str, dict[str, Any]]:
+    """row_policy.yml → {策略名: 策略对象}（域 → 策略校验的角色一侧）。"""
+    doc = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    return {p["name"]: p for p in doc.get("policies", [])}
+
+
+def check_policy_consistency(
+    referenced: dict[str, set[str]],
+    policies: dict[str, dict[str, Any]],
+    role_directory: dict[str, Any],
+    errors: list[str],
+) -> None:
+    """ADR-0021 决策 ⑥：域 → 策略 → 角色 → claims 契约双向一致性（4 条检查）。
+
+    - referenced: 策略名 → 引用它的文件名集（collect_referenced_policies 产物）
+    - policies: 策略名 → row_policy.yml 策略对象（load_policies_by_name 产物）
+    - role_directory: 角色名 → RoleSpec（serving.auth.ROLE_DIRECTORY，延迟注入）
+
+    1. 策略 → 角色 → 注册：被引用策略 roles[] 的每个角色必须已注册
+       （broker 债务的同款检查——注册缺失时运行时签发即 AuthError）；
+    2. 注册 → 策略：ROLE_DIRECTORY 每角色至少属于一个被引用策略（防注册孤儿）；
+    3. claims 契约：RoleSpec.required_claims / list_claims 必须等于条件模板
+       占位符集合（required = 标量 ∪ sql_in，list = sql_in，双向不等即报）；
+    4. 域覆盖：row_policy.yml 每个策略至少被一个语义模型引用（防策略孤儿）。
+
+    纯函数（无文件系统访问），供契约测试直接调用；错误追加到 errors。
+    """
+    # 1) 策略 → 角色 → 注册
+    for policy_name in sorted(referenced):
+        policy = policies.get(policy_name)
+        if policy is None:
+            continue  # 策略不存在由引用存在性检查报（_check_payload），避免重复
+        for r in policy.get("roles", []):
+            if r["name"] not in role_directory:
+                errors.append(
+                    f"策略 {policy_name} 的角色 {r['name']} 未在 ROLE_DIRECTORY 注册"
+                    f"（签发即 AuthError，ADR-0021 决策 ④/⑥-1）"
+                )
+
+    # 2) 注册 → 策略
+    for role in role_directory:
+        in_any = any(
+            any(r["name"] == role for r in policies[p].get("roles", []))
+            for p in referenced
+            if p in policies
+        )
+        if not in_any:
+            errors.append(
+                f"ROLE_DIRECTORY 角色 {role} 不属于任何被引用的策略（注册孤儿，决策 ⑥-2）"
+            )
+
+    # 3) claims 契约（RoleSpec ↔ 条件模板占位符）
+    for role, spec in role_directory.items():
+        for policy_name in sorted(referenced):
+            policy = policies.get(policy_name)
+            if policy is None:
+                continue
+            for r in policy.get("roles", []):
+                if r["name"] != role:
+                    continue
+                scalar_keys, list_keys = _placeholder_contract(r["condition"])
+                if set(spec.required_claims) != scalar_keys | list_keys:
+                    errors.append(
+                        f"{policy_name}.{role}: RoleSpec.required_claims"
+                        f" {sorted(spec.required_claims)} ≠ 模板占位符"
+                        f" {sorted(scalar_keys | list_keys)}（决策 ⑥-3）"
+                    )
+                if set(spec.list_claims) != list_keys:
+                    errors.append(
+                        f"{policy_name}.{role}: RoleSpec.list_claims"
+                        f" {sorted(spec.list_claims)} ≠ 模板 sql_in 占位符"
+                        f" {sorted(list_keys)}（决策 ⑥-3）"
+                    )
+
+    # 4) 域覆盖（防策略孤儿）
+    for policy_name in policies:
+        if policy_name not in referenced:
+            errors.append(
+                f"策略 {policy_name} 未被任何语义模型声明为 default_row_policy"
+                f"（策略孤儿，决策 ⑥-4）"
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     paths = [Path(p) for p in (argv or sys.argv[1:])]
     if not paths:
@@ -348,6 +467,15 @@ def main(argv: list[str] | None = None) -> int:
         validate_file(p, schema, errors)
     # supersedes 需要跨文件全量视图（可能跨模型/文件取代），在文件级校验后单独跑
     check_supersedes_chains(collect_metric_governance(paths), errors)
+    # 域 ↔ 策略 ↔ 角色 ↔ claims 契约双向一致性（ADR-0021 决策 ⑥，同一跨文件视图）
+    from serving.auth import ROLE_DIRECTORY  # 延迟导入：semantic 不设 serving 顶层依赖
+
+    check_policy_consistency(
+        collect_referenced_policies(paths),
+        load_policies_by_name(POLICY_PATH),
+        ROLE_DIRECTORY,
+        errors,
+    )
 
     for err in errors:
         print(f"  ❌ {err}")

@@ -173,6 +173,42 @@ class TestRetailGoldPlanner(unittest.TestCase):
         self.assertEqual(result.kind, "unmatched")
 
 
+class TestStoreDimensionResolution(unittest.TestCase):
+    """门店维度解析（P-1 收口：gold-076 裁定——「门店」归 s_store_sk）。
+
+    裁定落地两层：① `dim_store.s_store_sk` 同义词补「门店」（事实表
+    `ss_store_sk` 早有该词，词义共识；原标注的 s_state 代理自承为妥协，
+    实测 12 家门店可分组）；② 重叠词条按**最长词优先**归属——「门店城市」
+    「门店州」不得因「门店」是其子串而双命中（gold-057 防误伤，
+    「多命中全取」在重叠词条上是错误行为，见 ADR-0017 代价 ⑤）。
+    """
+
+    def test_gold_076_store_ranking(self) -> None:
+        plan = RETAIL_PLANNER.plan("按门店统计 2001 年销售额排名")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)  # 供类型收窄（unittest 断言不改变类型）
+        gold = load_gold("gold-076")
+        self.assertEqual(plan.metric, gold["expected_metric"])
+        # 锁裁定语义本身（与 gold 文件解耦）：门店 → s_store_sk
+        self.assertEqual(plan.dimensions, ("s_store_sk",))
+        self.assertEqual(tuple(gold["expected_dimensions"]), ("s_store_sk",))
+        self.assertEqual(plan.time, TimeSpec("year", 2001))
+
+    def test_store_city_not_double_hit(self) -> None:
+        """「门店城市」只归 s_city：更长词条覆盖「门店」子串，不得双命中。"""
+        plan = RETAIL_PLANNER.plan("2000 年按门店城市统计的销售额是多少？")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.dimensions, ("s_city",))
+
+    def test_store_state_not_double_hit(self) -> None:
+        """「门店州」只归 s_state：同理防「门店」子串双命中。"""
+        plan = RETAIL_PLANNER.plan("按门店州统计 2001 年销售额")
+        self.assertIsInstance(plan, Plan)
+        assert isinstance(plan, Plan)
+        self.assertEqual(plan.dimensions, ("s_state",))
+
+
 class TestDerivedMetricDisambiguation(unittest.TestCase):
     """派生指标 vs 基础指标同义词子串歧义消解（gold-156~162 评测先行发现，2026-09-04）。
 

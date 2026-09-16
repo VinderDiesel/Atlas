@@ -2,7 +2,8 @@
 
 依次执行：
 1. ossie_validate     —— 语义模型结构/唯一性/血缘引用
-2. governance_validate —— 治理扩展（schema / FIBO IRI 注册表 / 策略与黄金集引用）
+2. governance_validate —— 治理扩展（schema / FIBO IRI 注册表 / 策略与黄金集引用 /
+   域 ↔ 策略 ↔ 角色 ↔ claims 双向一致性，ADR-0021 决策 ⑥）
 3. gold schema 校验   —— eval/gold/*.json 结构（FIBO 闭包深度校验见 eval/gold/validate_gold.py）
 4. 权威源唯一性     —— semantic/ 下语义定义文件只允许住在权威目录（ADR-0002/0015）
 5. values 快照锁定  —— semantic/values/*.json 可被运行时加载、且绑定当前锁定快照（ADR-0016）
@@ -24,13 +25,14 @@ import jsonschema
 import yaml
 
 from agent.value_domain import parse_profile
+from data.identity import SNAPSHOT_DIR
 from semantic import governance_validate, ossie_validate
 
 REPO = Path(__file__).resolve().parent.parent
 GOLD_SCHEMA = REPO / "eval" / "gold" / "schema.json"
 SEMANTIC_ROOT = REPO / "semantic"
 VALUES_DIR = SEMANTIC_ROOT / "values"
-SNAPSHOT_DIR = REPO / "data" / "snapshots"
+# SNAPSHOT_DIR 从 data.identity 导入（ADR-0019 决策 ②：快照目录路径唯一权威）
 # 语义定义文件（*.yaml / *.yml）允许存放的目录（ADR-0002：权威源唯一 = ossie/；
 # ADR-0015：locale 同义词/形态词典在 synonyms/；行级策略声明在 policies/；
 # ADR-0016：维度值域快照在 values/——机器生成，与词典/策略同一目录职责纪律）
@@ -213,6 +215,16 @@ def main() -> int:
     errors = []
     for p in files:
         governance_validate.validate_file(p, schema, errors)
+    # 域 ↔ 策略 ↔ 角色 ↔ claims 契约双向一致性（ADR-0021 决策 ⑥，跨文件视图；
+    # ROLE_DIRECTORY 延迟导入：semantic 不设 serving 顶层依赖）
+    from serving.auth import ROLE_DIRECTORY
+
+    governance_validate.check_policy_consistency(
+        governance_validate.collect_referenced_policies(files),
+        governance_validate.load_policies_by_name(),
+        ROLE_DIRECTORY,
+        errors,
+    )
     for err in errors:
         print(f"  ❌ [governance] {err}")
     if errors:

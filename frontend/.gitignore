@@ -1,0 +1,5 @@
+# 局部忽略（ADR-0018 决策 ④）：只作用于 frontend/，不改根 .gitignore。
+# 验收：git check-ignore -v frontend/node_modules frontend/dist → 均命中本文件
+node_modules/
+dist/
+coverage/

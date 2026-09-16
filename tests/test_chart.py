@@ -202,5 +202,79 @@ class TestTurnResultIntegration(unittest.TestCase):
         )
 
 
+class TestDeclaredTimeColumns(unittest.TestCase):
+    """ADR-0025 判据 2：编译路径的时间轴只由 `time_columns` 入参声明（决策 ①4）。
+
+    列名取背景 3 表的实测形态：编译别名已小写化（`CalendarYearID` →
+    `calendaryearid`），零售列名（`d_year` 等）本就不在兜底集合内。这条直接
+    锁住背景 3(c) 的静默误导——时间列未识别时 y 轴会画成年份编号本身。
+    """
+
+    def test_declared_d_year_line_y_is_measure(self) -> None:
+        """判据 2 核心：time_columns={'d_year'} → line，且 y 是度量不是年份。"""
+        spec = render_chart(
+            execution(
+                [(2000, 100.0, None), (2001, 150.0, 100.0)],
+                ["d_year", "total_sales_price", "prev_period_value"],
+            ),
+            time_columns={"d_year"},
+        )
+        self.assertEqual(spec["type"], "line")
+        self.assertEqual(spec["x"], "d_year")
+        self.assertEqual(spec["y"], ["total_sales_price"])
+        self.assertEqual(spec["data"], [{"x": 2000, "y": 100.0}, {"x": 2001, "y": 150.0}])
+
+    def test_declared_aliases_line_for_both_domains(self) -> None:
+        """背景 3 实测别名（金融 yoy/cumulative + 零售 yoy/cumulative）逐条作 x 轴。"""
+        for alias, third in (
+            ("calendaryearid", "prev_period_value"),
+            ("calendarmonthid", "cumulative_value"),
+            ("d_year", "prev_period_value"),
+            ("d_moy", "cumulative_value"),
+        ):
+            with self.subTest(alias=alias):
+                spec = render_chart(
+                    execution([(1, 10.0, None), (2, 20.0, 10.0)], [alias, "m", third]),
+                    time_columns={alias},
+                )
+                self.assertEqual(spec["type"], "line")
+                self.assertEqual(spec["x"], alias)
+                self.assertEqual(spec["y"], ["m"])
+
+    def test_empty_declared_with_frozenset_miss_is_bar(self) -> None:
+        """判据 2 第二句：入参为空且列名不在兜底集合 → bar（不猜时间轴）。"""
+        spec = render_chart(
+            execution([(2001, 150.0)], ["d_year", "total_sales_price"]), time_columns=()
+        )
+        self.assertEqual(spec["type"], "bar")
+
+    def test_declared_set_is_authoritative_over_frozenset(self) -> None:
+        """入参非空时不再查兜底集合（决策 ①4「轴选择只依据入参」）。"""
+        spec = render_chart(
+            execution([(2001, 150.0)], ["CalendarYearID", "total_sales_price"]),
+            time_columns={"d_year"},  # 声明列不在结果里 → 不得退回 frozenset 命中
+        )
+        self.assertEqual(spec["type"], "bar")
+
+    def test_fallback_hit_notes_authority_level(self) -> None:
+        """决策 ③3：走兜底且命中时 note 追加权威等级标注（判据 2 第三句）。"""
+        spec = render_chart(
+            execution([(2013, 123.0), (2014, 156.0)], ["CalendarYearID", "v"]),
+            time_columns=(),
+        )
+        self.assertEqual(spec["type"], "line")
+        self.assertIn("兜底识别", str(spec["note"]))
+        self.assertIn("非编译器声明", str(spec["note"]))
+
+    def test_declared_path_has_no_fallback_note(self) -> None:
+        """编译声明路径不带兜底标注（权威等级不同，note 不得混同）。"""
+        spec = render_chart(
+            execution([(2013, 123.0), (2014, 156.0)], ["CalendarYearID", "v"]),
+            time_columns={"CalendarYearID"},
+        )
+        self.assertEqual(spec["type"], "line")
+        self.assertNotIn("兜底识别", str(spec.get("note", "")))
+
+
 if __name__ == "__main__":
     unittest.main()

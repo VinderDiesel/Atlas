@@ -1,0 +1,33 @@
+{
+  "name": "atlas-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Atlas 可信问数控制台（ADR-0018；P0b 只落工程边界，界面属 P1~P3）",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "antd": "^5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.4",
+    "recharts": "^2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.5",
+    "@types/react": "^18.3",
+    "@types/react-dom": "^18.3",
+    "typescript": "^5.4",
+    "vite": "^5",
+    "vitest": "^1"
+  }
+}

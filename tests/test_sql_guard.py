@@ -12,7 +12,15 @@ from types import SimpleNamespace
 
 from sqlglot import exp
 
-from agent.compiler import Dataset, Relationship, SemanticModel
+from agent.compiler import (
+    ComparisonSpec,
+    Compiler,
+    Dataset,
+    Plan,
+    Relationship,
+    SemanticModel,
+    TimeSpec,
+)
 from agent.security.sql_guard import (
     Budget,
     Policy,
@@ -328,6 +336,99 @@ class TestCrossTableJoinInjection(unittest.TestCase):
         self.assertIn("表不在白名单内：atlas.dwd.dim_broker", str(ctx.exception))
 
 
+class TestCteNameExemption(unittest.TestCase):
+    """ADR-0017 判据 1 / 代价 ①：CTE 名豁免，CTE 内部物理表仍受白名单约束。
+
+    实测动机：sqlglot 把 `FROM base` 解析为 exp.Table；未豁免时白名单校验把它
+    按物理表拒（yoy/pop 拒于 `base`、cumulative 拒于 `monthly`）。豁免只认
+    裸名引用（无 catalog/db 前缀）——`FROM db.base` 不是 CTE 引用，照常校验。
+    """
+
+    BUDGET = Budget(
+        dialect="doris",
+        allowed_tables=frozenset({"atlas.dwd.fact_trades", "atlas.dwd.dim_date"}),
+    )
+
+    def test_lag_shape_passes(self) -> None:
+        """yoy/pop 形态：WITH base AS (...) SELECT ... FROM base → 放行。"""
+        sql, _ = enforce(
+            "WITH base AS (SELECT x FROM atlas.dwd.fact_trades AS ft) SELECT * FROM base",
+            budget=self.BUDGET,
+        )
+        self.assertIn("FROM base", sql)
+
+    def test_cte_chain_passes(self) -> None:
+        """多 CTE 链：后一个 CTE 引用前一个（b 读 a）→ 两个名字都豁免。"""
+        sql, _ = enforce(
+            "WITH a AS (SELECT x FROM atlas.dwd.fact_trades AS ft), "
+            "b AS (SELECT * FROM a) SELECT * FROM b",
+            budget=self.BUDGET,
+        )
+        self.assertIn("FROM b", sql)
+
+    def test_cte_hidden_table_still_rejected(self) -> None:
+        """防 N3 绕过：CTE 包装非白名单表 → 拒的是内部物理表，不是 CTE 名。"""
+        with self.assertRaises(UnsafeQuery) as ctx:
+            enforce(
+                "WITH base AS (SELECT x FROM atlas.dwd.secret) SELECT * FROM base",
+                budget=self.BUDGET,
+            )
+        self.assertIn("atlas.dwd.secret", str(ctx.exception))
+
+    def test_qualified_name_not_exempt(self) -> None:
+        """豁免不扩到限定名：`FROM xdb.base` 带前缀不可能是 CTE 引用 → 仍拒。"""
+        with self.assertRaises(UnsafeQuery) as ctx:
+            enforce(
+                "WITH base AS (SELECT x FROM atlas.dwd.fact_trades AS ft) SELECT * FROM xdb.base",
+                budget=self.BUDGET,
+            )
+        self.assertIn("xdb.base", str(ctx.exception))
+
+    def test_no_whitelist_early_exit_unchanged(self) -> None:
+        """未配置白名单 → 直接 return（豁免逻辑不改变早退语义）。"""
+        sql, _ = enforce("WITH base AS (SELECT x FROM any_table) SELECT * FROM base")
+        self.assertIn("WITH base", sql)
+
+
+class TestComparisonKindsPassGuard(unittest.TestCase):
+    """ADR-0017 判据 2：四 kind 编译产物全部通过 enforce（硬阻塞解除点）。
+
+    用真实 Compiler 产物锁「编译 → Guard」契约：`_wrap_with_lag` /
+    `_wrap_with_cumulative` 的 CTE 形态若改名/改形，这里会先红。
+    """
+
+    BUDGET = Budget(
+        dialect="doris",
+        allowed_tables=frozenset({"atlas.dwd.fact_trades", "atlas.dwd.dim_date"}),
+    )
+
+    def _compiled(self, kind: str) -> str:
+        compiler = Compiler(MODEL)
+        plan = Plan(
+            metric="total_trade_value",
+            time=TimeSpec(granularity="year", value=2015),
+            comparison=ComparisonSpec(kind=kind),
+        )
+        sql, _ = compiler.compile(plan)
+        return sql
+
+    def test_all_four_kinds_pass(self) -> None:
+        for kind in ("yoy", "pop", "cumulative", "rank"):
+            with self.subTest(kind=kind):
+                sql = self._compiled(kind)
+                _guarded, cost = enforce(sql, budget=self.BUDGET, model=MODEL)
+                self.assertLessEqual(cost, self.BUDGET.max_cost_units)
+
+    def test_cte_wrap_shape(self) -> None:
+        """三 kind 以 CTE 包裹（豁免点即在此）、rank 不包（0017 决策 ① 表）。"""
+        for kind, cte_name in (("yoy", "base"), ("pop", "base"), ("cumulative", "monthly")):
+            with self.subTest(kind=kind):
+                sql = self._compiled(kind)
+                self.assertIsNotNone(parse(sql, "doris").find(exp.With))
+                self.assertIn(f"FROM {cte_name}", sql)
+        self.assertIsNone(parse(self._compiled("rank"), "doris").find(exp.With))
+
+
 class TestBudget(unittest.TestCase):
     def test_exceeded(self) -> None:
         budget = Budget(max_cost_units=1.0)
@@ -405,6 +506,15 @@ class TestCostEstimate(unittest.TestCase):
         budget = Budget(max_cost_units=1.0, table_stats={"atlas.dwd.a": 9_000_000.0})
         tree = parse("SELECT a FROM atlas.dwd.a AS a", "clickhouse")
         self.assertTrue(budget.exceeded(estimate_cost(tree, budget.table_stats)))
+
+    def test_ignores_cte_names(self) -> None:
+        """CTE 名不是被扫描的表：`WITH base … FROM base` 只计 1 张物理表。
+
+        与 stats 分支口径对齐（CTE 名不在 stats 里，本就贡献 0）——无 stats
+        分支曾把 CTE 名计入表数代理（0017 判据 1 的同根因修正）。
+        """
+        tree = parse("WITH base AS (SELECT x FROM t1) SELECT * FROM base", "clickhouse")
+        self.assertAlmostEqual(estimate_cost(tree), 1.0 / 8.0)
 
 
 if __name__ == "__main__":

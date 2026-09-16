@@ -1,3 +1,14 @@
+# ============================================================================
+# TPC-DS kit carve-out / TPC-DS kit 文件级 carve-out（非 Apache-2.0）
+# ----------------------------------------------------------------------------
+# 本文件含 TPC-DS kit 源码 48 行（16 删除 + 32 上下文）——tools/r_params.c 与
+# tools/scaling.c，取自 gregrahn/tpcds-kit @ 5a3a817（v2.10.0）——受 TPC END
+# USER LICENSE AGREEMENT VERSION 2.2 约束，不适用本仓 Apache-2.0（EULA 文本随
+# kit 分发：data/raw/tpcds-kit/EULA.txt，不入库）。新增行实现 Atlas 自写的
+# SF0.1 社区扩展，仍为 Apache-2.0。详见仓库根 NOTICE。
+#
+# THE TPC SOFTWARE IS AVAILABLE WITHOUT CHARGE FROM TPC.
+# ============================================================================
 diff --git a/tools/r_params.c b/tools/r_params.c
 index 4db16e5..c58cce7 100644
 --- a/tools/r_params.c

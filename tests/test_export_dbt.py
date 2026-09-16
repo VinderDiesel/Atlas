@@ -22,7 +22,14 @@ FINANCE = REPO / "semantic" / "ossie" / "atlas_finance.ossie.yaml"
 
 
 def _head_sha() -> str:
-    """当前 git HEAD 短 sha（export 产物绑定 HEAD，断言须随 HEAD 前进）。"""
+    """当前 git HEAD 短 sha（export 产物绑定 HEAD，断言须随 HEAD 前进）。
+
+    **刻意保留为独立预言机**（ADR-0019 决策 ② 测试侧裁定），不改用
+    `data.identity.git_short_sha`：本文件末尾的用例断言 `data["sha"] == _head_sha()`，
+    它的唯一作用是抓「导出产物把 sha 写死/算错」这类缺陷（2026-09-03 那次 CI
+    修复正是它发现的）。与被测方共用同一实现会让该断言退化成同义反复——
+    所以这里也不得 import data.identity 或 eval.runner 的 sha 函数。
+    """
     out = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"],
         cwd=REPO,

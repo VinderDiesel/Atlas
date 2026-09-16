@@ -37,6 +37,8 @@ import sqlglot
 import yaml
 from sqlglot import exp
 
+from data.identity import git_short_sha
+
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_IN = REPO / "semantic" / "ossie" / "atlas_finance.ossie.yaml"
 DEFAULT_OUT = REPO / "exports" / "dbt_semantic_models.yml"
@@ -276,17 +278,6 @@ def _metric_description(metrics_raw: list[dict[str, Any]], name: str) -> str:
     return ""
 
 
-def _git_short_sha() -> str:
-    import subprocess
-
-    try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"], cwd=REPO, text=True
-        ).strip()
-    except Exception:  # noqa: BLE001 - 非 git 环境也能导出（报告 sha 留空）
-        return "unknown"
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Ossie → dbt MetricFlow YAML 导出")
     parser.add_argument("--in", dest="in_path", type=Path, default=DEFAULT_IN)
@@ -306,9 +297,17 @@ def main(argv: list[str] | None = None) -> int:
     if not args.report.parent.is_dir():
         args.report.parent.mkdir(parents=True)
 
+    # HEAD 解析的容错留在调用点（ADR-0019 判据 5(d)）：data.identity.git_short_sha
+    # 刻意不吞异常——「无 git 环境也要完成导出」是本导出工具的特有需求，若下沉进
+    # 共享函数，其余消费方（含评测报告命名）会静默拿到假身份。
+    try:
+        sha = git_short_sha()
+    except Exception:  # 非 git 工作树且未注入 ATLAS_GIT_SHA（如容器内无 .git）
+        sha = "unknown"
+
     report: dict[str, Any] = {
         "ossie_file": str(args.in_path.relative_to(REPO)),
-        "sha": _git_short_sha(),
+        "sha": sha,
     }
     rendered = export_document(doc, report)
 

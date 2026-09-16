@@ -195,12 +195,18 @@ services:
   # - 容器网络内直连 Doris 9030（execute_sql 只读封装 + Guard 预算不变；
   #   写面 loader/dwd 不入本容器）
   # - 构建参数 GIT_SHA = 快照身份：镜像无 .git，由 ARG 注入 ATLAS_GIT_SHA
-  #   （eval/runner.git_short_sha 的 env 覆盖面）。默认最新 29 表全量数据
-  #   版本 b933e20（data/snapshots/ 最新锁定 meta）；数据重装后改宿主 .env 的
-  #   GIT_SHA 或显式 build args
+  #   （eval/runner.git_short_sha 的 env 覆盖面）。**不给默认值**（ADR-0019 决策 ④）：
+  #   改造前本文件与 Dockerfile 各写一个不同的 sha 默认值，生效值还与注释不符，
+  #   静默把容器绑到无零售表的快照（两个具体值见 0019 背景节——配置文件不留 sha，
+  #   否则又成第二个事实源）。现由 make 求值宿主 HEAD 并 export（见 Makefile GIT_SHA）；
+  #   留空时透传为空，由 Dockerfile 的构建守卫响亮拒绝。
+  #   不用 ${GIT_SHA:?} 必填：实测（compose 29.5.2）它会让 ps/down/config 一并失败，
+  #   等于让「停服」也需要身份——必填校验只属于构建期。
   # - ATLAS_JWT_SECRET 不落盘默认值（N9）：compose 从宿主 .env 注入运行时；
   #   未设置则服务能起但签发/校验拒绝（serving/auth.py 报错提示）
-  # - 会话进程内内存态：重启即失；uvicorn 单进程（workers=1，会话不分裂）
+  # - 会话持久化（ADR-0020）：设 ATLAS_CHECKPOINT_DB 时会话/轮数/身份指纹随 SQLite
+  #   落盘、跨重启续接（未设 = 旧形态内存态，重启即失）。uvicorn 仍 workers=1——
+  #   理由收窄为「限流桶 + 审计写 + SQLite 单写者」（决策 ⑧ / README KL #28）
   # 部署与 curl 示例见 README「对外 HTTP API」小节
   # ============================================================
   atlas-api:
@@ -208,7 +214,7 @@ services:
       context: .
       dockerfile: infra/docker/api/Dockerfile
       args:
-        GIT_SHA: ${GIT_SHA:-7d48dcb}
+        GIT_SHA: ${GIT_SHA:-}
     container_name: atlas-api
     depends_on:
       doris-fe:
@@ -217,17 +223,35 @@ services:
         condition: service_healthy
     environment:
       ATLAS_JWT_SECRET: ${ATLAS_JWT_SECRET:-}
+      # 运行时快照显式指定（ADR-0019 决策 ①）：留空 = 按 HEAD > 最新已锁解析。
+      # 必须透传，否则决策 ③ 的错误建议「用 ATLAS_SNAPSHOT_SHA 指定含这些表的快照」
+      # 在容器内不可执行（而那条错误恰恰只在容器里出现）。
+      ATLAS_SNAPSHOT_SHA: ${ATLAS_SNAPSHOT_SHA:-}
+      # 会话 checkpoint 落盘开关（ADR-0020 决策 ③）：留空 = 会话随重启消失。
+      # 代码侧刻意不给默认路径（与决策 ① 的「默认 MemorySaver」、ADR-0019 决策 ④
+      # 的「配置文件不留隐式默认」同纪律）——默认值只在 .env.example 里给。
+      # 必须透传：不设它，下面挂的卷就是空的，「持久化」在容器里等于假的。
+      ATLAS_CHECKPOINT_DB: ${ATLAS_CHECKPOINT_DB:-}
       DORIS_HOST: atlas-doris-fe
       DORIS_PORT: "9030"
       DORIS_USER: ${DORIS_USER:-root}
       DORIS_PASSWORD: ${DORIS_PASSWORD:-}
+    volumes:
+      # 命名卷而非宿主目录绑定：checkpoint 内容是 Guard 出口 SQL + 结果行副本，
+      # 敏感度等同数据库副本（N3 精神），不该落在仓库目录被宿主侧工具读走。
+      # `make down` 不删命名卷；`docker compose down -v` 会删（AGENTS.md §6 禁用）。
+      - atlas-api-state:/app/serving/state
     ports:
-      - "8001:8000" # 宿主机 8000 被用户资产配置服务占用，映射到 8001
+      - "8010:8000" # 宿主机 8000 被用户资产配置服务占用，映射到 8010
     # doris-fe 只在 doris_net（compose：指定 networks 即只入该网），
     # atlas-api 必须同网才能解析 atlas-doris-fe:9030
     networks:
       - doris_net
     healthcheck:
+      # 根路径 /health 是探针契约（ADR-0018 决策 ⑤ 第 4 条；ADR-0022 落地注记
+      # 将其收窄为「路由前缀化后本行**不需要同步**」——双挂保证此处字符串逐字
+      # 不变，判据 2 的 git diff 断言由此成立）。/api/v1/health 为新增双挂点，
+      # 同一 handler、同 body。
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
       interval: 15s
       timeout: 5s
@@ -288,6 +312,9 @@ volumes:
   milvusdata:
   etcdata:
   grafanadata:
+  # atlas-api 会话 checkpoint（ADR-0020 决策 ③）：卷名不带环境后缀，
+  # 与上面各数据卷同口径；换镜像重建不丢会话轨迹
+  atlas-api-state:
 
 networks:
   doris_net:
