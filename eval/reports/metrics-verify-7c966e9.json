@@ -1,0 +1,72 @@
+{
+  "tool": "metrics-verify",
+  "git_sha": "7c966e9",
+  "snapshot_sha": "7c966e9",
+  "snapshot_source": "head",
+  "snapshot_bound_to_head": true,
+  "date": "2026-09-02",
+  "semantic_file": "semantic/ossie/atlas_finance.ossie.yaml",
+  "metrics": {
+    "average_trade_value": {
+      "metric": "average_trade_value",
+      "definition": "SUM(fact_trades.Quantity * fact_trades.TradePrice) / COUNT(fact_trades.TradeID)",
+      "description": "平均每笔成交金额（总成交额 / 成交笔数，美元）",
+      "sql_compiled": "SELECT SUM(fact_trades.Quantity * fact_trades.TradePrice) / COUNT(fact_trades.TradeID) AS average_trade_value FROM atlas.dwd.fact_trades AS fact_trades LIMIT 100",
+      "sql_guarded": "SELECT SUM(fact_trades.Quantity * fact_trades.TradePrice) / COUNT(fact_trades.TradeID) AS average_trade_value FROM atlas.dwd.fact_trades AS fact_trades LIMIT 100",
+      "columns": [
+        "average_trade_value"
+      ],
+      "row_count": 1,
+      "value": "27578.61147400"
+    },
+    "average_commission_per_trade": {
+      "metric": "average_commission_per_trade",
+      "definition": "SUM(fact_trades.Commission) / COUNT(fact_trades.TradeID)",
+      "description": "平均每笔佣金（佣金收入合计 / 成交笔数，美元）",
+      "sql_compiled": "SELECT SUM(fact_trades.Commission) / COUNT(fact_trades.TradeID) AS average_commission_per_trade FROM atlas.dwd.fact_trades AS fact_trades LIMIT 100",
+      "sql_guarded": "SELECT SUM(fact_trades.Commission) / COUNT(fact_trades.TradeID) AS average_commission_per_trade FROM atlas.dwd.fact_trades AS fact_trades LIMIT 100",
+      "columns": [
+        "average_commission_per_trade"
+      ],
+      "row_count": 1,
+      "value": "89.573512"
+    },
+    "commission_rate": {
+      "metric": "commission_rate",
+      "definition": "SUM(fact_trades.Commission) / SUM(fact_trades.Quantity * fact_trades.TradePrice)",
+      "description": "佣金率（佣金收入 / 成交金额，无单位比率）",
+      "sql_compiled": "SELECT SUM(fact_trades.Commission) / SUM(fact_trades.Quantity * fact_trades.TradePrice) AS commission_rate FROM atlas.dwd.fact_trades AS fact_trades LIMIT 100",
+      "sql_guarded": "SELECT SUM(fact_trades.Commission) / SUM(fact_trades.Quantity * fact_trades.TradePrice) AS commission_rate FROM atlas.dwd.fact_trades AS fact_trades LIMIT 100",
+      "columns": [
+        "commission_rate"
+      ],
+      "row_count": 1,
+      "value": "0.003247"
+    },
+    "average_holding_value": {
+      "metric": "average_holding_value",
+      "definition": "SUM(fact_holdings.CurrentValue) / COUNT(DISTINCT fact_holdings.SK_AccountID)",
+      "description": "平均每账户持仓市值（持仓总市值 / 有持仓的去重账户数，美元）",
+      "sql_compiled": "SELECT SUM(fact_holdings.CurrentValue) / COUNT(DISTINCT fact_holdings.SK_AccountID) AS average_holding_value FROM atlas.dwd.fact_holdings AS fact_holdings LIMIT 100",
+      "sql_guarded": "SELECT SUM(fact_holdings.CurrentValue) / COUNT(DISTINCT fact_holdings.SK_AccountID) AS average_holding_value FROM atlas.dwd.fact_holdings AS fact_holdings LIMIT 100",
+      "columns": [
+        "average_holding_value"
+      ],
+      "row_count": 1,
+      "value": "1136660.848888"
+    },
+    "average_cash_balance": {
+      "metric": "average_cash_balance",
+      "definition": "SUM(fact_cash_balances.Cash) / COUNT(DISTINCT fact_cash_balances.SK_AccountID)",
+      "description": "平均每账户现金余额（现金余额合计 / 有余额的去重账户数，美元）",
+      "sql_compiled": "SELECT SUM(fact_cash_balances.Cash) / COUNT(DISTINCT fact_cash_balances.SK_AccountID) AS average_cash_balance FROM atlas.dwd.fact_cash_balances AS fact_cash_balances LIMIT 100",
+      "sql_guarded": "SELECT SUM(fact_cash_balances.Cash) / COUNT(DISTINCT fact_cash_balances.SK_AccountID) AS average_cash_balance FROM atlas.dwd.fact_cash_balances AS fact_cash_balances LIMIT 100",
+      "columns": [
+        "average_cash_balance"
+      ],
+      "row_count": 1,
+      "value": "-32465124.695621"
+    }
+  },
+  "status": "ok"
+}

@@ -60,7 +60,7 @@
 | **Guard** | 只读 SQL 安全网关 | "防火墙"（保留给网络层） |
 | **EX** | Execution Accuracy，执行结果与快照一致率 | "准确率"（不精确） |
 | **Plan Acc** | 逻辑计划与标注一致率 | — |
-| **Gold set** | 自建黄金评测集（50 例） | "测试集"（含糊） |
+| **Gold set** | 自建黄金评测集（**条数不写死**，以 `make lint` 输出的「N 条样本」为当前口径） | "测试集"（含糊） |
 | **Snapshot** | 固定数据快照，绑定 git sha | "数据库"（当前状态会变） |
 | **RowPolicy** | 行级权限策略，可编译为 SQL 谓词 | "权限表" |
 | **Agent** | LangGraph 状态机编排 | "Bot"、"助手" |
@@ -73,7 +73,7 @@
 
 ```text
 atlas-data-platform/
-├── .github/workflows/   # GitHub Actions（lint / eval 回归 / tag 自动版本锚点）
+├── .github/workflows/   # GitHub Actions（lint / eval 回归 / tag 自动版本锚点；当前远程为 gitee，不执行——ADR-0018 ⑥）
 ├── semantic/            # 语义层定义（Git 唯一事实源）
 │   ├── ossie/           # ✅ 权威语义模型（ADR-0002）：atlas_finance / atlas_retail
 │   ├── governance/      # ATLAS 治理扩展 JSON Schema（挂在 custom_extensions 下）
@@ -106,6 +106,7 @@ atlas-data-platform/
 │   └── prompts/         # 提示词（Git 版本管理，禁止内联在代码里）
 ├── retrieval/           # bm25 / milvus_client / graph_store
 ├── serving/             # api（HTTP 服务面 v1，ADR-0012）/ auth / 验证工具
+├── frontend/            # 前端控制台工程边界（ADR-0018；P0b：构建链 + 端点常量，界面属 P1~P3）
 ├── observability/       # otel 埋点 / grafana dashboards
 ├── eval/
 │   ├── gold/            # 自建黄金集（主评测）
@@ -116,6 +117,7 @@ atlas-data-platform/
 ├── lora/                # SQL 适配器训练 + 数据飞轮
 ├── infra/
 │   ├── docker/          # 镜像与 compose 片段
+│   ├── license_check.py # 许可证与第三方内容守卫（make license-check；ADR-0023 决策 ⑦）
 │   └── adr/             # ✅ 架构决策记录（重要决策必须写 ADR）
 ├── docs/                # 设计文档、逐日任务清单、术语表
 └── data/snapshots/      # 固定数据快照，记录 sha
@@ -123,7 +125,7 @@ atlas-data-platform/
 
 ---
 
-## 5. 技术栈锁定（Apache 全栈，变更需 ADR）
+## 5. 技术栈锁定（数据与后端基础设施 Apache 全栈；前端为 permissive 许可的社区栈；变更需 ADR）
 
 | 层 | 选型 | 版本 | 替代方案 | 状态 |
 |---|---|---|---|---|
@@ -135,6 +137,7 @@ atlas-data-platform/
 | **对象存储** | MinIO（S3 兼容） | RELEASE.2024-05-28 | — | 锁定 |
 | **SQL 解析** | sqlglot | ≥ 25 | — | 锁定（ADR-0005：Calcite 列 Phase 2） |
 | **向量检索** | Milvus | 2.4 | Doris 原生向量检索（可选对比） | 锁定 |
+| **前端（控制台）** | **React 18 + TypeScript + Vite + AntD + Recharts** | node ≥ 20 / React ^18.3 / TS ^5.4 / Vite ^5 / AntD ^5 / Recharts ^2 | 零构建（StaticFiles + 原生 ES modules） | 锁定（ADR-0018；P0b 实测 5 包全部 permissive，见该 ADR 决策 ①） |
 | 语言 | Python | 3.11 | — | 锁定 |
 | 依赖管理 | uv | latest | pip | 锁定 |
 | 关系库 | PostgreSQL | 16 | — | 锁定（Polaris/元数据） |
@@ -268,7 +271,7 @@ Refs: #12
 ### 9.1 允许的写法
 
 ```
-✅ 自建 50 例黄金集上 EX = <实测值>，计算方式为执行结果与固定快照一致
+✅ 自建黄金集（条数见 `make lint` 输出）上 EX = <实测值>，计算方式为执行结果与固定快照一致
 ✅ 数据快照 sha = abc1234，评测脚本 eval/runner.py，报告 eval/reports/abc1234.json
 ✅ TPC-DI 15 表子集上 Table Recall@K = <实测值>
 ✅ Spider dev EM = <实测值>（公开集，仅作参照）

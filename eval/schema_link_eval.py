@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -30,21 +29,11 @@ from sqlglot import exp, parse_one
 
 from agent.compiler import SemanticModel
 from agent.tools.schema_linker import SchemaLinker
+from data.identity import git_short_sha
 from eval.retrieval_eval import load_queries, run_eval
 
 REPO = Path(__file__).resolve().parent.parent
 REPORTS_DIR = REPO / "eval" / "reports"
-
-
-def git_short_sha() -> str:
-    """当前 HEAD 短 sha（报告绑定 commit，与 runner/retrieval_eval 同口径）。"""
-    return subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=REPO,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
 
 
 def truth_tables(expected_sql: str) -> list[str]:

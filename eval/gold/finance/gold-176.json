@@ -8,8 +8,8 @@
     "kind": "cumulative"
   },
   "expected_sql": null,
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "44dc0fdf1e474ea89bc1ba04c36efc5de8b02b7194197d48a6e39da4b8c4c177",
+  "snapshot_sha": "ccb4c8b",
   "tags": [
     "aggregation",
     "time_range",

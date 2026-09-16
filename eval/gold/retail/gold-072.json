@@ -8,8 +8,8 @@
     "kind": "yoy"
   },
   "expected_sql": null,
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "a63ffc2d4f24883f11784e1a4d72bf6f0335e324c05e8b5bee0cba3719fde9d2",
+  "snapshot_sha": "ccb4c8b",
   "tags": [
     "aggregation",
     "time_range",

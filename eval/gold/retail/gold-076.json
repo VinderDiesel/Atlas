@@ -3,15 +3,15 @@
   "question": "按门店统计 2001 年销售额排名",
   "expected_metric": "total_sales_price",
   "expected_dimensions": [
-    "s_state"
+    "s_store_sk"
   ],
   "expected_time": "2001",
   "expected_comparison": {
     "kind": "rank"
   },
   "expected_sql": null,
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "75c238ad30c95da54d8361a97bc756ac9a5950a29c92fe18a85a9b6ce04369e2",
+  "snapshot_sha": "ccb4c8b",
   "tags": [
     "aggregation",
     "dimension_group_by",
@@ -31,7 +31,7 @@
       "term": "门店",
       "concept": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
       "role": "dimension",
-      "note": "门店维度排名（SF0.1 单州，按 s_state 代理）"
+      "note": "门店维度排名（SF0.1 共 12 家门店，按 s_store_sk 代理键分组；P-1 收口裁定由 s_state 代理纠正，见 ADR-0017 代价 ⑤）"
     }
   ]
 }

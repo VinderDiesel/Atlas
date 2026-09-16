@@ -24,7 +24,7 @@
 
 输出：人类可读 stdout + JSON 报告（本次实测的全部数字都出自本脚本；
 docs/e2e-acceptance.md 引用本产物，禁止手写数字）。场景断言失败 → 退出码 1。
-依赖：Doris 已 up 且快照表可查（mysql.connector 读 .env 连接参数）。
+依赖：Doris 已 up 且快照表可查（pymysql 读 .env 连接参数）。
 """
 
 from __future__ import annotations

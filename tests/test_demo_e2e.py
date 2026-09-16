@@ -53,6 +53,14 @@ def _doris_reachable() -> bool:
 
 
 def _head_sha() -> str:
+    """工作树的真实 HEAD 短 sha —— **刻意保留为独立预言机**（ADR-0019 决策 ② 测试侧裁定）。
+
+    不改用 `data.identity.git_short_sha`：那个函数优先读 `ATLAS_GIT_SHA`（容器里由
+    Dockerfile 注入镜像构建时的 sha），而本文件的用法是「当前 HEAD 是否已锁快照」
+    这类 skip 判据与读 meta —— 注入的 sha 可能不等于工作树 HEAD，一旦不一致，
+    用例就会对着错误的快照判定通过。目录路径（`eval.runner.SNAPSHOT_DIR`）复用无妨，
+    需要独立的只有 sha 计算本身。
+    """
     return (
         subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -124,7 +132,7 @@ class TestDemoE2E(unittest.TestCase):
         )
 
     def _ask(self, agent, question: str):
-        # 每问句独立会话（进程内多轮计数不跨例串扰）
+        # 每问句独立会话（sid 逐例随机，多轮状态不跨例串扰）
         return agent.ask(question, session_id=f"demo-{uuid4().hex[:8]}")
 
     # ---- 中文 6 条（金融 3 + 零售 3）------------------------------------
@@ -212,7 +220,7 @@ class TestDemoE2E(unittest.TestCase):
         from serving.auth import resolve_policy, sign_token
 
         token = sign_token(role, claims)
-        resolved = resolve_policy(token)
+        resolved = resolve_policy(token, policy_name="rp_dept_visible")
         guarded, _ = enforce(
             sql, policy=Policy(name=resolved.policy_name, condition=resolved.condition), budget=budget
         )

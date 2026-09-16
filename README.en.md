@@ -53,8 +53,8 @@ Full diagram: [README.md §2](README.md).
 
 | Domain | Semantic model | Data | Datasets | Gold samples |
 |---|---|---|---|---|
-| **finance** (primary) | `semantic/ossie/atlas_finance.ossie.yaml` | TPC-DI Batch1, 2012-07-07~2017-07-07 (measured), 8 DWD tables | accounts/brokers/customers/ securities/trades/holdings/cash | 70 (62 zh + 8 en), all anchored |
-| **retail** (second main domain since 2026-09-04) | `semantic/ossie/atlas_retail.ossie.yaml` | TPC-DS SF0.1 via `make seed-retail`, sales window 1998~2002 (measured), 4 DWD tables | date/item/store/store_sales | 19 (14 zh incl. 1 ambiguous + 5 en), all anchored |
+| **finance** (primary) | `semantic/ossie/atlas_finance.ossie.yaml` | TPC-DI Batch1, 2012-07-07~2017-07-07 (measured), 8 DWD tables | accounts/brokers/customers/ securities/trades/holdings/cash | 79 files (71 zh + 8 en); **66 anchored**, 13 pending (measured 2026-09-14 — see KL #31) |
+| **retail** (second main domain since 2026-09-04) | `semantic/ossie/atlas_retail.ossie.yaml` | TPC-DS SF0.1 via `make seed-retail`, sales window 1998~2002 (measured), 4 DWD tables | date/item/store/store_sales | 27 files (22 zh + 5 en); **18 anchored**, 9 pending (measured 2026-09-14 — see KL #31) |
 
 Retail "promotion" history (audit note): an early ruling said retail samples were
 "historical comparison only, no longer added" because **no data existed**; once
@@ -69,6 +69,8 @@ break down per domain then per language (zh/en), never mixed.
 ## 4. 30-minute quick start
 
 Prerequisites: Docker Compose (≥ 2.20), Python 3.11, uv or pip, Git ≥ 2.40,
+Node.js ≥ 20 (optional — frontend console only: `make ui-check` / `make ui-build`;
+not needed for the Python pipeline),
 ≥ 16 GB RAM recommended (Doris FE+BE; fallback path in ADR-0004).
 
 ```bash
@@ -102,7 +104,9 @@ a stale one).
 
 ## 5. Evaluation — how numbers are produced
 
-The gold set (`eval/gold/finance/` and `eval/gold/retail/`, 89 samples total) is
+The gold set (`eval/gold/finance/` and `eval/gold/retail/`, **106 samples** measured
+2026-09-14, plus 13 `pp-*.json` paraphrase samples that are *not* part of the gold
+schema — see KL #31) is
 **manually labeled** — not auto-generated. Each sample pins `expected_metric /
 expected_dimensions / expected_time / expected_sql / result_hash / snapshot_sha`.
 
@@ -118,7 +122,15 @@ clarification question instead of a guess.
 - Reports: `eval/reports/<sha>.json`, per-domain sections; `EVAL_REPORT.md` is
   machine-generated from them (`make report`) — no hand-written numbers, every cell
   has a `source` column (AGENTS.md N1).
-- Latest terminal verification (snapshot `b933e20`, full run, zero regression):
+- **Report currency (measured 2026-09-14)**: of the 48 artifacts in `eval/reports/`,
+  7 are per-domain main reports; the newest non-dry one is `5d1e22b.json`
+  (2026-09-09T11:41:32+08:00, finance 71 + retail 20 = 91). **No report covers the
+  current 106 samples.** The mechanistic cause is registered in ADR-0017 cost ③
+  (`enforce` sits outside the `try` in `eval/runner.py`, so a Guard rejection aborts
+  the whole round); a report covering 106 is only possible after P-1 acceptance
+  criteria 3/4 land. The following is a **historical reference** (numbers are what
+  that report actually contains; not rewritten):
+- Terminal verification at snapshot `b933e20` (full run, zero regression):
   finance 70 — zh 57/57 Plan Acc + 5/5 clarify, en 8/8; retail 19 — zh 13/13 +
   1/1 clarify, en 5/5; EX 65/65 + 18/18, 0 execution errors. Report:
   `eval/reports/b933e20.json` (per-domain sections, not mixed).
@@ -128,40 +140,92 @@ clarification question instead of a guess.
   measured 44/44 identical in the gold-50 era (report `rag-llm-openai-7d48dcb.json`,
   historical comparison, not mixed with the current run).
 
-## 6. Serving API (v1)
+## 6. Serving API (contract v2: `/api/v1` prefix + governance plane)
 
-HTTP face of the same deterministic chain (ADR-0012): `/plan /compile /ask` with
-Bearer JWT auth (`make token`), `engine=stub` default.
+HTTP face of the same deterministic chain (ADR-0012; URL contract v2 = ADR-0022,
+in `serving/api.py` + `serving/governance.py`). **Hard cut**: all business and
+governance paths live under the `/api/v1` prefix (only the root `/health` is kept
+as the probe contract, dual-mounted with identical body); old paths return 404
+with no compatibility window. Governance endpoints read Git files / evaluation
+artifacts only — **no DB, no Agent construction** (the business face returns 503
+while governance stays 200 when the snapshot is missing). `engine=stub` default.
+
+| Endpoint | Prefix | Auth | Bucket | Request | Response |
+|---|---|---|---|---|---|
+| `GET /health` | root + `/api/v1` (dual-mount, same body) | public | — | — | **8 keys**: `status`, `head_sha`, `snapshot_sha`, `snapshot_source`, `snapshot_bound_to_head`, `snapshot_created_at`, `snapshot_tables`, `boot_id` (liveness + **actual binding** + process identity; `degraded` with `null` binding keys when nothing can be bound — still HTTP 200). Authoritative key set: ADR-0019 decision ⑥ + ADR-0020 decision ⑦ |
+| `POST /plan` | `/api/v1` | Bearer | business | `{question, model?}` (≤500 chars) | `{kind: "plan", plan}` or `{kind: "clarify", clarification}` (ambiguity → 200) |
+| `POST /compile` | `/api/v1` | Bearer | business | Plan JSON (`metric/dimensions/time/filters/order_by/limit`, incl. `model?`) | `{sql}` (Doris read-only dialect); malformed / compile error → 422 |
+| `POST /ask` | `/api/v1` | Bearer | business | `{question, session_id?, model?}` | full TurnResult (kind ∈ answer/clarify/blocked/error; Decimal→str precision, datetime→ISO8601) + `snapshot_sha` / `snapshot_bound_to_head` echoed; snapshot-binding failure → 503 (original cause in the message) |
+| `POST /plan/execute` | `/api/v1` | Bearer | business | Plan JSON (same shape as `/compile`) + `session_id?` + `question?` (display-only, defaults to the plan's normalized text) | same shape as `/ask` (kind ∈ answer/blocked/error — never `clarify`, no Planner involved; **invalid plan → 200 + `kind="error"`**, not 422 not 500). No `session_id` → one-shot thread, no session state; with one → same session space as `/ask` (identity-fingerprint 422 applies) and the plan becomes the completion baseline for follow-up fragments (ADR-0022 cost ⑥) |
+| `GET /governance/models` | `/api/v1` | Bearer | governance | — | `{kind: "governance.models", count, sources, items}` — semantic model list |
+| `GET /governance/metrics` | `/api/v1` | Bearer | governance | `?model?` (finance default) | `{kind: "governance.metrics", …}` — metric list (governance extension + FIBO alignment) |
+| `GET /governance/dimensions` | `/api/v1` | Bearer | governance | `?model?` | `{kind: "governance.dimensions", …}` — dimension list (physical column + value-domain status) |
+| `GET /governance/synonyms` | `/api/v1` | Bearer | governance | `?locale?` (zh_cn default) | `{kind: "governance.synonyms", …}` — locale dictionaries (incl. empty-placeholder flag) |
+| `GET /governance/values` | `/api/v1` | Bearer | governance | — | `{kind: "governance.values", …}` — value-domain registry (incl. skipped + reason); drill-down `GET /governance/values/{item}` |
+| `GET /governance/policies` | `/api/v1` | Bearer | governance | — | `{kind: "governance.policies", …}` — row policies + role directory |
+| `GET /governance/reports` | `/api/v1` | Bearer | governance | — | `{kind: "governance.reports", …}` — report index; drill-down `GET /governance/reports/{name}` |
+| `GET /governance/snapshots` | `/api/v1` | Bearer | governance | — | `{kind: "governance.snapshots", …}` — snapshot list (created_at desc + latest flag) |
+
+> The 13 rows fold the 16 OpenAPI paths (dual `/health` = 1 row; the `values` /
+> `reports` collection+drill pairs = 1 row each); the path set is pinned by
+> `tests/test_api_contract_v2.py` (`EXPECTED_PATHS`, 16 literals). All governance
+> collections share the `{kind, count, sources, items}` envelope and are GET-only.
 
 - **Multi-model routing (2026-09-05)**: request body `model` field selects the
   semantic domain — `finance` (default, backward compatible) or `retail`; unknown
   value → 422. Session keys are isolated per model.
-- **Service-face hardening (2026-09-05, ADR-0011 annotation)**: `/ask` pushes the
-  verified Bearer claims down as the row-level identity (`agent.ask(identity=…)`
-  → Guard Policy injection; `/plan` `/compile` have no execution face and stay
-  identity-free). Visible signals:
+- **Service-face hardening (2026-09-05, ADR-0011 annotation)**: `/api/v1/ask` and
+  `/api/v1/plan/execute` push the verified Bearer claims down as the row-level
+  identity (`agent.ask(identity=…)` → Guard Policy injection; `/api/v1/plan`
+  `/api/v1/compile` have no execution face and stay identity-free). Visible signals:
   - `explanation.policy_effect` — 「行级策略已生效（角色 X，策略 Y）」: role and
     policy name only, **never the condition value**;
   - a `session_id` is bound to the first request's identity fingerprint — changing
     identity on the same session → **422「会话身份冲突」**;
-  - per-token shared-bucket rate limit → **429 + `Retry-After`** (`/health` public
-    and 401 paths are exempt).
-- **Hardening env**: `ATLAS_AUDIT_DISABLED=1` turns the business-audit JSONL off
-  (`serving/audit/`, one line per request, no SQL); `ATLAS_RATE_LIMIT_MAX` /
-  `ATLAS_RATE_LIMIT_WINDOW_SECONDS` override the **placeholder** 60/min default
-  (0 disables). Same placeholders documented in `.env.example`.
-- `/health` is public; snapshot-meta missing → 503 on `/ask`.
-- Boundaries (KL #28): sessions / identity fingerprints / rate limit are all
-  in-process — uvicorn must run `workers=1`; the audit JSONL is a local file,
-  non-tamper-proof (export before production); no IdP yet — tokens are locally
-  signed HS256 (0011 decision 4 stays open). Verified by `make api-verify`
-  A5-A7 (`eval/reports/api-acceptance-4a547e7.json`: role-difference / session
-  identity-conflict 422 / retail category restriction + cross-domain Guard block).
+  - per-token **two independent buckets** (ADR-0022 decision ⑥): business
+    (`plan`/`compile`/`ask`/`plan/execute`) vs governance (`/api/v1/governance/*`)
+    — exceeding either → **429 + `Retry-After`**, the bucket named in `detail`
+    (`/health` public and 401 paths are exempt).
+- **Hardening env**: `ATLAS_AUDIT_DISABLED=1` turns the audit JSONL off
+  (`serving/audit/`, one line per business/governance request incl. 429/422
+  rejections, no SQL); `ATLAS_RATE_LIMIT_MAX` / `ATLAS_RATE_LIMIT_WINDOW_SECONDS`
+  override the **placeholder** 60/min business-bucket default; the governance
+  bucket has its own `ATLAS_GOVERNANCE_RATE_LIMIT_MAX` /
+  `ATLAS_GOVERNANCE_RATE_LIMIT_WINDOW_SECONDS` (**placeholder** 240/min — a
+  computed rationale: ~10 requests per governance navigation). 0 disables either.
+  Same placeholders documented in `.env.example`.
+- `/health` (dual-mounted at the root and under `/api/v1`, identical body) is
+  public and returns **8 keys** — `status`, `head_sha`, `snapshot_sha`,
+  `snapshot_source`, `snapshot_bound_to_head`, `snapshot_created_at`, `snapshot_tables`,
+  `boot_id` (ADR-0019 decision ⑥ + ADR-0020 decision ⑦). When nothing can be bound the
+  status is `degraded` and the binding keys are `null` — same key set, HTTP still 200
+  (probe semantics).
+- **Snapshot-binding visibility** (ADR-0019 decision ①/⑥): the runtime resolves the
+  snapshot in three steps (`ATLAS_SNAPSHOT_SHA` → HEAD → newest locked), so it may
+  legitimately bind to a snapshot **other than the code HEAD**; it then reports
+  `snapshot_bound_to_head=false` with `snapshot_source` = `env`/`latest` on
+  `/health` (dual-mount), `/api/v1/ask` and `atlas ask` (CLI prints to stderr to
+  keep stdout machine-readable).
+  Numbers from such a turn must **not** be quoted next to that snapshot's evaluation
+  numbers, nor written into a report named after the code HEAD. `make eval` is
+  unaffected: it still binds strictly to HEAD and re-verifies the data fingerprint.
+- Snapshot-binding failure → 503 on `/api/v1/ask` (the message carries the original
+  cause).
+- Boundaries (KL #28): with `ATLAS_CHECKPOINT_DB` set, sessions / turns /
+  identity fingerprints persist in the SQLite checkpoint (ADR-0020); still
+  in-process are the rate-limit buckets, the audit JSONL append and the SQLite
+  single-writer — uvicorn must run `workers=1`; the audit JSONL is a local
+  file, non-tamper-proof (export before production); no IdP yet — tokens are
+  locally signed HS256 (0011 decision 4 stays open). Verified by `make api-verify`
+  A1-A9 (`eval/reports/api-acceptance-95cba68.json`: full-chain EX / ambiguity /
+  auth / dual-mounted health / role-difference / session identity-conflict 422 /
+  retail dual-tier incl. domain-scoped policy name + cross-domain rejection
+  before Guard / governance 8-collection sweep A8 / `/plan/execute` real chain A9).
 
 ```bash
 make serve    # uvicorn 127.0.0.1:8000 (single process)
 curl -H "Authorization: Bearer $(make token)" \
-  http://127.0.0.1:8000/plan -d '{"question":"What were total sales in 1999?","model":"retail"}'
+  http://127.0.0.1:8000/api/v1/plan -d '{"question":"What were total sales in 1999?","model":"retail"}'
 ```
 
 ## 7. Data-agent demo (tests, not scripts)
@@ -193,7 +257,7 @@ Condensed:
 12. Retrieval corpus and queries share provenance (same-source validation); Milvus vectors are lexical (no embedding semantics).
 13. Graph constraint is more conservative than the Compiler on multi-hop recalls.
 14. Guard cross-table predicate join injection landed; remaining edge = reject when no legal join path exists.
-15. Row-level security boundaries: Polaris is object-level only (no row-level — measured); geographic/category roles measured across both domains via rls-verify (finance diff-set 3; retail diff-set 2 — region_manager TN equals hq results because SF0.1 has a single state, stated honestly; the category_analyst restriction carries the difference).
+15. Row-level security boundaries: Polaris is object-level only (no row-level — measured); geographic/category roles measured across both domains via rls-verify (finance diff-set 4 — broker tier honoured since ADR-0021, measured brokerid predicate; retail diff-set 2 — region_manager TN equals hq results because SF0.1 has a single state, stated honestly; the category_analyst restriction carries the difference).
 16. Derived-metric numeric backing closed (gold-156~162 anchored, snapshot 30b8344).
 17. Negative average cash balance is a data property, not a bug (户均现金余额).
 18. Retrieval regression after corpus growth 15→20 metrics — attribution and follow-up documented.
@@ -202,16 +266,42 @@ Condensed:
 21. `make ask` and dashboard behavior boundaries (evaluation numbers do not appear in Grafana).
 22. `make train` blocked on this machine (no CUDA); training path not yet measured.
 23/24. Observability: QPS panels have no series by design (deterministic chain, 0 tokens).
-25. Session memory is in-process MemorySaver (lost on restart).
+25. Session memory defaults to the in-process MemorySaver (lost on restart); with `ATLAS_CHECKPOINT_DB` set it persists in the SQLite checkpoint (ADR-0020).
 26. dbt MetricFlow export is three-state, lossy by design: agg 14 / ratio 3 / unmapped 3 (SUM(a*b)) with reasons registered per item.
 27. FIBO L2 mapping covers 19/20 metrics; `total_trade_tax` gap registered as a to-do (needs a broader concept-closure).
 28. HTTP API v1 boundaries (see §6 above).
 29. Unsupported filter shapes (free-form two-metric comparison etc.) → clarification, never a guess.
+30. Dimension value domains are snapshot-state, not real-time (ADR-0016, batch B4).
+31. Gold-set counting corrected; the paraphrase set has **no structural gate**; plus a repo-wide inventory of stale counts (measured 2026-09-14): 120 JSON = 106 gold + 13 `pp-*` + `schema.json`; all 13 `pp-*` files fail the gold schema, so their exclusion from `validate_gold.py`'s glob is structurally required, not a defect. The real debt is on the paraphrase side (`eval/paraphrase_eval.py` uses `.get()`, so a misspelled key silently becomes `None` and is misattributed to the Planner; `--domain` is written into the report but never selects a model). The `base` field of the 13 `pp-*` files is only a grouping label, never resolved to a sample file, and 4 of them name a non-existent `gold-comm` — so `by_base` carries a key that traces back to nothing. Stale gold-set counts elsewhere are inventoried in two groups: **A = present-tense claims to fix** (`AGENTS.md:63`/`:271` — **fixed 2026-09-14 under user authorization**: both now defer to `make lint` instead of hardcoding a count, so future growth cannot make them stale again; still requires its own `contract` commit per AGENTS.md §14; `docs/atlas_query_test_cases.md:226`; three outreach drafts; live comments in `airflow/yaml_jobs/04_semantic_publish_eval.yaml:23-24`; `eval/spider/README.md:12`; the **status line** of `infra/adr/0010-eval-methodology.md:4`) and **B = dated records that must not be rewritten** (rewriting them would forge history, N1). Full text: [README.md §10 #31](README.md).
+32. Frontend adds a second toolchain without lifting any backend limit (ADR-0018, batch P0b, 2026-09-16; backfilled into this digest in the P1 batch): `workers=1` still holds (rate-limit buckets, audit writes and the SQLite single writer remain in-process); `uv sync` is no longer enough — node lives in nvm and is invisible to non-interactive shells, so all scripted calls must go through `make ui-*` (which fails loudly, never silently skips); a fresh clone has no `frontend/dist` (locally gitignored) — the API still starts, but the browser has no UI until `make ui-build`. Full text: [README.md §10 #32](README.md).
+33. Frontend P1 workbench — four honesty boundaries (ADR-0018 P1 batch, 2026-09-16): (a) truncation is only ever stated as **possible** (`row_count == limit` shows "may have been truncated by the Plan limit"; the definitive flag is not in the 0022 contract), while the 500-row table render cap is a stated frontend constant — the full-data exits are `atlas query --format json` (same read-only gateway) or a narrower `limit`; (b) **zero telemetry** — no reporting endpoint, no SDK, errors rendered verbatim; (c) P1 ships panel 1 only (**time-point note, corrected from P2, 2026-09-16**: at P1's delivery point every deep path rendered the same workbench; P2 has since landed the `/ask`, `/sessions` and `/governance/{6 sub-pages}` routes, while reports/snapshots and charts remain P3 — the SPA 200-HTML fallback is the 0018 criterion-7 capability, separate from routing); (d) the Bearer token is memory-only and lost on refresh (`make token ROLE=…` is the only issuance path). Full text: [README.md §10 #33](README.md).
+34. Frontend P2 governance console — four honesty boundaries (ADR-0018 P2 batch, 2026-09-16): (a) **the session timeline can only list sessions of the current run** (no data source for cross-restart, cross-tab history): the 0022 contract has no `/governance/sessions`-style endpoint, and the 0020 SQLite checkpoint is the agent's internal state store, not a queryable session directory — listing history would require a new read-only endpoint plus a ruling on its access scope (sessions contain raw questions, a sensitive surface), **not ruled on**; (b) **all governance endpoints require Bearer** (measured 2026-09-16: no-token request to `/api/v1/governance/policies` → 401) — the role matrix is unreachable without a token, so first activation *and* every post-refresh state require pasting a `make token` output first; (c) **the dev signing channel exists only under `make ui-dev`**: `POST /__dev/sign` is a vite dev-only middleware (`spawn uv run --env-file .env` calling `serving.auth.sign_token`, byte-for-byte the same as `make token`; the vite process never reads the secret), while `make serve-dev` and containers have no such endpoint and the panel degrades to "copy the make command + paste" — no second signing path is fabricated; (d) **the 6 governance sub-pages fire 6 concurrent requests on mount** (models / metrics / dimensions / synonyms / values / policies; tab switches do not refetch), `reports` / `snapshots` and the ReportDrawer belong to P3, and this batch of 6 is the premise of the 0022 decision-⑥ 240/min governance bucket — it must **not** be merged or lazily loaded to cut the request count. (**P3 time-point correction, 2026-09-16**: the `reports` / `snapshots` sub-pages and the ReportDrawer have since landed with P3; the governance plane's final form of 8 concurrent requests is now factual; the rest of this entry stands unchanged.) Full text: [README.md §10 #34](README.md).
+35. Chart wiring has landed (P3, ADR-0025, 2026-09-16) with three remaining capability boundaries: (a) **the time-axis column is authoritative only when declared by the compiler** — for `yoy`/`pop`/`cumulative` the x-axis rides on `Compiler.emitted_time_column` (into `render_chart`'s `time_columns` argument; the frontend never infers); the non-compiler path (`--llm` candidate chain) falls back to `_TIME_COLUMN_NAMES` and, on a hit, the spec `note` marks the provenance level (same source as the P3 append to KL #21); (b) **`yoy`/`pop` render the current period only — no multi-series comparison** (comparison values live in the data table and `note`; adding series would overturn ADR-0025 decision ⑥, a breaking spec change); (c) **chart data is always ≤ 200 points** (`MAX_CATEGORIES`; oversize degrades to a table with a note — not new in this batch). Division vs #21: #21 records rendering semantics (spec-level determinism, no pixels); this entry records wiring status and capability boundaries (ADR-0025 ruled 2026-09-14; wiring landed with P3, 2026-09-16) — the two must not be read merged. Full text: [README.md §10 #35](README.md).
 
 ## 9. Where to go next
 
 - [EVAL_REPORT.md](EVAL_REPORT.md) — machine-generated evaluation summary (bound to current HEAD).
 - [eval/gold/README.md](eval/gold/README.md) — gold-set structure, language tags, batch history, ruling-overturn audit note.
-- [infra/adr/](infra/adr/) — 11 ADRs, each with overturn conditions.
+- [infra/adr/](infra/adr/) — 25 numbered ADRs, each with overturn conditions (`ls infra/adr/0*.md | wc -l`; all 25 accepted as of 2026-09-14, when 0024/0025 were confirmed by the user). Implementation status (2026-09-16): 0017/0019/0020 (P-1), 0021 (P-2sec), 0022 (P-2api), 0023 (P0a), 0018's P0b + P1 + P2 + P3 batches and 0025's chart wiring are implemented; 0024 (Cube exporter, independent line) remains the only pending line. The mandated batch order is in closing note 3 of `infra/adr/0018-frontend-console.md`, and the per-batch work cards plus receipts are in `docs/design/dev-plan-0017-0025.md`.
+- [docs/design/](docs/design/) — implementation-level design pages (ADR-0015 lexicon extraction; frontend console plan; batch-execution dev plan for ADR-0017~0025).
 - [docs/GLOSSARY.md](docs/GLOSSARY.md), [docs/release-notes-v0.1.md](docs/release-notes-v0.1.md).
 - Chinese canonical README: [README.md](README.md).
+
+## 10. License
+
+- **Code**: `Apache-2.0` (full text in [`LICENSE`](LICENSE); copyright and third-party notices in [`NOTICE`](NOTICE)).
+- **Data & ontologies** (none of these are redistributed by Atlas; obtain each yourself under its original terms):
+  - TPC-DI source data: TPC benchmark terms; generated locally through PDGF (BANKMARK EULA) — see `data/raw/gen_tpcdi.sh`.
+  - TPC-DS kit (SF0.1): TPC EULA v2.2; clone instructions in `scripts/setup_tpcds.sh`.
+  - FIBO (FND+FBC+BE): MIT License (Copyright 2020 EDM Council); FIBO is a trademark of EDM Council; clone instructions in `data/fibo/README.md`.
+  - OMG Commons / LCC: RDF content is downloaded by the user (`data/fibo/vendor/` is not committed); its license terms are **not retained in this repository** — confirm with OMG before use. Only IRI identifier strings are committed.
+  - BIRD finance: public academic benchmark, historical reference only (ADR-0014).
+- **Dependencies**: declared in `pyproject.toml` / `uv.lock`; the GPLv2 / LGPL-3.0 database drivers were removed in P0a (ADR-0023). Machine-generated inventory: `make license-check REPORT=1` → [`exports/dependency-licenses.json`](exports/dependency-licenses.json) (GNU make rejects the `--report` long option, hence the variable form; `python -m infra.license_check --report` works as-is at script level).
+- **Third-party tools & assets**:
+  - `scripts/tpcds_kit_sf01.patch`: contains 48 lines of TPC-DS kit source (16 removed + 32 context) under TPC EULA v2.2; **not** Apache-2.0 (declaration block in the file header; `NOTICE` §2).
+  - Remotion (`docs/outreach-video/`): source-available, two-tier — Free License for individuals / for-profit organizations with up to 3 employees / non-profits; otherwise a Company License is required. `node_modules` and rendered videos are not committed (`NOTICE` §3).
+  - Committed media (`docs/contact-wechat.png`, `docs/outreach-wechat-assets/*`, etc.) is self-produced, no third-party assets.
+
+**Version boundary**: no `LICENSE` file exists in any historical tag (v0.1.0 / v0.1.1 / v0.1.3); the MIT text entered the trunk via `b547489` (merged in `14f210a`) and was replaced by the Apache-2.0 full text in the P0a batch (2026-09-16). Git history is not rewritten — use it as the authoritative reference.
+
+**TPC performance-result constraint** (TPC-DS kit EULA 4.c): timing/row-count figures in this README are Atlas' own pipeline measurements, not TPC tool benchmark results; if dsdgen/dsqgen performance figures are ever published, one of the three disclosures required by 4.c must be attached.

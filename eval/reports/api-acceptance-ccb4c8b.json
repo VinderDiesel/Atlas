@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "purpose": "HTTP API v1 真实链路验收（ADR-0012；与 e2e-acceptance 同数据口径）",
+  "head_sha": "ccb4c8b",
+  "snapshot_sha": "b933e20",
+  "created_at": "2026-09-16T014206Z",
+  "engine": "真实 Doris（eval/runner.execute_sql）+ 确定性链路（engine=stub）",
+  "transport": "fastapi TestClient（ASGI 全栈：pydantic 校验 + JWT + 序列化）",
+  "scenarios": [
+    {
+      "id": "A1",
+      "title": "问→编→问全链（只读 + EX）",
+      "goal": "gold-102 经 /plan→/compile→/ask，EX 与锁定快照一致",
+      "question": "按分支统计 2013 年佣金收入，列出前 5 名",
+      "plan": {
+        "metric": "commission_revenue",
+        "dimensions": [
+          "Branch"
+        ],
+        "time": {
+          "granularity": "year",
+          "value": 2013
+        },
+        "filters": [],
+        "order_by": [
+          {
+            "column": "commission_revenue",
+            "desc": true
+          }
+        ],
+        "limit": 5
+      },
+      "sql": "SELECT dim_broker.Branch AS Branch, SUM(fact_trades.Commission) AS commission_revenue FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2013 GROUP BY dim_broker.Branch ORDER BY commission_revenue DESC LIMIT 5",
+      "sql_readonly": "pass",
+      "kind": "answer",
+      "metric": "commission_revenue",
+      "row_count": 5,
+      "rows_sample": [
+        [
+          "jKgsNAQeUQpTwGTOJGUBqRQF",
+          "372849.61"
+        ],
+        [
+          null,
+          "172777.70"
+        ],
+        [
+          "wjYPZaGSUHUxxicvCRtQYjjLIIoEQx",
+          "99531.57"
+        ]
+      ],
+      "result_hash": "557479f4a0f2",
+      "gold_result_hash_prefix": "557479f4a0f2",
+      "executor_calls": 1
+    },
+    {
+      "id": "A2",
+      "title": "歧义反问（HTTP 化）",
+      "goal": "歧义问句经 HTTP → 200 + kind=clarify，不猜答",
+      "question": "最近交易情况怎么样？",
+      "kind": "clarify",
+      "clarification_kind": "unmatched",
+      "reasons": [
+        "无法确定指标口径（问句未命中任何指标同义词）"
+      ],
+      "executor_calls": 0
+    },
+    {
+      "id": "A3",
+      "title": "认证拦截",
+      "goal": "无 token / 伪造签名 → 401",
+      "missing_token_status": 401,
+      "forged_signature_status": 401
+    },
+    {
+      "id": "A4",
+      "title": "存活探针",
+      "goal": "/health 公开 200（记录实际快照绑定状态）",
+      "status": "ok",
+      "head_sha": "ccb4c8b",
+      "snapshot_sha": "ccb4c8b"
+    },
+    {
+      "id": "A5",
+      "title": "三角色行级差异（gold-146 载体）",
+      "goal": "hq_admin 全量 vs branch_manager 本分支：过滤生效 + 策略名可见且条件值不外泄",
+      "question": "按分支和客户等级统计 2015 年交易额，列出前 5 名",
+      "branch": "uHtbMrIxbLVfWHFhCIeAnTu",
+      "hq": {
+        "row_count": 5,
+        "rows_top5": [
+          [
+            3,
+            null,
+            "42454216.3900"
+          ],
+          [
+            2,
+            null,
+            "20963094.5100"
+          ],
+          [
+            1,
+            null,
+            "6408146.1400"
+          ],
+          [
+            null,
+            null,
+            "1449421.9300"
+          ],
+          [
+            3,
+            "uHtbMrIxbLVfWHFhCIeAnTu",
+            "787213.2800"
+          ]
+        ],
+        "result_hash": "ef4f389454e5",
+        "gold_result_hash_prefix": "ef4f389454e5",
+        "policy_effect": "行级策略已生效（角色 hq_admin，策略 rp_branch_visible）"
+      },
+      "branch_manager": {
+        "row_count": 2,
+        "rows_top5": [
+          [
+            3,
+            "uHtbMrIxbLVfWHFhCIeAnTu",
+            "787213.2800"
+          ],
+          [
+            2,
+            "uHtbMrIxbLVfWHFhCIeAnTu",
+            "137351.3600"
+          ]
+        ],
+        "policy_effect": "行级策略已生效（角色 branch_manager，策略 rp_branch_visible）"
+      }
+    },
+    {
+      "id": "A6",
+      "title": "会话身份冲突（HTTP 422）",
+      "goal": "同 session_id 换 token → 422 冲突文案（C2 指纹绑定生效）",
+      "session_id": "api-verify-a6-conflict",
+      "first_role": "branch_manager",
+      "second_role": "hq_admin",
+      "second_status": 422,
+      "detail": "会话身份冲突，请换新 session_id"
+    },
+    {
+      "id": "A7a",
+      "title": "零售档品类受限（category_analyst）",
+      "goal": "retail model + TN + Shoes/Electronics → 结果品类 ⊆ 受限集",
+      "question": "2000 年按门店城市和品类统计销售额，列出前 3 名",
+      "claims": {
+        "region": "TN",
+        "categories": [
+          "Shoes",
+          "Electronics"
+        ]
+      },
+      "row_count": 3,
+      "categories_seen": [
+        "Electronics",
+        "Shoes"
+      ],
+      "policy_effect": "行级策略已生效（角色 category_analyst，策略 rp_dept_visible）"
+    },
+    {
+      "id": "A7b",
+      "title": "跨域 Guard 拒绝（region_manager × finance）",
+      "goal": "不做 API 域校验表：谓词无 join 路径由 Guard 拒绝（kind=blocked）",
+      "question": "按分支和客户等级统计 2015 年交易额，列出前 5 名",
+      "claims": {
+        "region": "TN"
+      },
+      "kind": "blocked",
+      "block_reason": "UnsafeQuery: 策略引用表不在查询中且未提供语义模型（跨表谓词需 join 注入）：['dim_store']"
+    }
+  ],
+  "summary": {
+    "total": 8,
+    "passed": 8
+  }
+}

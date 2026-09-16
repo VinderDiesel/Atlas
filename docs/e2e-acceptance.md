@@ -10,7 +10,7 @@
 |---|---|
 | 验收日期 | 2026-09-03（报告 `created_at=2026-09-03T090836Z`，7 场景全量重跑） |
 | 数据快照 | `7d48dcb`（TPC-DI，dwd 8 表 24 万级行，见 data/snapshots/7d48dcb.meta.json） |
-| 执行引擎 | 真实 Doris（mysql.connector）+ LangGraph 状态机 + Guard 只读网关 |
+| 执行引擎 | 真实 Doris（`eval/runner.execute_sql`，P0a 起驱动为 pymysql）+ LangGraph 状态机 + Guard 只读网关 |
 | LLM | 未调用（注册域确定性链路；候选链模式仅 retrieve 确定性检索） |
 | 报告文件 | `eval/reports/e2e-acceptance.json`（schema_version=1） |
 | 结果 | 7/7 场景通过（6 场景 + handoff 人工接管；S7 多轮同构追问为 ADR-0014 ② 新增） |

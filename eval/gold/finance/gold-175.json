@@ -8,8 +8,8 @@
     "kind": "pop"
   },
   "expected_sql": null,
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "ebfe4d6b219c8d2b81a38859e36b7b98ddeb186e1e8a52d4ba673cb0cc74b9c6",
+  "snapshot_sha": "ccb4c8b",
   "tags": [
     "aggregation",
     "time_range",

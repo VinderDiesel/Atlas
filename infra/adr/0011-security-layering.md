@@ -106,7 +106,80 @@ per-user identity mode 联调成本未实测——需要明确 MVP 的安全交�
 
 ### 硬化边界如实收窄（README KL #28 ③ 同步）
 
-- 会话指纹/限流/审计均为进程内（uvicorn workers=1，多 worker = 多份状态）；
+- 会话指纹/限流/审计在本批（2026-09-05）均为进程内（uvicorn workers=1，多 worker
+  = 多份状态）——**2026-09-15 随 ADR-0020 决策 ⑧ 收窄**：会话轨迹/轮数/身份指纹
+  已入 SQLite checkpoint、不再分裂，仍为进程内态的只剩限流桶、审计写与 SQLite
+  单写者；
 - 审计 JSONL 为本地文件，非防篡改——生产需外置（README 口径不后退为「已生产」）；
 - 身份仍为本地签发 HS256 JWT（无 IdP）；「真实多租户 → gateway 认证先行」推翻
   条件仍未触发；Doris per-user identity 透传（0011 决策 4 独立项）不在本批范围。
+
+---
+
+## 落地注记：行级策略事实源二维化批次（2026-09-14，ADR-0021；沿 `:86` 与 ADR-0012:89 先例，不改裁定正文）
+
+### 决策 3 的 `broker` 项自写下起从未兑现（债务登记，不是美化）
+
+决策 3 的标题写「**三角色**验证成门禁」，正文实列 **5 个角色名**（hq_admin /
+region_manager / branch_manager / broker / compliance_auditor）。实测（2026-09-14）
+三方对照：
+
+| 角色 | `row_policy.yml`（权威源） | `ROLE_DIRECTORY`（`serving/auth.py:46-76`） | `rls-verify` 实跑档 |
+|---|---|---|---|
+| `hq_admin` | ✅ `:17-18` / `:33-34` | ✅ | ✅ 双域 |
+| `branch_manager` | ✅ `:36-37` | ✅ | ✅ 金融 |
+| `compliance_auditor` | ✅ `:42-43` | ✅ | ✅ 金融 |
+| `region_manager` | ✅ `:20-22` | ✅ | ✅ 零售 |
+| `category_analyst` | ✅ `:24-26` | ✅ | ✅ 零售 |
+| **`broker`** | ✅ `:39-40` | ❌ **未注册** | ❌ **未跑** |
+
+```
+$ ATLAS_JWT_SECRET=… python -c "from serving.auth import sign_token; sign_token('broker', {'brokerid': 1})"
+AuthError: 角色未注册：'broker'（ROLE_DIRECTORY 可加）
+```
+
+即决策 3 声称的 broker 门禁**从未存在过**：`row_policy.yml` 里有权威条件，但签发
+即拒，验证工具也没有这一档。`:86` 的硬化批次注记只声称「A5 三角色差异」，同样
+未触及 broker——两处都没有把这句声称标记为未兑现，按 N2 属既存债务，本节负责
+把它显式登记。
+
+兑现路径 = ADR-0021 决策 ④（`ROLE_DIRECTORY` → `RoleSpec` claims 契约注册表）+
+⑤（注册 `broker`、新增 `roles_for_policy`）+ ⑦（`rls_verify.run_finance` 增第 4
+角色档），落地批次 **P-2sec**（独立 `sec` 提交）。兑现日期与绑定报告 sha：
+**2026-09-16，`eval/reports/rls-verify-e0f2d29.json`**（金融节 `roles` 由 3 增至
+4——`broker` 在列；broker 档注入后 SQL 含 `dim_broker.brokerid = 5460`（brokerid
+取自实跑动态抽取，非硬编码），结果集 3 行 < hq_admin 5 行，金融差异集 3 → 4；
+`sign_token("broker", {"brokerid": 1})` 签发成功且 `condition ==
+"dim_broker.brokerid = 1"`，int 无引号渲染）。ADR-0021 代价 ④ 声明的
+「SF0.1 无法区分即如实报告」未触发：实测 broker 与 hq_admin 结果可区分，断言
+按行数差异成立。
+
+### 决策 2 的「策略是语义层一等对象」在运行时只兑现了一半
+
+`default_row_policy` 已按决策 2 写进语义层（`atlas_finance.ossie.yaml:101` =
+`rp_branch_visible`、`atlas_retail.ossie.yaml:75` = `rp_dept_visible`），但实测其
+**唯一消费方是校验期**（`semantic/governance_validate.py:195-198`，只检查引用的
+策略名存在）；运行期 `resolve_claims`（`serving/auth.py:286-336`）的策略名来自
+`ROLE_DIRECTORY` 的一维查表，不读语义模型。后果实测：
+
+```
+$ resolve_claims({'role': 'hq_admin', 'user_context': {}})
+ResolvedPolicy(role='hq_admin', policy_name='rp_branch_visible', condition='1=1', claims={})
+```
+
+零售域（`model=retail`）的 `hq_admin` 同样报 `rp_branch_visible`——谓词 `1=1`
+恰好无行过滤，所以**结果正确、归因错误**：`explanation.policy_effect` 与审计报告
+里的策略名与该行数据所属域的策略不符。ADR-0021 决策 ①②③ 把事实源二维化
+（域 → 策略来自 ossie `default_row_policy`，策略 → 角色 → 条件来自
+`row_policy.yml`），并给 `resolve_claims` / `resolve_policy` 增必填 `policy_name`。
+
+### 措辞矛盾同批注记（正文不改）
+
+- 决策 3 的「三角色」与实列 5 角色矛盾；`serving/rls_verify.py:1` docstring 同病
+  （`:17-22` 实列 5 角色，实跑为金融 3 档 + 零售 3 档）。P-2sec 落地时按实测档数
+  表述（金融 4 档 / 零售 3 档 / 去重 6 角色），**不再用固定数字做标题**——数字标题
+  每加一个角色就变成一次 N2。
+- 决策 5「被拒路径不外泄细节」不受本批影响：ADR-0021 只改策略名的解析来源，
+  `blocked` 的返回形态与 `policy_effect` 的「只给角色 + 策略名」口径均不变。
+- 决策 1 的纵深顺序不变：二维化后谓词仍由 Guard 注入并二次只读校验，行级层
+  与对象级（Polaris）RBAC 的组合端到端仍是代价段记录的未联调项。

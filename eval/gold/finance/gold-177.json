@@ -10,8 +10,8 @@
     "kind": "rank"
   },
   "expected_sql": null,
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": "0af5b5484c68dd6c0468ee69d970d9b65d7caaae177ee192b3967eb9ad54ed96",
+  "snapshot_sha": "ccb4c8b",
   "tags": [
     "aggregation",
     "dimension_group_by",

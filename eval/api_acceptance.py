@@ -13,7 +13,8 @@
     A2 歧义反问  ：gold-104 经 /ask → 200 + kind=clarify（CLI exit 1 语义的 HTTP
                      化），反问轮 SQL 不达执行器（独立 Agent 计数为零）
     A3 认证      ：无 token / 伪造签名 /ask → 401（JWT 中间件在真链生效）
-    A4 存活      ：/health 公开 200（记录 head_sha 与 snapshot_sha 实际值）
+    A4 存活      ：/health 公开 200（记录 head_sha 与 snapshot_sha 实际值）；
+                     根与前缀双挂点同 body（契约 v2 判据 2）
     A5 三角色差异：gold-146 经 /ask × hq_admin / branch_manager（分支取总部 Top
                      实测值，serving/rls_verify.py 同源逻辑）——行级过滤生效
                      （branch_manager 行数减少 + 全行分支匹配 + 本分支 Top 行不
@@ -21,10 +22,19 @@
                      （0011 不外泄）；hq_admin EX 与 gold-146 锚定 hash 一致
     A6 会话冲突  ：同 session_id 换 token（branch_manager → hq_admin）→ 422
                      「会话身份冲突」（C2 指纹绑定在 HTTP 层生效）
-    A7 零售+跨域 ：retail model + category_analyst（TN + Shoes/Electronics）→
-                     结果品类 ⊆ 受限集 + explanation 含 rp_dept_visible；
-                     region_manager × finance model → kind=blocked（Guard 无
-                     join 路径拒绝——0011 决策 4 不做 API 域校验表的真链证据）
+    A7 零售+跨域 ：retail model 双档——category_analyst（TN + Shoes/Electronics）
+                     → 结果品类 ⊆ 受限集 + explanation 含 rp_dept_visible；
+                     hq_admin → policy_effect 报 rp_dept_visible（域 → 策略按
+                     模型声明解析，修复旧写死 rp_branch_visible 的跨域误报）；
+                     region_manager × finance model → kind=error（身份策略解析
+                     失败：域不匹配，Guard 之前即拒——ADR-0021 判据 11/12）
+    A8 治理面+两桶：治理面 8 集合端点一轮全 200（信封 kind=governance.<名>）+
+                     两桶独立——注入极小业务桶（3/60）与宽松治理桶（10_000/60），
+                     8 次治理请求后业务 /ask 仍 200（若共享实例业务桶必先被打爆；
+                     ADR-0022 判据 4 的真链侧；单测侧见 test_api_contract_v2.py）
+    A9 Plan直执  ：/plan/execute 真链——/plan 产物原样回填执行，kind=answer、
+                     行集 hash 与 gold-102 锚定一致（EX 与快照一致），缺省
+                     session_id 回显为一次性随机键（ADR-0022 决策 ③/代价 ⑥）
 
 注入口径：与 e2e_acceptance.py 同构——真执行器（eval/runner.execute_sql）+ 锁定
 快照（2026-09-05 P7 后统一 29 表全量数据版本，最新入库锁定指纹 b933e20；A1-A4 历史
@@ -33,6 +43,7 @@
 meta」校验：代码 commit 后 HEAD 无 meta 属常态（数据未重装），api-verify 验证的是
 HTTP 面 + 真数据链等价性；503 语义已由 tests/test_api.py 契约覆盖。
 A7 零售档与 serving/rls_verify.py 零售域同 meta 同问句同 claims（载体单源互证）。
+契约 v2（ADR-0022）：全部调用点带 /api/v1 前缀（硬切，旧路径 404 由契约测试锁定）。
 
 输出：stdout + JSON 报告；场景断言失败 → 退出码 1。
 依赖：Doris up + 锁定快照表可查 + .env 有 ATLAS_JWT_SECRET。
@@ -57,6 +68,7 @@ from eval.runner import DOMAIN_MODELS, build_budget, execute_sql, git_short_sha
 from serving.api import create_app
 from serving.audit import AuditLog
 from serving.auth import sign_token
+from serving.ratelimit import RateLimiter
 from serving.rls_verify import (  # 零售载体与分支取值单源（rls-verify 同载体互证）
     RETAIL_CATEGORIES,
     RETAIL_QUESTION,
@@ -67,6 +79,10 @@ from serving.rls_verify import (  # 零售载体与分支取值单源（rls-veri
 REPO = Path(__file__).resolve().parent.parent
 GOLD_DIR = REPO / "eval" / "gold"
 SNAPSHOT_META = REPO / "data/snapshots" / "b933e20.meta.json"
+
+# 契约 v2 前缀（ADR-0022 决策 ①②）：业务面与治理面端点一律带前缀；`/health`
+# 双挂——A4 同时打根与前缀两个挂点并断言同 body（判据 2 的真链侧）。
+API = "/api/v1"
 
 # 场景问句与锚点（与 eval/gold/ 同源，防文档问句漂移）
 GOLD102_Q_ID = "gold-102"  # 命中：按分支统计 2013 年佣金收入 Top5
@@ -147,7 +163,7 @@ def _main() -> int:
     client, executor = _live_client()
     try:
         plan_resp = client.post(
-            "/plan", json={"question": gold102["question"]}, headers=_auth(token)
+            f"{API}/plan", json={"question": gold102["question"]}, headers=_auth(token)
         )
         assert plan_resp.status_code == 200, f"A1 /plan HTTP {plan_resp.status_code}"
         plan_body = plan_resp.json()
@@ -155,7 +171,7 @@ def _main() -> int:
         plan = plan_body["plan"]
         assert plan["metric"] == gold102["expected_metric"], "A1 metric 与 gold 标注不一致"
 
-        comp_resp = client.post("/compile", json=plan, headers=_auth(token))
+        comp_resp = client.post(f"{API}/compile", json=plan, headers=_auth(token))
         assert comp_resp.status_code == 200, f"A1 /compile HTTP {comp_resp.status_code}"
         sql = comp_resp.json()["sql"]
         upper = sql.upper()
@@ -164,7 +180,7 @@ def _main() -> int:
         ), f"A1 出口 SQL 含写语句：{sql}"
         assert "LIMIT" in upper, "A1 出口 SQL 缺 LIMIT（Guard 强制上限形态）"
 
-        ask_resp = client.post("/ask", json={"question": gold102["question"]}, headers=_auth(token))
+        ask_resp = client.post(f"{API}/ask", json={"question": gold102["question"]}, headers=_auth(token))
         assert ask_resp.status_code == 200, f"A1 /ask HTTP {ask_resp.status_code}"
         body = ask_resp.json()
         assert body["kind"] == "answer", f"A1 期望 answer，实际 {body['kind']}"
@@ -197,7 +213,7 @@ def _main() -> int:
     # ---- A2：歧义 /ask → 200 + kind=clarify（反问不执行 SQL）----
     client, executor = _live_client()
     try:
-        resp = client.post("/ask", json={"question": gold104["question"]}, headers=_auth(token))
+        resp = client.post(f"{API}/ask", json={"question": gold104["question"]}, headers=_auth(token))
         assert resp.status_code == 200, f"A2 /ask HTTP {resp.status_code}"
         body = resp.json()
         assert body["kind"] == "clarify", f"A2 期望 clarify，实际 {body['kind']}"
@@ -221,9 +237,9 @@ def _main() -> int:
     # ---- A3：认证（JWT 中间件在真链生效）----
     client, _ = _live_client()
     try:
-        no_token = client.post("/ask", json={"question": gold102["question"]})
+        no_token = client.post(f"{API}/ask", json={"question": gold102["question"]})
         forged = client.post(
-            "/ask",
+            f"{API}/ask",
             json={"question": gold102["question"]},
             headers=_auth(sign_token("hq_admin", {}, secret="api-verify-wrong-secret")),
         )
@@ -241,21 +257,26 @@ def _main() -> int:
     finally:
         client.close()
 
-    # ---- A4：/health 公开面（如实记录当前 HEAD 的快照绑定状态）----
+    # ---- A4：/health 公开面 + 双挂同 body（如实记录当前 HEAD 的快照绑定状态）----
     client, _ = _live_client()
     try:
-        resp = client.get("/health")
+        resp = client.get("/health")  # 根挂点：compose healthcheck 的既有入口
         assert resp.status_code == 200, f"A4 /health HTTP {resp.status_code}"
+        r_pre = client.get(f"{API}/health")  # 前缀挂点（决策 ① 双挂同一 handler）
+        assert r_pre.status_code == 200, f"A4 {API}/health HTTP {r_pre.status_code}"
+        assert resp.json() == r_pre.json(), "A4 双挂点 body 不一致（同一 handler 应恒同）"
         health = resp.json()
         assert health["status"] == "ok"
         scenarios.append(
             {
                 "id": "A4",
-                "title": "存活探针",
-                "goal": "/health 公开 200（记录实际快照绑定状态）",
+                "title": "存活探针（/health 双挂同 body）",
+                "goal": "/health 根与前缀挂点公开 200 且 body 相同（记录实际快照绑定状态）",
                 "status": health["status"],
                 "head_sha": health["head_sha"],
                 "snapshot_sha": health["snapshot_sha"],
+                "dual_mount_root_status": resp.status_code,
+                "dual_mount_prefixed_status": r_pre.status_code,
             }
         )
     finally:
@@ -266,7 +287,7 @@ def _main() -> int:
     try:
         gold146 = load_gold(GOLD146_Q_ID)
         r_hq = client.post(
-            "/ask", json={"question": gold146["question"]}, headers=_auth(sign_token("hq_admin", {}))
+            f"{API}/ask", json={"question": gold146["question"]}, headers=_auth(sign_token("hq_admin", {}))
         )
         assert r_hq.status_code == 200, f"A5 hq_admin /ask HTTP {r_hq.status_code}"
         hq = r_hq.json()
@@ -278,7 +299,7 @@ def _main() -> int:
         # 分支值取总部 Top 实测值（rls-verify 同源：无空格值才可安全注入）
         branch = pick_branch_value(hq_rows, columns)
         r_bm = client.post(
-            "/ask",
+            f"{API}/ask",
             json={"question": gold146["question"]},
             headers=_auth(sign_token("branch_manager", {"branch": branch})),
         )
@@ -329,13 +350,13 @@ def _main() -> int:
         # 首角色用实测存在的分支值（与 A5/rls-verify 同载体）；422 断言只依赖
         # 两次 claims 指纹不同，分支值真假不影响冲突语义
         r1 = client.post(
-            "/ask",
+            f"{API}/ask",
             json={"question": gold146_q, "session_id": sid},
             headers=_auth(sign_token("branch_manager", {"branch": "uHtbMrIxbLVfWHFhCIeAnTu"})),
         )
         assert r1.status_code == 200, f"A6 首绑 /ask HTTP {r1.status_code}"
         r2 = client.post(
-            "/ask",
+            f"{API}/ask",
             json={"question": gold146_q, "session_id": sid},
             headers=_auth(sign_token("hq_admin", {})),
         )
@@ -357,7 +378,7 @@ def _main() -> int:
     finally:
         client.close()
 
-    # ---- A7：零售档行级受限 + 跨域 Guard 拒绝（0011 决策 4 真链证据）----
+    # ---- A7：零售档（域内策略按模型声明）+ 跨域身份拒绝（ADR-0021 真链证据）----
     client, _ = _live_client(domain="retail")
     try:
         ca_token = sign_token(
@@ -365,7 +386,7 @@ def _main() -> int:
             {"region": RETAIL_REGION, "categories": list(RETAIL_CATEGORIES)},
         )
         r_ca = client.post(
-            "/ask",
+            f"{API}/ask",
             json={"question": RETAIL_QUESTION, "model": "retail"},
             headers=_auth(ca_token),
         )
@@ -393,32 +414,163 @@ def _main() -> int:
                 "policy_effect": ca_effect,
             }
         )
+
+        # A7c 零售 hq_admin：域 → 策略来自 atlas_retail 的 default_row_policy
+        # （rp_dept_visible）——ADR-0021 判据 11，修复旧 ROLE_DIRECTORY 写死
+        # rp_branch_visible 导致的跨域误报（谓词 1=1 无过滤故结果对、归因错）
+        r_hq = client.post(
+            f"{API}/ask",
+            json={"question": RETAIL_QUESTION, "model": "retail"},
+            headers=_auth(sign_token("hq_admin", {})),
+        )
+        assert r_hq.status_code == 200, f"A7c 零售 hq_admin /ask HTTP {r_hq.status_code}"
+        hq_retail = r_hq.json()
+        assert hq_retail["kind"] == "answer", f"A7c 期望 answer，实际 {hq_retail['kind']}"
+        hq_effect = str(hq_retail["explanation"]["policy_effect"])
+        assert "hq_admin" in hq_effect and "rp_dept_visible" in hq_effect, (
+            f"A7c 生效句缺角色/策略名：{hq_effect}"
+        )
+        assert "rp_branch_visible" not in hq_effect, f"A7c 跨域策略名误报：{hq_effect}"
+        scenarios.append(
+            {
+                "id": "A7c",
+                "title": "零售档策略名按域（hq_admin）",
+                "goal": "retail model + hq_admin → policy_effect 报 rp_dept_visible（判据 11）",
+                "question": RETAIL_QUESTION,
+                "row_count": hq_retail["row_count"],
+                "policy_effect": hq_effect,
+            }
+        )
     finally:
         client.close()
 
-    # A7b 跨域拒绝：region_manager（零售策略角色）× finance model → Guard 无 join 路径
-    client, _ = _live_client()
+    # A7b 跨域身份拒绝：region_manager（零售策略角色）× finance model →
+    # 身份策略解析失败（域不匹配）→ kind=error，零 SQL 达执行器（ADR-0021
+    # 判据 12；旧行为是 Guard 兜底拒绝（blocked），新行为在 Guard 之前按域拒绝）
+    client, executor = _live_client()
     try:
         gold146_q = load_gold(GOLD146_Q_ID)["question"]
         r_x = client.post(
-            "/ask",
+            f"{API}/ask",
             json={"question": gold146_q},
             headers=_auth(sign_token("region_manager", {"region": RETAIL_REGION})),
         )
         assert r_x.status_code == 200, f"A7b 跨域 /ask HTTP {r_x.status_code}"
         cross = r_x.json()
-        assert cross["kind"] == "blocked", f"A7b 期望 blocked，实际 {cross['kind']}"
-        reason = str(cross["block_reason"] or "")
-        assert "UnsafeQuery" in reason, f"A7b 拒绝原因缺 Guard 证据：{reason}"
+        assert cross["kind"] == "error", f"A7b 期望 error，实际 {cross['kind']}"
+        reason = str(cross["error"] or "")
+        assert "域不匹配" in reason, f"A7b 拒绝原因缺域不匹配证据：{reason}"
+        assert executor.calls == [], (
+            f"A7b Guard 之前即拒：零 SQL 应达执行器，实际 {executor.calls}"
+        )
         scenarios.append(
             {
                 "id": "A7b",
-                "title": "跨域 Guard 拒绝（region_manager × finance）",
-                "goal": "不做 API 域校验表：谓词无 join 路径由 Guard 拒绝（kind=blocked）",
+                "title": "跨域身份拒绝（region_manager × finance）",
+                "goal": (
+                    "身份策略解析失败：域不匹配 → kind=error 且零 SQL 达执行器"
+                    "（Guard 之前即拒）"
+                ),
                 "question": gold146_q,
                 "claims": {"region": RETAIL_REGION},
                 "kind": cross["kind"],
-                "block_reason": reason,
+                "error": reason,
+                "executed_sql_count": len(executor.calls),
+            }
+        )
+    finally:
+        client.close()
+
+    # ---- A8：治理面一轮（8 集合全 200）+ 两桶独立（ADR-0022 判据 4/5 真链侧）----
+    # 注入面刻意非对称：业务桶 3/60 极小、治理桶 10_000/60 宽松。若两桶共享实例，
+    # 先发的 8 次治理请求必然先把业务桶打爆（第 4 次即 429）；全 200 且其后业务
+    # 请求仍 200，即证明两桶独立（决策 ⑥）。治理面只读文件与产物目录，不触发
+    # agent 构造（决策 ④：本场景注入的 agent 全程零调用）。
+    meta = json.loads(SNAPSHOT_META.read_text(encoding="utf-8"))
+    executor = CountingExecutor()
+    agent = DataAgent(executor=executor, budget=build_budget(meta), snapshot_meta=meta)
+    client = TestClient(
+        create_app(
+            agent_factory=lambda _model: agent,
+            audit=AuditLog(enabled=False),
+            rate_limiter=RateLimiter(max_requests=3, window_seconds=60),
+            governance_rate_limiter=RateLimiter(max_requests=10_000, window_seconds=60),
+        )
+    )
+    try:
+        gov_endpoints = [
+            ("models", f"{API}/governance/models", None),
+            ("metrics", f"{API}/governance/metrics", {"model": "finance"}),
+            ("dimensions", f"{API}/governance/dimensions", {"model": "finance"}),
+            ("synonyms", f"{API}/governance/synonyms", {"locale": "zh_cn"}),
+            ("values", f"{API}/governance/values", None),
+            ("policies", f"{API}/governance/policies", None),
+            ("reports", f"{API}/governance/reports", None),
+            ("snapshots", f"{API}/governance/snapshots", None),
+        ]
+        gov_status: dict[str, int] = {}
+        gov_kind: dict[str, str] = {}
+        for name, url, params in gov_endpoints:
+            r = client.get(url, params=params, headers=_auth(token))
+            assert r.status_code == 200, f"A8 governance/{name} HTTP {r.status_code}"
+            body = r.json()
+            assert body["kind"] == f"governance.{name}", (
+                f"A8 governance/{name} 信封 kind 异常：{body['kind']}"
+            )
+            gov_status[name], gov_kind[name] = r.status_code, body["kind"]
+        r_ask = client.post(
+            f"{API}/ask", json={"question": gold102["question"]}, headers=_auth(token)
+        )
+        assert r_ask.status_code == 200, (
+            f"A8 治理请求后业务面 HTTP {r_ask.status_code}——两桶串了（业务桶被治理消耗）"
+        )
+        scenarios.append(
+            {
+                "id": "A8",
+                "title": "治理面一轮 + 两桶独立",
+                "goal": "8 集合全 200（信封 kind=governance.<名>）且治理请求不消耗业务桶（判据 4）",
+                "business_bucket_capacity": 3,
+                "governance_bucket_capacity": 10_000,
+                "governance_status": gov_status,
+                "governance_kind": gov_kind,
+                "business_ask_after_governance_status": r_ask.status_code,
+            }
+        )
+    finally:
+        client.close()
+
+    # ---- A9：/plan/execute 真链（Plan 直接执行，EX 与快照一致；ADR-0022 决策 ③）----
+    client, executor = _live_client()
+    try:
+        plan_resp = client.post(
+            f"{API}/plan", json={"question": gold102["question"]}, headers=_auth(token)
+        )
+        assert plan_resp.status_code == 200, f"A9 /plan HTTP {plan_resp.status_code}"
+        plan = plan_resp.json()["plan"]
+        ex_resp = client.post(f"{API}/plan/execute", json=plan, headers=_auth(token))
+        assert ex_resp.status_code == 200, f"A9 /plan/execute HTTP {ex_resp.status_code}"
+        body = ex_resp.json()
+        assert body["kind"] == "answer", f"A9 期望 answer，实际 {body['kind']}"
+        assert body["session_id"], "A9 缺省 session_id 必须回显（一次性随机键，代价⑥）"
+        assert body["row_count"] == plan["limit"], f"A9 行数 ≠ LIMIT：{body['row_count']}"
+        assert executor.calls, "A9 answer 必须到达真实执行器"
+        assert result_hash(list(body["rows"])) == gold102["result_hash"][:12], (
+            "A9 行集 hash 与 gold-102 锚定不一致（EX 漂移）"
+        )
+        scenarios.append(
+            {
+                "id": "A9",
+                "title": "Plan 直接执行（/plan/execute 真链）",
+                "goal": "/plan 产物原样回填执行：kind=answer + EX 与锁定快照一致",
+                "plan": plan,
+                "kind": body["kind"],
+                "question_text": body["question"],
+                "row_count": body["row_count"],
+                "rows_sample": body["rows"][:3],
+                "result_hash": result_hash(list(body["rows"])),
+                "gold_result_hash_prefix": gold102["result_hash"][:12],
+                "session_id_echoed": body["session_id"],
+                "executor_calls": len(executor.calls),
             }
         )
     finally:
@@ -426,7 +578,7 @@ def _main() -> int:
 
     report = {
         "schema_version": 1,
-        "purpose": "HTTP API v1 真实链路验收（ADR-0012；与 e2e-acceptance 同数据口径）",
+        "purpose": "HTTP API 真实链路验收（ADR-0012 服务面 + ADR-0022 URL 契约 v2；与 e2e-acceptance 同数据口径）",
         "head_sha": sha,
         "snapshot_sha": json.loads(SNAPSHOT_META.read_text(encoding="utf-8"))["sha"],
         "created_at": ts,

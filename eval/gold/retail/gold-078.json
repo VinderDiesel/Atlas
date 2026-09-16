@@ -6,11 +6,12 @@
   "expected_time": null,
   "expected_comparison": null,
   "expected_sql": null,
-  "result_hash": "<待执行后填写>",
-  "snapshot_sha": "<待锁定后填写>",
+  "result_hash": null,
+  "snapshot_sha": "ccb4c8b",
   "tags": [
-    "comparison",
-    "clarify"
+    "ambiguous",
+    "clarification",
+    "comparison"
   ],
   "ambiguous": true,
   "clarification": "同比需要绝对时间锚点（固定快照评测下相对时间会漂移），请指定具体年份",

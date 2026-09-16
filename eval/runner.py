@@ -37,16 +37,23 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import mysql.connector
+import pymysql
 
 from agent.compiler import Compiler, Plan, SemanticModel, TimeSpec
 from agent.planner import ClarificationRequest, Planner
-from agent.security.sql_guard import Budget, enforce
+from agent.security.sql_guard import Budget, UnsafeQuery, enforce
+
+# sha 身份与快照目录的单一事实源（ADR-0019 决策 ②）。两个名字保留在本模块
+# 命名空间是刻意的向后兼容：既有 `from eval.runner import …` 消费方零改动。
+# 必须写成 `X as X` 的**显式再导出**形式：mypy strict 默认 `--no-implicit-reexport`，
+# 裸 import 只算本模块内部使用，消费方会拿到 attr-defined 错误（实测 13 条），
+# 使这条兼容承诺在运行时成立、在类型检查层破功。判据 5(c) 因此同时断言 mypy 干净。
+from data.identity import SNAPSHOT_DIR as SNAPSHOT_DIR
+from data.identity import git_short_sha as git_short_sha
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GOLD_DIR = REPO_ROOT / "eval" / "gold"
 REPORT_DIR = REPO_ROOT / "eval" / "reports"
-SNAPSHOT_DIR = REPO_ROOT / "data" / "snapshots"
 
 # 域 → 语义模型（与 eval/gold/<domain>/ 目录一一对应）
 DOMAIN_MODELS = {
@@ -59,26 +66,6 @@ TZ = timezone(timedelta(hours=8))  # 契约要求：时间戳显式 +08:00
 PLACEHOLDER_HASH = "<待执行后填写>"
 PLACEHOLDER_SHA = "<待锁定后填写>"
 MAX_ROWS = 10_000  # Guard 强制行数上限（gold SQL 自带更小 LIMIT，不受影响）
-
-
-def git_short_sha() -> str:
-    """当前 HEAD 短 sha：报告文件名与快照绑定键。
-
-    环境变量 ATLAS_GIT_SHA 优先（容器/无 .git 环境的身份注入，见
-    infra/docker/api/Dockerfile 与 docker-compose atlas-api）；未设置时走
-    git 命令（本地/CI 行为不变）。
-    """
-    injected = os.environ.get("ATLAS_GIT_SHA", "").strip()
-    if injected:
-        return injected
-    out = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return out.stdout.strip()
 
 
 def verify_snapshot() -> None:
@@ -175,12 +162,12 @@ def execute_sql(sql: str) -> tuple[list[tuple[Any, ...]], list[str]]:
     连接参数走环境变量（AGENTS.md 第 13 节，本地开发默认 root 空密码，
     .env 可覆盖：DORIS_HOST/DORIS_PORT/DORIS_USER/DORIS_PASSWORD）。
     """
-    conn = mysql.connector.connect(
+    conn = pymysql.connect(
         host=os.environ.get("DORIS_HOST", "127.0.0.1"),
         port=int(os.environ.get("DORIS_PORT", "9030")),
         user=os.environ.get("DORIS_USER", "root"),
         password=os.environ.get("DORIS_PASSWORD", ""),
-        connection_timeout=15,
+        connect_timeout=15,
     )
     try:
         cursor = conn.cursor()
@@ -264,7 +251,14 @@ def evaluate(
 
     # 编译 → Guard → 执行（顺序不可调换，红线 N3）
     sql, _ = compiler.compile(plan)
-    guarded, _ = enforce(sql, budget=budget)
+    try:
+        guarded, _ = enforce(sql, budget=budget)
+    except UnsafeQuery as exc:
+        # Guard 拒绝记为 blocked 态，不中断整轮（ADR-0017 判据 3）。blocked 是安全
+        # 网关拦下（SQL 未落库），与下方执行失败分开——exec_errors 语义不含它。
+        result["guard"] = "blocked"
+        result["guard_reason"] = f"{type(exc).__name__}: {exc}"
+        return result
     try:
         rows, columns = execute_sql(guarded)
     except Exception as exc:  # noqa: BLE001 - 执行失败记录到报告，不中断整轮
@@ -292,7 +286,7 @@ def evaluate(
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, str | int]:
-    """单域汇总：Plan Acc / clarify / EX 计数（只输出实测计数，不做任何推断）。"""
+    """单域汇总：Plan Acc / clarify / EX / Guard blocked 计数（只输出实测计数，不做任何推断）。"""
     non_ambiguous = [r for r in results if not r["ambiguous"]]
     ambiguous = [r for r in results if r["ambiguous"]]
     plan_ok = sum(1 for r in non_ambiguous if r.get("plan_ok"))
@@ -301,6 +295,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, str | int]:
     ex_fail = sum(1 for r in non_ambiguous if r.get("ex") == "fail")
     ex_anchored = sum(1 for r in non_ambiguous if r.get("ex") == "anchored")
     errors = sum(1 for r in results if "error" in r)
+    guard_blocked = sum(1 for r in results if r.get("guard") == "blocked")
     return {
         "total": len(results),
         "plan_acc": f"{plan_ok}/{len(non_ambiguous)}",
@@ -308,6 +303,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, str | int]:
         "ex": f"{ex_pass}/{ex_pass + ex_fail}" if ex_pass + ex_fail else "n/a(首轮锚定)",
         "ex_anchored": ex_anchored,
         "exec_errors": errors,
+        "guard_blocked": guard_blocked,
     }
 
 

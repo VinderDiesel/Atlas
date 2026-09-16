@@ -1,0 +1,257 @@
+{
+  "sha": "e0f2d29",
+  "snapshot_sha": "ccb4c8b",
+  "snapshot_source": "latest",
+  "snapshot_bound_to_head": false,
+  "domains": [
+    "finance",
+    "retail"
+  ],
+  "finance": {
+    "question": "按分支和客户等级统计 2015 年交易额，列出前 5 名",
+    "gold_file": "eval/gold/finance/gold-146.json",
+    "auditor_max_tier": 3,
+    "broker_claims": {
+      "brokerid": 5460
+    },
+    "roles": {
+      "hq_admin": {
+        "role": "hq_admin",
+        "policy_name": "rp_branch_visible",
+        "condition": "1=1",
+        "sql": "SELECT dim_customer.Tier AS Tier, dim_broker.Branch AS Branch, SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2015 AND 1 = 1 GROUP BY dim_customer.Tier, dim_broker.Branch ORDER BY total_trade_value DESC LIMIT 5",
+        "columns": [
+          "Tier",
+          "Branch",
+          "total_trade_value"
+        ],
+        "row_count": 5,
+        "rows_top5": [
+          [
+            3,
+            null,
+            "42454216.3900"
+          ],
+          [
+            2,
+            null,
+            "20963094.5100"
+          ],
+          [
+            1,
+            null,
+            "6408146.1400"
+          ],
+          [
+            null,
+            null,
+            "1449421.9300"
+          ],
+          [
+            3,
+            "uHtbMrIxbLVfWHFhCIeAnTu",
+            "787213.2800"
+          ]
+        ]
+      },
+      "branch_manager": {
+        "role": "branch_manager",
+        "policy_name": "rp_branch_visible",
+        "condition": "dim_broker.branch = 'uHtbMrIxbLVfWHFhCIeAnTu'",
+        "sql": "SELECT dim_customer.Tier AS Tier, dim_broker.Branch AS Branch, SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2015 AND dim_broker.branch = 'uHtbMrIxbLVfWHFhCIeAnTu' GROUP BY dim_customer.Tier, dim_broker.Branch ORDER BY total_trade_value DESC LIMIT 5",
+        "columns": [
+          "Tier",
+          "Branch",
+          "total_trade_value"
+        ],
+        "row_count": 2,
+        "rows_top5": [
+          [
+            3,
+            "uHtbMrIxbLVfWHFhCIeAnTu",
+            "787213.2800"
+          ],
+          [
+            2,
+            "uHtbMrIxbLVfWHFhCIeAnTu",
+            "137351.3600"
+          ]
+        ]
+      },
+      "compliance_auditor": {
+        "role": "compliance_auditor",
+        "policy_name": "rp_branch_visible",
+        "condition": "dim_customer.tier <= 3",
+        "sql": "SELECT dim_customer.Tier AS Tier, dim_broker.Branch AS Branch, SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2015 AND dim_customer.tier <= 3 GROUP BY dim_customer.Tier, dim_broker.Branch ORDER BY total_trade_value DESC LIMIT 5",
+        "columns": [
+          "Tier",
+          "Branch",
+          "total_trade_value"
+        ],
+        "row_count": 5,
+        "rows_top5": [
+          [
+            3,
+            null,
+            "42454216.3900"
+          ],
+          [
+            2,
+            null,
+            "20963094.5100"
+          ],
+          [
+            1,
+            null,
+            "6408146.1400"
+          ],
+          [
+            3,
+            "uHtbMrIxbLVfWHFhCIeAnTu",
+            "787213.2800"
+          ],
+          [
+            3,
+            "sxajbAsbUuGjSqwGxHKZUywGQk ",
+            "783796.4500"
+          ]
+        ]
+      },
+      "broker": {
+        "role": "broker",
+        "policy_name": "rp_branch_visible",
+        "condition": "dim_broker.brokerid = 5460",
+        "sql": "SELECT dim_customer.Tier AS Tier, dim_broker.Branch AS Branch, SUM(fact_trades.Quantity * fact_trades.TradePrice) AS total_trade_value FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2015 AND dim_broker.brokerid = 5460 GROUP BY dim_customer.Tier, dim_broker.Branch ORDER BY total_trade_value DESC LIMIT 5",
+        "columns": [
+          "Tier",
+          "Branch",
+          "total_trade_value"
+        ],
+        "row_count": 3,
+        "rows_top5": [
+          [
+            3,
+            "VBgkUJahJpPuFsiPvRlv",
+            "323381.1100"
+          ],
+          [
+            2,
+            "VBgkUJahJpPuFsiPvRlv",
+            "259670.7200"
+          ],
+          [
+            1,
+            "VBgkUJahJpPuFsiPvRlv",
+            "82171.7300"
+          ]
+        ]
+      }
+    }
+  },
+  "retail": {
+    "question": "2000 年按门店城市和品类统计销售额，列出前 3 名",
+    "claims": {
+      "region_manager": {
+        "region": "TN"
+      },
+      "category_analyst": {
+        "region": "TN",
+        "categories": [
+          "Shoes",
+          "Electronics"
+        ]
+      },
+      "note": "claims 值取自 eval/gold/retail/data-profile.md 实测值域"
+    },
+    "roles": {
+      "hq_admin": {
+        "role": "hq_admin",
+        "policy_name": "rp_dept_visible",
+        "condition": "1=1",
+        "sql": "SELECT dim_item.i_category AS i_category, dim_store.s_city AS s_city, SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk INNER JOIN atlas.dwd.dim_item AS dim_item ON store_sales.ss_item_sk = dim_item.i_item_sk INNER JOIN atlas.dwd.dim_store AS dim_store ON store_sales.ss_store_sk = dim_store.s_store_sk WHERE dim_date.d_year = 2000 AND 1 = 1 GROUP BY dim_item.i_category, dim_store.s_city ORDER BY total_sales_price DESC LIMIT 3",
+        "columns": [
+          "i_category",
+          "s_city",
+          "total_sales_price"
+        ],
+        "row_count": 3,
+        "rows_top5": [
+          [
+            "Shoes",
+            "Midway",
+            "7430522.63"
+          ],
+          [
+            "Music",
+            "Midway",
+            "7379193.13"
+          ],
+          [
+            "Men",
+            "Midway",
+            "7362916.73"
+          ]
+        ]
+      },
+      "region_manager": {
+        "role": "region_manager",
+        "policy_name": "rp_dept_visible",
+        "condition": "dim_store.s_state = 'TN'",
+        "sql": "SELECT dim_item.i_category AS i_category, dim_store.s_city AS s_city, SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk INNER JOIN atlas.dwd.dim_item AS dim_item ON store_sales.ss_item_sk = dim_item.i_item_sk INNER JOIN atlas.dwd.dim_store AS dim_store ON store_sales.ss_store_sk = dim_store.s_store_sk WHERE dim_date.d_year = 2000 AND dim_store.s_state = 'TN' GROUP BY dim_item.i_category, dim_store.s_city ORDER BY total_sales_price DESC LIMIT 3",
+        "columns": [
+          "i_category",
+          "s_city",
+          "total_sales_price"
+        ],
+        "row_count": 3,
+        "rows_top5": [
+          [
+            "Shoes",
+            "Midway",
+            "7430522.63"
+          ],
+          [
+            "Music",
+            "Midway",
+            "7379193.13"
+          ],
+          [
+            "Men",
+            "Midway",
+            "7362916.73"
+          ]
+        ]
+      },
+      "category_analyst": {
+        "role": "category_analyst",
+        "policy_name": "rp_dept_visible",
+        "condition": "dim_store.s_state = 'TN' AND dim_item.i_category IN ('Shoes', 'Electronics')",
+        "sql": "SELECT dim_item.i_category AS i_category, dim_store.s_city AS s_city, SUM(store_sales.ss_ext_sales_price) AS total_sales_price FROM atlas.dwd.store_sales AS store_sales INNER JOIN atlas.dwd.date_dim AS dim_date ON store_sales.ss_sold_date_sk = dim_date.d_date_sk INNER JOIN atlas.dwd.dim_item AS dim_item ON store_sales.ss_item_sk = dim_item.i_item_sk INNER JOIN atlas.dwd.dim_store AS dim_store ON store_sales.ss_store_sk = dim_store.s_store_sk WHERE dim_date.d_year = 2000 AND (dim_store.s_state = 'TN' AND dim_item.i_category IN ('Shoes', 'Electronics')) GROUP BY dim_item.i_category, dim_store.s_city ORDER BY total_sales_price DESC LIMIT 3",
+        "columns": [
+          "i_category",
+          "s_city",
+          "total_sales_price"
+        ],
+        "row_count": 3,
+        "rows_top5": [
+          [
+            "Shoes",
+            "Midway",
+            "7430522.63"
+          ],
+          [
+            "Electronics",
+            "Midway",
+            "7198684.21"
+          ],
+          [
+            "Shoes",
+            "Fairview",
+            "1491147.93"
+          ]
+        ]
+      }
+    }
+  },
+  "note": "各域同一问句经同一编译器/Guard 链，仅 JWT 角色不同；谓词注入发生在 SQL 层（Guard 别名对齐后二次只读校验），非应用层过滤。零售档 region_manager（州=TN）与 hq_admin 结果一致：SF0.1 单州数据下州谓词无过滤效果（数据事实，差异验证由 category_analyst 品类受限承担）。"
+}

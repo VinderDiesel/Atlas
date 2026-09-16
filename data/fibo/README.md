@@ -97,5 +97,5 @@ cd fibo-src && git sparse-checkout set FND FBC BE && cd ..
 ## 许可与署名
 
 - FIBO：MIT License（Copyright 2020 EDM Council）；FIBO 为 EDM Council 商标
-- OMG Commons / LCC：OMG 规范发布物，按 OMG 条款使用（研究用途）
+- OMG Commons / LCC：RDF 内容由使用者自行下载（本仓不入库）；许可条款未在本仓留存文本，使用前需自行向 OMG 确认；本仓只入库 IRI 标识符字符串
 - 本体 IRI 均保留原始命名空间，映射文件不改变本体内容

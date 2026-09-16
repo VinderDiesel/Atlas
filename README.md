@@ -120,6 +120,7 @@ Atlas 是一个**以真实可落地为目标构建的金融语义数据系统**�
 | Python | 3.11 | 主开发语言 |
 | uv 或 pip | 最新 | 依赖管理（推荐 uv） |
 | Git | ≥ 2.40 | 语义层版本控制 |
+| Node.js（可选） | ≥ 20 | 仅前端控制台需要（P0b 已落工程边界，界面属 P1~P3）：`make ui-check` 门槛 / `make ui-build` 构建；node 经 nvm 安装时 Makefile 自动探测注入 PATH，未装则明确报错退出（ADR-0018） |
 | 内存 | **建议 ≥ 16GB** | Doris FE+BE 双进程内存压力较大（ADR-0004 有降级路径） |
 | 显卡（可选） | 单卡 24G 起 | 仅 LoRA 微调阶段需要；CPU 可跑通 P0–P1 |
 
@@ -176,7 +177,7 @@ make export
 - [x] Day 25 Polaris 层 RBAC（纵深第二层验证）：同一 catalog（atlas，25 表）两个 principal——root 全可见；atlas_analyst（受限只读，仅授 dwd.dim_broker/dim_customer 表级权限）list_namespaces/list_tables Forbidden（防枚举）、load 授权表 OK、load fact_trades Forbidden，报告 `eval/reports/polaris-rbac-7d48dcb.json`，截图 `docs/screenshots/polaris-rbac.png`
 - [x] Day 26 元数据抽取器：`metadata/parser.py` 确定性抽取（sqlglot Tokenizer 提注释规避字符串内 `--` 误判 + AST 提结构），25 个 SQL 脚本（sql/dwd 8 + loader 生成的 tpcdi ODS DDL 17）实测：dataset 候选 25（9 已注册）、measure 候选 42（13 已注册）、聚合 metric 候选 1（`daily_net` 账户日净额，未注册=新候选池）；主键/代理键/旗标/建库语句与窗口函数正确排除，候选不产已注册对象（known 标记防 N8），报告 `eval/reports/metadata-extract-7d48dcb.json`；候选≠发布（Day 27 人工审核）；TPC-DS 脚本随 ADR-0006 已退场，语料口径见 ADR-0006
 - [x] Day 27 审核与发布：人工审核 Day 26 抽取候选——ODS 原始层 measure 候选拒绝入分析语义层（无权威口径锚点，理由记录于发布单）、`daily_net` 未物化登记待物化；**发布 5 个可计算派生指标**到 `atlas_finance.ossie.yaml`（15→20 metrics，governance v1 active + lineage，FIBO 概念映射 +5 键 MonetaryAmount/Fee/Balance）；`make lint` 全绿；新工具 `serving/metrics_verify.py` 走真实链路（YAML 权威表达式 → Compiler → Guard → Doris）实测：平均每笔成交金额 27578.61 / 平均每笔佣金 89.57 / 佣金率 0.3247% / 户均持仓市值 1136660.85 / 户均现金余额 -32465124.70（负值系数据特性，见 Known Limitations #17），报告 `eval/reports/metrics-verify-7d48dcb.json`；发布审核判定记录 `semantic/migrations/2026-09-02-release-day27.md`
-- [x] Day 27 指标版本机制：`governance_validate.py` 新增 supersedes 链跨文件校验——取代目标存在、非自身、新版本号严格大于被取代版本（递增天然防环）、被取代者不得仍为 active、治理记录不得重名；演进规范＝新名 + supersedes 旧名（同名全局唯一由 ossie_validate 强制，N8）；契约测试 10 例 `tests/test_governance_validate.py`，CI 经 `make lint` 自动执行
+- [x] Day 27 指标版本机制：`governance_validate.py` 新增 supersedes 链跨文件校验——取代目标存在、非自身、新版本号严格大于被取代版本（递增天然防环）、被取代者不得仍为 active、治理记录不得重名；演进规范＝新名 + supersedes 旧名（同名全局唯一由 ossie_validate 强制，N8）；契约测试 10 例 `tests/test_governance_validate.py`，由 `make lint` 执行（本地门槛；当前远程为 gitee，GitHub Actions 不执行——ADR-0018 ⑥）
 - [x] Day 27 语料扩展回归（15→20 指标文档）：bm25 Recall@1 44/44→41/44、Milvus 42/44→35/44、fuse 44/44→40/44（三路 @5 均保持 44/44；15 语料旧值 44/42/44 记录于上两行）；rerank 主链路 44/44 无损；归因与后续见 Known Limitations #18；配套修复：Doris FE 官方默认 JVM 堆 8G 吃满单机内存致全表聚合查询 OOM → compose 挂载自定义 fe.conf（`infra/docker/doris/fe.conf`，Xmx2g），FE 内存 5.5G→1.0G 实测（docker stats）
 - [x] Day 28 P1 端到端验收（`make p1-verify`，serving/p1_acceptance.py）：gold-102「按分支统计 2013 年佣金收入 Top5」全链路 = 唯一路由 → commission_revenue@v1（governance active）→ 编译断言 → Guard 注入行级策略 → Doris 实测；5 道 gates 全过：唯一路由 / @v1 / LIMIT+谓词 / **恶意 SQL 10 条全拒**（INSERT/UPDATE/DELETE/DROP/ALTER/GRANT/CREATE/sleep/pg_sleep/benchmark）/ **EX 匹配**（hq_admin 结果 sha256 = gold-102 锚定 hash）；branch_manager 只见注入分支 1 行；报告 `eval/reports/p1-chain-7d48dcb.json`、截图 `docs/screenshots/p1-chain.png`、验收记录 `docs/p1-acceptance.md`
 - [x] Day 29 schema linking（`make schema-link`，agent/tools/schema_linker.py）：两阶段 = 图域约束粗筛（SemanticGraph 可达性预检，跨实体错配打分前剔除）→ 受限候选域打分（子域 BM25，可选双路 RRF）→ 元数据重排（同义词置信度主键）；44 条 gold 上 **指标 Recall@1 = 44/44**（同日 BM25 全量域单路基线 41/44——KL#18 主链路修复）、@3/@5 = 44/44、表覆盖 44/44（下界验证口径，6 表域无区分度如实声明）；报告 `eval/reports/schema-link-bm25-7d48dcb.json`，契约测试 7 例 `tests/test_schema_linker.py`（含 KL#18 市值问句回归、现金×证券错配剔除）
@@ -241,9 +242,13 @@ Apache Ossie Core Spec（semantic_model / datasets / fields / relationships / me
 挂载 31 条 FIBO 概念映射（8 datasets 全覆盖 + 19/20 metrics；total_trade_tax 待办见 `data/fibo/README.md` 审计节），
 见 `data/fibo/README.md`；指标审核发布记录见 `semantic/migrations/`）；
 `atlas_retail.ossie.yaml` 自 2026-09-04 起转正为第二主评测域：TPC-DS SF0.1 数据已装载
-（`make seed-retail`，4 表入 dwd），gold 样本 19 条全锚定（14 中文含 1 歧义 + 5 英文，
-锚定快照 1e5d35b，终验复验零回归报告 9749fc5——见 eval/gold/README.md 零售段与
-EVAL_REPORT.md）；serving 已双模型路由（§9.1 请求体 `model` 字段）+ demo 集成测试
+（`make seed-retail`，4 表入 dwd），零售 gold 样本在 2026-09-05 双语批次为 19 条全锚定
+（14 中文含 1 歧义 + 5 英文，锚定快照 1e5d35b，终验复验零回归报告 9749fc5——见
+eval/gold/README.md 零售段与 EVAL_REPORT.md，该陈述绑定具名快照与报告，属历史记录不改写）；
+**2026-09-14 实测当前为 27 份样本文件**（22 中文 + 5 英文），其中 18 条已锚定，余 9 条 =
+6 条非歧义双占位（gold-072~077，P-1 批次可 EX 锚定）+ 3 条歧义样本（gold-047/068/078，
+设计上走澄清、无结果行、永不产生 `result_hash`），五类分类明细见 KL #31 与 ADR-0023 决策 ④；
+serving 已双模型路由（§9.1 请求体 `model` 字段）+ demo 集成测试
 （`make demo`，双语 12 + RLS 身份 2）；此前“不再新增”裁定基于无数据前提，已废除
 （裁定推翻注记见 eval/gold/README.md，沿 ADR 推翻条件记录流程）
 
@@ -313,7 +318,7 @@ semantic_model:
 （schema if-then 强制）；governance_validate 对 supersedes 链做跨文件语义校验：取代目标存在、
 非自身、新版本号严格大于被取代版本（版本递增天然防环）、被取代者不得仍为 active
 （发布新版本前须先置 deprecated）。契约测试 `tests/test_governance_validate.py` 10 例，
-CI 经 `make lint` 自动执行。
+由 `make lint` 执行（本地门槛；当前远程为 gitee，GitHub Actions 不执行——ADR-0018 ⑥）。
 （这套治理元数据挂在 custom_extensions 的 `governance` 节点下。）
 
 ### 4.4 与开源方案的关系
@@ -355,7 +360,8 @@ make export            # 导出 dbt MetricFlow YAML
 
 ```text
 eval/
-├── gold/        # 自建黄金集：50 例目标，金融段为主（FIBO 概念标注），人工标注
+├── gold/        # 自建黄金集：106 条样本（finance 79 + retail 27），人工标注 + FIBO 概念标注
+│                # 另含 13 条 paraphrase 改写样本（不同产物类型，不共用 schema，见 KL #31）
 ├── spider/      # 历史对照判定：通用领域与金融场景不匹配，不再新增接入
 ├── bird/        # 历史对照判定：BIRD finance 不再新增（2026-09-03，见 eval/bird/README.md）
 ├── runner.py    # 固定快照 + expected result hash + CI
@@ -388,7 +394,7 @@ eval/
 - 评测只认当前 HEAD：启动时复核 `data/snapshots/<sha>.meta.json` 数据指纹，漂移即拒绝出报告
 - 首轮执行自动锚定：gold JSON 的 `result_hash` 占位符回填为实测 sha256（`snapshot_sha` 同步绑定），此后比对即 EX
 - 歧义样本（`ambiguous: true`）要求返回澄清反问；反问命中 = pass，不猜
-- 产出：`eval/reports/<git sha>.json`（当前 `b933e20`：金融域 70 例（65 可解析 + 5 歧义）Plan Acc 65/65、反问 5/5、EX 65/65；零售域 19 例（18 + 1）Plan Acc 18/18、反问 1/1、EX 18/18——29 表全量快照，锚定 hash 未漂移，按域分节不混报；基线分析 `eval/reports/baseline-compiler-b933e20.json` 与 `docs/baseline-compiler.md`——注册语义域内确定性链零 LLM 覆盖：金融 70/70、零售 19/19；域外问题由 RAG+LLM（gold-50 时代实测 44/44 持平，`rag-llm-openai-7d48dcb.json`，历史对照不混报）/LoRA（blocked）策略对照承接）
+- 产出：`eval/reports/<git sha>.json`（**报告覆盖缺口如实登记（2026-09-14 实测）**：`eval/reports/` 下 48 份产物中含 7 份按域分节的评测主报告，其中最新一份非 dry 主报告是 `5d1e22b.json`（2026-09-09T11:41:32+08:00，金融 71 + 零售 20 = 91 例），**无任何报告覆盖当前 106 份样本**；机制性原因见 ADR-0017 代价 ③（`eval/runner.py` 的 `enforce` 位于 `try` 之外，Guard 拒绝冒泡中断整轮），须待 P-1 批次判据 3/4 修复后才可能产出覆盖 106 的报告。以下为历史引用（数字为当时报告的真实内容，不改写）：`b933e20` 报告金融域 70 例（65 可解析 + 5 歧义）Plan Acc 65/65、反问 5/5、EX 65/65；零售域 19 例（18 + 1）Plan Acc 18/18、反问 1/1、EX 18/18——29 表全量快照，锚定 hash 未漂移，按域分节不混报；基线分析 `eval/reports/baseline-compiler-b933e20.json` 与 `docs/baseline-compiler.md`——注册语义域内确定性链零 LLM 覆盖：金融 70/70、零售 19/19；域外问题由 RAG+LLM（gold-50 时代实测 44/44 持平，`rag-llm-openai-7d48dcb.json`，历史对照不混报）/LoRA（blocked）策略对照承接）
 - 闭环（Day 39-42 后）：`make report` → `eval/report.py` 机械转述生成 `EVAL_REPORT.md`（八节，无手写数字，每格带 source 列）；CI 回归 `.github/workflows/eval.yml`（dry Plan Acc 自洽断言；完整 EX 需数据环境，手动触发）；失败样本 `eval/failure_collect.py` 自动归类 → 人工确认 → `lora.flywheel` 五阶段进 SFT（answer 形态 = 合法 Plan JSON，ADR-0008）；LLM 实测后仍 0 失败（缺陷在评测侧修复归零），飞轮空转与 LoRA 训练（无 GPU）如实登记
 
 ### 5.4 准确率提升手段（按优先级）
@@ -437,10 +443,10 @@ parse(AST) → 禁 DDL/DML → 函数黑名单 → apply LIMIT → apply 时间�
 
 | 数据 | 用途 | 来源 |
 |---|---|---|
-| TPC-DI（零售经纪，2012-07-07~2017-07-07 实测数据段；已装载 17 张 ODS + 8 张 DWD，快照 `b47a6c1`） | 主场景数据：重建金融库表关系、指标场景 | 公开基准，注册下载 |
-| FIBO 本体（FND+FBC+BE 域）+ OMG Commons/LCC | 语义锚点：概念 IRI 注册表与对齐映射 | EDM Council（MIT）/ OMG 规范（研究用途） |
+| TPC-DI（零售经纪，2012-07-07~2017-07-07 实测数据段；已装载 17 张 ODS + 8 张 DWD，快照 `b47a6c1`） | 主场景数据：重建金融库表关系、指标场景 | TPC 基准；不入库，使用者自行获取（见 §12） |
+| FIBO 本体（FND+FBC+BE 域）+ OMG Commons/LCC | 语义锚点：概念 IRI 注册表与对齐映射 | FIBO：EDM Council（MIT）；OMG：仅 IRI 字符串入库，条款未存（见 §12） |
 | BIRD finance | 公开集能力对照（仅参照，不混报） | 公开学术基准 |
-| 自建黄金集（50 例目标） | 主评测集 | 本人基于 TPC-DI 人工标注 |
+| 自建黄金集（实测 106 条：金融 79 + 零售 27；另 13 条 paraphrase 改写样本） | 主评测集 | 本人基于 TPC-DI（金融）/ TPC-DS SF0.1（零售）人工标注 |
 
 ### 7.2 明确声明
 
@@ -455,7 +461,7 @@ parse(AST) → 禁 DDL/DML → 函数黑名单 → apply LIMIT → apply 时间�
 
 ```text
 atlas-data-platform/
-├── .github/workflows/   # GitHub Actions（lint / eval 回归 / tag 自动版本锚点）
+├── .github/workflows/   # GitHub Actions（lint / eval 回归 / tag 自动版本锚点；当前远程为 gitee，不执行——ADR-0018 ⑥）
 ├── semantic/
 │   ├── ossie/           # ⭐ Apache Ossie 语义模型（主规范）
 │   ├── governance/      # ⭐ Atlas 治理扩展 Schema（补 Ossie 缺口）
@@ -468,6 +474,7 @@ atlas-data-platform/
 │                        #   tools（registry 四件套 · mcp_server · chart）/ cli / prompts
 ├── retrieval/           # bm25 / milvus_client / graph_store
 ├── serving/             # api（HTTP 服务面 v1，ADR-0012）/ auth / 验证工具
+├── frontend/            # 前端控制台工程边界（ADR-0018；P0b：构建链 + 端点常量，界面属 P1~P3）
 ├── observability/       # otel / dashboards
 ├── eval/                # gold / spider / bird / runner / reports
 ├── lora/                # SQL 适配器训练与数据飞轮
@@ -504,20 +511,48 @@ atlas-data-platform/
 | `make test` | 全量单元 + 契约测试 |
 | `make serve` | 启动 HTTP API（uvicorn 127.0.0.1:8000，单进程，见 §9.1） |
 | `make token` | 签发本地测试 JWT（默认 ROLE=hq_admin；如 `ROLE=branch_manager CONTEXT='{"branch": "east"}'`） |
-| `make api-verify` | HTTP API 真链验收（A1-A7：全链 EX / 认证 / 三角色差异 / 会话冲突 422 / 跨域拒绝，产出 `eval/reports/api-acceptance-<sha>.json`） |
+| `make api-verify` | HTTP API 真链验收（A1-A9：全链 EX / 认证 / 三角色差异 / 会话冲突 422 / 跨域身份拒绝 / 治理面 8 集合一轮全绿（A8）/ `/plan/execute` 真链（A9），产出 `eval/reports/api-acceptance-<sha>.json`） |
 
-### 9.1 对外 HTTP API（v1）
+### 9.1 对外 HTTP API（契约 v2：`/api/v1` 前缀 + 治理面）
 
-Atlas 的服务面（ADR-0012，落地 [serving/api.py](serving/api.py)）：同一确定性链路
-（Planner → Compiler → Guard → Doris 只读执行）的 HTTP 出口，engine=stub 确定性
-默认，LLM 引擎服务化属 Phase 2。
+Atlas 的服务面（ADR-0012；URL 契约 v2 = ADR-0022，落地 [serving/api.py](serving/api.py)
+与 [serving/governance.py](serving/governance.py)）：同一确定性链路（Planner → Compiler
+→ Guard → Doris 只读执行）的 HTTP 出口。**硬切**：业务与治理全部路径在 `/api/v1`
+前缀下（仅 `/health` 根路径保留为探针契约、双挂同 body），旧路径一律 404、无兼容期。
+治理面端点**只读 Git 文件与评测产物，不触发 DB 与 Agent 构造**——快照缺失时业务面
+如实 503、治理面仍 200（面板恰在故障排查时最该可用）。engine=stub 确定性默认，
+LLM 引擎服务化属 Phase 2。
 
-| 端点 | 认证 | 请求 | 响应 |
-|---|---|---|---|
-| `GET /health` | 公开 | — | `{status, head_sha, snapshot_sha\|None}`（存活 + 快照绑定状态） |
-| `POST /plan` | Bearer | `{question, model?}`（≤500 字符） | `{kind: "plan", plan}` 或 `{kind: "clarify", clarification}`（歧义 200，CLI exit 1 语义的 HTTP 化） |
-| `POST /compile` | Bearer | Plan JSON（`metric/dimensions/time/filters/order_by/limit`，含 `model?`） | `{sql}`（Doris 只读方言）；结构非法/编译失败 422 |
-| `POST /ask` | Bearer | `{question, session_id?, model?}` | TurnResult 全集（kind ∈ answer/clarify/blocked/error；rows 的 Decimal→str 保精度、datetime→ISO8601）；快照 meta 缺失 503 |
+| 端点 | 前缀 | 认证 | 限流桶 | 请求 | 响应 |
+|---|---|---|---|---|---|
+| `GET /health` | 根 + `/api/v1`（双挂同 body） | 公开 | — | — | **8 键**：`{status, head_sha, snapshot_sha, snapshot_source, snapshot_bound_to_head, snapshot_created_at, snapshot_tables, boot_id}`（存活 + **本轮实际绑定** + 进程身份）；无快照可绑时 `status=degraded`、绑定各键为 `null`，仍返回 200（探针语义）。键集权威定义见 ADR-0019 决策 ⑥ + ADR-0020 决策 ⑦，降级与正常两条路径同键集 |
+| `POST /plan` | `/api/v1` | Bearer | 业务 | `{question, model?}`（≤500 字符） | `{kind: "plan", plan}` 或 `{kind: "clarify", clarification}`（歧义 200，CLI exit 1 语义的 HTTP 化） |
+| `POST /compile` | `/api/v1` | Bearer | 业务 | Plan JSON（`metric/dimensions/time/filters/order_by/limit`，含 `model?`） | `{sql}`（Doris 只读方言）；结构非法/编译失败 422 |
+| `POST /ask` | `/api/v1` | Bearer | 业务 | `{question, session_id?, model?}` | TurnResult 全集（kind ∈ answer/clarify/blocked/error；rows 的 Decimal→str 保精度、datetime→ISO8601）+ `snapshot_sha` / `snapshot_bound_to_head` 两键回显本轮绑定；快照绑定失败 503（消息带出原始原因） |
+| `POST /plan/execute` | `/api/v1` | Bearer | 业务 | Plan JSON（`/compile` 请求体同构）+ `session_id?` + `question?`（审计与归因展示用，缺省取 Plan 规范化文本，不参与解析） | 与 `/ask` 同构（kind ∈ answer/blocked/error——不经 Planner 故永无 clarify；**非法 Plan → 200 + `kind="error"`**，不是 422 不是 500，统一响应形态）。`session_id` 缺省 = 一次性 thread、不产生会话态；给定则与 `/ask` 同一会话空间（身份指纹 422 约束同），且本轮 Plan 成为该会话下轮残句追问的补全基线（ADR-0022 代价 ⑥） |
+| `GET /governance/models` | `/api/v1` | Bearer | 治理 | — | `{kind: "governance.models", count, sources, items}`——语义模型清单（权威 YAML 路径 + 版本） |
+| `GET /governance/metrics` | `/api/v1` | Bearer | 治理 | `?model?`（finance 缺省） | `{kind: "governance.metrics", …}`——指标清单（含治理扩展与 FIBO 对齐） |
+| `GET /governance/dimensions` | `/api/v1` | Bearer | 治理 | `?model?`（finance 缺省） | `{kind: "governance.dimensions", …}`——维度清单（物理列 + 值域注册状态） |
+| `GET /governance/synonyms` | `/api/v1` | Bearer | 治理 | `?locale?`（zh_cn 缺省） | `{kind: "governance.synonyms", …}`——locale 词典（含空占位标志与权威源说明） |
+| `GET /governance/values` | `/api/v1` | Bearer | 治理 | — | `{kind: "governance.values", …}`——值域注册表清单（含 skipped 与 skip_reason）；钻取 `GET /governance/values/{item}` 返回完整 values + 别名 |
+| `GET /governance/policies` | `/api/v1` | Bearer | 治理 | — | `{kind: "governance.policies", …}`——行级策略与角色目录（condition 模板原文） |
+| `GET /governance/reports` | `/api/v1` | Bearer | 治理 | — | `{kind: "governance.reports", …}`——评测报告索引（主报告结构化，非主报告模式标签）；钻取 `GET /governance/reports/{name}`（主报告结构化 / 非主报告 raw 降级） |
+| `GET /governance/snapshots` | `/api/v1` | Bearer | 治理 | — | `{kind: "governance.snapshots", …}`——数据快照清单（created_at 降序 + 最新标志） |
+
+> 上表 13 行的合并口径：`/health` 双挂 2 条并 1 行、`values` 与 `reports` 的集合+
+> 钻取各并 1 行——展开后即 openapi 的 **16 条路径**，由
+> `tests/test_api_contract_v2.py` 的 `EXPECTED_PATHS`（16 条字面量）逐条锁定。
+> 治理集合信封统一为 `{kind, count, sources, items}`（count 条目数、sources 为
+> Git 文件路径），全部 **GET 只读**、不触发 DB 与 Agent 构造。
+
+**快照绑定的可见性**（ADR-0019 决策 ①/⑥）：运行时按「`ATLAS_SNAPSHOT_SHA` → HEAD
+→ 最新已锁」三级解析选快照，因此**可以合法地绑在与代码 HEAD 不同的快照上**——此时
+`snapshot_bound_to_head=false` 且 `snapshot_source` 为 `env` 或 `latest`，`/health`
+（双挂）、`/api/v1/ask`、`atlas ask` 三处都回显该事实（CLI 走 stderr，不污染可机读
+的 stdout）。
+这类回合得到的数值**不能**与该 sha 的评测数字并列陈述，也不能写进以代码 HEAD 命名的
+报告（口径不同；AGENTS.md N1/N6 同源，约束见 ADR-0019 代价 ③）。评测面
+（`make eval`）不受影响：它仍然只认 HEAD 的锁定快照并复核数据指纹。
 
 多模型路由（P7）：`model` 字段选语义模型域（`finance` 缺省——向后兼容，旧请求体
 零变化 / `retail`），未知值 422；会话键（session_id）按模型隔离，跨模型不续接
@@ -529,50 +564,64 @@ Atlas 的服务面（ADR-0012，落地 [serving/api.py](serving/api.py)）：同
 ```bash
 make token                          # ROLE=hq_admin
 curl -H "Authorization: Bearer $(make token)" \
-  http://127.0.0.1:8000/plan -d '{"question":"2013 年第二季度总交易额是多少？"}'
+  http://127.0.0.1:8000/api/v1/plan -d '{"question":"2013 年第二季度总交易额是多少？"}'
 ```
 
-> 本地 `make serve` 监听 127.0.0.1:8000；容器部署宿主端口映射为 **8001**
+> 本地 `make serve` 监听 127.0.0.1:8000；容器部署宿主端口映射为 **8010**
 > （本机 8000 被其他服务占用，见 compose 注释）——容器 curl 请用
-> `http://127.0.0.1:8001/`。
+> `http://127.0.0.1:8010/`。
 
 身份 → 行级策略（2026-09-05 服务面硬化批次，ADR-0011 落地注记在档）：
-`/ask` 把已认证 claims 下推为行级身份（`agent.ask(identity=claims)` → Guard
-Policy 注入；`/plan` `/compile` 无执行面不注入）。可见信号与语义：
+`/api/v1/ask` 与 `/api/v1/plan/execute` 把已认证 claims 下推为行级身份
+（`agent.ask(identity=claims)` → Guard Policy 注入；`/api/v1/plan`
+`/api/v1/compile` 无执行面不注入）。可见信号与语义：
 
 - `explanation.policy_effect` = 「行级策略已生效（角色 X，策略 Y）」——只给
   角色与策略名，**不给条件值**（0011 不外泄细节，与 blocked 不回流 SQL 同精神）；
 - 会话 × 身份：session_id 绑定首个请求的身份指纹（全 claims）；同一会话换
   身份 → **422「会话身份冲突，请换新 session_id」**（换身份必须换会话）；
-- 限流：per-token 共享桶（/plan /compile /ask 同桶计数），超限 → **429 +
-  Retry-After 头**（下一窗口起点秒数）；/health 公开、401 路径不计。
+- 限流：per-token **两桶互不挤占**（ADR-0022 决策 ⑥）——业务桶（`/api/v1` 下
+  plan / compile / ask / plan/execute 同桶计数）与治理桶（`/api/v1/governance/*`）
+  各自独立计数；超限 → **429 + Retry-After 头**（下一窗口起点秒数，detail 标明
+  「业务面/治理面」）；/health 公开、401 路径不计。
 
 | env | 缺省 | 说明 |
 |---|---|---|
 | `ATLAS_JWT_SECRET` | 无（N9） | JWT 签发/校验密钥（本地 `make token`） |
-| `ATLAS_AUDIT_DISABLED` | 空 = 开 | `1` 关闭业务审计 JSONL（`serving/audit/audit.jsonl`，gitignore；每业务请求一行，不含 SQL——SQL 由 OTel span 承担） |
-| `ATLAS_RATE_LIMIT_MAX` | `60` | per-token 每分钟上限（**配置占位非实测阈值**——真实容量边界需压测）；`0` = 关 |
-| `ATLAS_RATE_LIMIT_WINDOW_SECONDS` | `60` | 限流窗口秒数；`0` = 关 |
+| `ATLAS_AUDIT_DISABLED` | 空 = 开 | `1` 关闭业务审计 JSONL（`serving/audit/audit.jsonl`，gitignore；每业务/治理请求一行，含 429/422 拒绝，不含 SQL——SQL 由 OTel span 承担；治理读 kind=`governance_read` 与两桶 429 共用此开关，不新增第二开关） |
+| `ATLAS_RATE_LIMIT_MAX` | `60` | 业务桶 per-token 每分钟上限（**配置占位非实测阈值**——真实容量边界需压测）；`0` = 关 |
+| `ATLAS_RATE_LIMIT_WINDOW_SECONDS` | `60` | 业务桶限流窗口秒数；`0` = 关 |
+| `ATLAS_GOVERNANCE_RATE_LIMIT_MAX` | `240` | 治理桶 per-token 每分钟上限（**配置占位非实测阈值**；240 的依据是可算而非可测：治理页挂载 8 请求 + 平均 2 次钻取 ≈ 10 请求/次导航 → ≈24 次导航/分钟）；`0` = 关 |
+| `ATLAS_GOVERNANCE_RATE_LIMIT_WINDOW_SECONDS` | `60` | 治理桶限流窗口秒数；`0` = 关 |
 
 容器化部署（单机，依赖 Doris 已在 compose 内）：
 
 ```bash
-docker compose up -d --build atlas-api   # 8001:8000；镜像无 .git，快照身份由
-                                         # build arg GIT_SHA 注入（默认 b933e20，
-                                         # 即 data/snapshots/ 最新 29 表全量数据
-                                         # 版本；数据重装后更新 .env 的 GIT_SHA）
-curl http://127.0.0.1:8001/health
+docker compose up -d --build atlas-api   # 8010:8000；镜像无 .git，快照身份由
+                                         # build arg GIT_SHA 注入——**无默认值**
+                                         # （ADR-0019 决策 ④）：`make up` 从 HEAD
+                                         # 求值并 export；直接敲 compose 命令时
+                                         # 需 --build-arg GIT_SHA=$(git rev-parse --short HEAD)，
+                                         # 否则构建守卫响亮失败（不静默错绑）
+curl http://127.0.0.1:8010/health        # 根路径为探针契约（compose healthcheck
+                                         # 依赖，ADR-0018 决策 ⑤ 落地注记）；
+                                         # /api/v1/health 双挂点同 body
 ```
 
 真链验收与报告：`make api-verify`（全 HTTP 栈 + 真 Doris + 锁定快照）：
-A1 问→编→问 EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活 /
-A5 三角色行级差异（gold-146 × hq_admin vs branch_manager，策略名可见且条件值
-不外泄）/ A6 会话身份冲突 422 / A7 零售品类受限（category_analyst）+ 跨域
-Guard 拒绝（region_manager × finance → blocked，0011 决策 4 真链证据）。
-最新报告 `eval/reports/api-acceptance-4a547e7.json`（A1-A7 全绿，snapshot_sha
-=b933e20）。硬化后剩余边界如实：会话/限流/身份指纹为进程内（uvicorn 必须
-workers=1）、审计本地 JSONL 非防篡改、身份为本地签发 HS256（无 IdP）、Doris
-per-user identity 透传属 0011 决策 4 独立项——见 KL #28 ③。
+A1 问→编→问 EX 与 gold 锚点一致 / A2 歧义反问 / A3 认证拦截 / A4 存活（根与
+`/api/v1` 双挂点同 body）/ A5 三角色行级差异（gold-146 × hq_admin vs
+branch_manager，策略名可见且条件值不外泄）/ A6 会话身份冲突 422 / A7 零售双档
+（category_analyst 品类受限 + hq_admin 策略名按域报 rp_dept_visible）+ 跨域身份
+拒绝（region_manager × finance → error，域不匹配，Guard 之前即拒——ADR-0021
+判据 11/12）/ A8 治理面一轮挂载（8 集合全 200 且不消耗业务桶）/ A9
+`/plan/execute` 真链（`/plan` 产物原样回填执行，EX 与 gold 锚点一致）。
+最新报告 `eval/reports/api-acceptance-95cba68.json`（A1-A9 共 11 场景全绿，
+snapshot_sha=b933e20）。剩余边界如实（契约 v2 批次后更新，ADR-0022）：会话/轮数/
+身份指纹已入 SQLite checkpoint（设 ATLAS_CHECKPOINT_DB 时跨重启续接）；限流两桶、
+审计写与 SQLite 单写者仍为进程内（uvicorn 必须 workers=1，理由见 KL #28 ②）、
+审计本地 JSONL 非防篡改、身份为本地签发 HS256（无 IdP）、Doris per-user identity
+透传属 0011 决策 4 独立项——见 KL #28 ③。
 
 ---
 
@@ -626,11 +675,12 @@ per-user identity 透传属 0011 决策 4 独立项——见 KL #28 ③。
     数据事实；规划原文「华东区 / 某品类」零售角色随 TPC-DS SF0.1 数据落地已实测
     ——rp_dept_visible 未落地逻辑列 region/product_category 对齐物理
     dim_store.s_state / dim_item.i_category（row_policy.yml），rls-verify 双域差异报告
-    `eval/reports/rls-verify-4a547e7.json`（finance 差异集 3；retail 差异集 2：
+    `eval/reports/rls-verify-e0f2d29.json`（finance 差异集 4：ADR-0021 起 broker 档
+    兑现（brokerid=5460 实测值谓词，3 行 < hq_admin 5 行）；retail 差异集 2：
     region_manager（州=TN）与 hq_admin 结果一致系 SF0.1 单州数据事实，如实报告，
     差异由 category_analyst 品类受限承担）；带身份 HTTP 化实测见 api-verify
-    A5-A7（`eval/reports/api-acceptance-4a547e7.json`：三角色差异 / 会话身份冲突
-    422 / 零售品类受限 + 跨域 Guard 拒绝）与 demo 集成测试
+    A5-A7（`eval/reports/api-acceptance-95cba68.json`：三角色差异 / 会话身份冲突
+    422 / 零售双档 + 跨域身份拒绝）与 demo 集成测试
     （tests/test_demo_e2e.py RLS 2 例——库级 resolve_policy → Guard 注入，
     README 快速开始库级载体；HTTP 身份链路由 api-verify A5-A7 承担）
 16. **Day 27 派生指标数值背书已闭环（2026-09-04）**：5 个派生指标 gold_test_cases 与
@@ -670,7 +720,11 @@ per-user identity 透传属 0011 决策 4 独立项——见 KL #28 ③。
     不得绕过只读红线（详见 agent/state.py、agent/graph.py docstring）
 21. **图表为 spec 级确定性渲染（无像素）**：schema 必须来自已执行结果（无执行 SQL
     引用的裸数据拒绝）；多数值列只渲染第一个；折线不插值不排序；密集结果（>200
-    类目）降级表格并注记；NaN/Inf/空结果拒绝（agent/tools/chart.py docstring）
+    类目）降级表格并注记；NaN/Inf/空结果拒绝（agent/tools/chart.py docstring）。
+    **P3 落地追加（ADR-0025，2026-09-16；上方各句逐字不变）**：时间轴列由编译器
+    声明携带（`Compiler.emitted_time_column` → `render_chart` 的 `time_columns`
+    入参，前端不推断），`_TIME_COLUMN_NAMES` 仅兜底非编译路径、命中时 spec 的
+    `note` 追加权威等级标注
 22. **可观测栈为可选启动（配置态，Day 51-53 如实声明）**：埋点默认 no-op（未配
     `OTEL_EXPORTER_OTLP_ENDPOINT` 零 I/O）；otel-collector/prometheus 属 compose
     `obs` profile，`make up` 不启动，需 `docker compose --profile obs up -d` 点亮
@@ -688,8 +742,8 @@ per-user identity 透传属 0011 决策 4 独立项——见 KL #28 ③。
 25. **trace 粒度与评测链路埋点边界**：trace 为回合级单 span（无 LLM 调用级细分）；
     评测批处理（make eval / rag-eval）直接驱动内部函数不经 DataAgent ask 路径，
     **评测数字不出现在 Grafana**——评测口径一律以 eval/reports/*.json 为准，
-    Prometheus/Grafana 只覆盖 ask 路径；会话记忆为进程内 MemorySaver（重启即失，
-    会话内多轮有效）
+    Prometheus/Grafana 只覆盖 ask 路径；会话记忆默认进程内 MemorySaver（未设
+    ATLAS_CHECKPOINT_DB 时重启即失；设后随 SQLite 落盘续接，ADR-0020）
 26. **dbt MetricFlow 导出为三态非无损映射**（Day 53 `make export` 实测）：20 指标中
     agg 14（单列聚合→measure）/ ratio 3（聚合后除法）可表达；**unmapped 3**
     （`SUM(a*b)` 先乘后加，如 total_trade_value）MetricFlow measure 无法表达，
@@ -700,22 +754,29 @@ per-user identity 透传属 0011 决策 4 独立项——见 KL #28 ③。
     Commons 20250801）无贴切税务金额类（候选仅税务治理概念/经纪服务费，语义不贴切），
     补映射需先扩展闭包域并重跑冒烟验证，登记待办不硬补；审计方法与数字见
     `data/fibo/README.md` 覆盖审计节（2026-09-03）
-28. **HTTP API v1 边界（ADR-0012，2026-09-03；服务面硬化批次 2026-09-05 收窄
-    ③）**：服务面为本地演示/集成面，非生产部署——①会话是进程内内存态
-    （MemorySaver checkpointer + 进程内轮数），重启即失、无横向扩展；②uvicorn
-    必须 workers=1，多 worker = 会话/限流/身份指纹多份分裂；③**身份下推/限流/
-    审计已落地（2026-09-05）**：/ask 已验证 claims → 行级策略随 Guard 注入
-    （explanation 可见信号，条件值不外泄）、per-token 共享桶限流（429 +
-    Retry-After）、业务审计 JSONL（每请求一行，不含 SQL）——绑定 api-verify
-    报告 `eval/reports/api-acceptance-4a547e7.json`（A5-A7 身份场景）；**剩余
-    边界如实**：限流为进程内固定窗口（默认 60 次/分钟是配置占位非实测阈值）、
+28. **HTTP API 边界（ADR-0012，2026-09-03；服务面硬化批次 2026-09-05 收窄
+    ③；会话持久化批次 2026-09-15 收窄 ①②；契约 v2 批次 2026-09-16 前缀化 +
+    治理面 + 两桶限流）**：服务面为本地演示/集成面，非生产
+    部署——①会话持久化（ADR-0020）：设 ATLAS_CHECKPOINT_DB 时会话/轮数/身份指纹
+    随 SQLite checkpoint 落盘、跨重启不失；未设时仍是进程内 MemorySaver（重启即
+    失）。两种形态都无横向扩展；②uvicorn 必须 workers=1，理由收窄为「限流桶 +
+    审计写 + SQLite 单写者」（ADR-0020 决策 ⑧）：多 worker = 配额 ×N、审计行交错、
+    SQLite 多写者；③**身份下推/限流/
+    审计已落地（2026-09-05）**：/api/v1/ask 与 /api/v1/plan/execute 已验证 claims →
+    行级策略随 Guard 注入
+    （explanation 可见信号，条件值不外泄）、per-token 两桶限流（业务 60 / 治理 240
+    独立计数，429 + Retry-After + detail 标桶名）、业务审计 JSONL（每业务/治理请求
+    一行，含 429/422 拒绝，不含 SQL）——绑定 api-verify
+    报告 `eval/reports/api-acceptance-95cba68.json`（A1-A9 共 11 场景）；**剩余
+    边界如实**：限流为进程内固定窗口（60/240 均为配置占位非实测阈值）、
     审计本地 JSONL 非防篡改（生产需外置）、身份为本地签发 HS256 JWT（无 IdP，
     0011 决策 4「真实多租户 → gateway 认证先行」推翻条件未触发）、Doris
     per-user identity 透传属 0011 决策 4 独立项；④engine=stub 确定性默认，LLM
     引擎服务化属 Phase 2；⑤容器内 /ask 依赖构建时注入的快照身份 ATLAS_GIT_SHA
     （镜像无 .git）且对应 meta 随仓库进入镜像——带 seed 数据的环境才可答；
-    ⑥/api 契约测试 43 例（tests/test_api.py 26 + tests/test_api_hardening.py
-    17，fake 注入无 DB）+ 真链验收 make api-verify（A1-A7）在档
+    ⑥/api 契约测试 96 例（tests/test_api.py 26 + tests/test_api_hardening.py
+    19 + tests/test_api_contract_v2.py 25 + tests/test_identity_echo.py 26，
+    fake 注入无 DB）+ 真链验收 make api-verify（A1-A9）在档
 29. **filter 不支持形态 → 澄清（不猜测）**：自由双指标比较（“佣金高于成交量的
     分支”）、维度值模糊无法命中语义层同义词、HAVING 语义度量阈值但问句未解析出
     metric（无从挂载聚合比较）均返回 ClarificationRequest；时间词不并入 filter
@@ -728,6 +789,163 @@ per-user identity 透传属 0011 决策 4 独立项——见 KL #28 ③。
     （实测金融 `Status` 绑到 `fact_trades` 而非 `dim_account`），该事实如实记进
     profile 的 `bound_dataset` 与 `note`，本批不改编译器。大基数列（distinct > 200）
     跳过注册，planner 对该列不做值校验——合法值与非法值都透传，静默漏匹配风险仍在
+31. **黄金集计数口径已纠正；paraphrase 集无结构门槛；附过期计数全仓清单（2026-09-14 实测）**：
+    `eval/gold/` 下实测 120 个 JSON = **106 条黄金样本**（`finance/` 79 + `retail/` 27）
+    + **13 条 paraphrase 改写样本**（`eval/gold/paraphrase/pp-*.json`）+ `schema.json` 本身。
+    本文件、`README.en.md`、`eval/gold/README.md` 此前分别写「50 例目标」/「89 samples」/
+    「70 + 19」，均为过期计数，已同批改为实测值（测量：`find eval/gold -name
+    "gold-*.json" | wc -l`；`make lint` 输出的「106 条样本」即同源）。
+    两类样本是**不同产物类型，不共用 schema**。**第一项（schema 归属，结构必需）**：
+    13 份 `pp-*.json` **全部不符合**
+    `eval/gold/schema.json`（缺 required 的 `expected_sql`/`result_hash`/`snapshot_sha`
+    三键，另有 `base`/`intended_metric`/`note` 三个 schema 未声明的键；实测
+    `jsonschema.validate` 13/13 失败），故 `eval/gold/validate_gold.py:37` 的 glob `*/gold-*.json`
+    将其排除是**结构必需而非疏漏**——并入 glob 则 `make lint` 当场 13 红。
+    **第二项（paraphrase 侧无任何结构门槛）**：`eval/paraphrase_eval.py:60` 只
+    `glob` + `json.loads`，`:53-55` 用 `.get()` 取标注键，故 `expected_metric` 一类键名
+    拼写错误会静默变成 `None` 并使该样本计为 Plan Acc **失败**——被误归因为 Planner
+    缺陷而非样本缺陷（对照 `:69` 的 `r["base"]` 用下标取值、缺键则崩，两种失败形态
+    不一致）。**第三项（声明与实际不符）**：`--domain` 参数被接受并写进报告（`:126`）
+    但**不参与模型选择**（`:94` 恒用 `MODEL_PATH` = finance），`--domain retail` 会产出标注为 retail、
+    实际用金融模型评测的报告（`:91` 的 help 文本「当前仅 finance 改写集」是唯一提示）。
+    同时 `validate_gold.py` 的 docstring 称「验证 `eval/gold/<domain>/*.json` **全部**
+    符合 schema.json」，与其 glob 只覆盖 `gold-*.json` 不一致。
+    **第四项（同批新发现，可追溯性）**：13 份 pp 的 `base` 字段只被
+    `paraphrase_eval.py:69` 当作分组标签，**从不解析为样本文件**；其中 4 份写
+    `base: "gold-comm"`，而 `eval/gold/` 下**不存在** `gold-comm*.json`（实测被引用
+    的 base 中只有 `gold-101`（6 份）/`gold-146`（3 份）真实存在）。报告的 `by_base` 因此出现
+    一个无法回溯到任何样本的分组键，失败样本无从定位。
+    **第五项（过期计数全仓清单，2026-09-14 逐文件实测）**：按处置方式分两组
+    逐个登记归属；除 ① 经用户授权当批修正外，**其余本批均不改**。
+    **A 组·现在时声称（① 已修，②~⑤ 待修）**：① `AGENTS.md:63` 术语表「Gold set｜自建
+    黄金评测集（50 例）」与 `:271` §9.1 示例模板——契约文件，**已于 2026-09-14
+    经用户授权修正完毕**：两处均**不再写死条数**，改为「以 `make lint` 输出的
+    「N 条样本」为当前口径」（实测该输出为「106 条样本」），故后续扩张不会再度过期。
+    按 AGENTS.md §14 须走**独立 `contract` 提交**并在正文说明理由，不得与本批
+    文档变更混合（§8）；②
+    `docs/atlas_query_test_cases.md:226`「89 条」——该文档另有 §12/E-03 两处 Guard
+    口径错误，已由 ADR-0017 代价 ② 归入 P-1 批次同批纠正，本批不做部分修
+    （避免同一文档出现“半新半旧”口径）；③ **对外传播稿**（发布前须重测；
+    且数据卡片图片内的数字无法用文本批改，需重渲染）：
+    `docs/outreach-series/05-trustworthy-accuracy.md:101`「89 条」、
+    `docs/outreach-wechat.md:133/:224`「89 例（70 + 19）」与 `:137` 图注、
+    `:289`「最新 65 例」（“最新”是现在时）、`docs/outreach-xiaohongshu.md:7/:40`
+    「50 例（48 + 2）」。注：wechat 的**评测结果数字**已绑定具名 sha
+    （`9749fc5`/`7d48dcb`，属 B 组），但**样本文件条数**不随快照冻结，故仍会过期；
+    ④ **活配置（最可操作）**：`airflow/yaml_jobs/04_semantic_publish_eval.yaml:23-24`
+    依赖注释「评测含零售域 19 条」/「评测含金融域 70 条」与 `:39` 任务描述
+    「黄金集 Plan Acc + EX（双域 89 条全跑…）」——`yaml_jobs/` 是
+    AGENTS.md §4 的可编辑区（非 `dags/generated/`），属 `chore`，可与文档批次分开提交；
+    ⑤ 其他现在时声称：`eval/spider/README.md:12`「自建 gold 集（50 条人工标注）
+    **仍是**主评测」、`lora/data/README.md:25`「gold 48 条…不可作训练源」（位于
+    「**当前状态**（诚实声明）」节下）、`infra/adr/0010-eval-methodology.md:4`
+    **状态行**「落地：eval/gold/ 51 例」（正文 `:23/:30/:58` 同值）——ADR **状态行**
+    是对当前落地态的声称，与 ADR **正文**记录决策当时语境不同，故归 A 组。
+    **B 组·历史记录，不改写**（改了即伪造历史，N1）：⑥
+    `README.md:171/:183`（48 例/50 条，绑定具名报告 `b47a6c1.json`/`7d48dcb.json`
+    与 Day 30 逐日验收记录）、`docs/release-notes-v0.1.md:33/:102`（50 例，绑定 v0.1
+    发布）、`data/snapshots/README.md:60`（89 条，绑定 `9749fc5.json` 与 P7 收口批次）、
+    `eval/failures/README.md:28`（48 条，节标题即「当前状态（2026-09-03，HEAD
+    7d48dcb）」且绑定 `7d48dcb.json`）、
+    `semantic/migrations/2026-09-08-fee-synonyms.md:41`（89 条，绑定具名快照
+    `b933e20`）与 `semantic/migrations/2026-09-08-locale-lexicon-and-legacy-archive.md:34`
+    （gold 89 条，绑定该迁移文档自身日期的 `make lint` 输出）、
+    `infra/adr/0001-*.md:28` 与 `infra/adr/0006-*.md:61/:104`（50 条/50 例，属决策
+    当时的目标口径）、`infra/adr/0015-*.md:176`（89 条，绑定具名 commit `9cb8913`
+    与具名报告 `7051ef6`/`b933e20`）、`infra/adr/0016-*.md:31/:107`（89 条，绑定该
+    ADR 自身 accepted 状态与 P1 批次 B4 落地语境；实测全文**不含** `9cb8913`，
+    初稿曾误将其与 0015 合写为同一绑定，已拆开）。
+    ⑦ **同形不同源，不属本清单**（登记以免后来者误「修」）：
+    `data/fibo/README.md:68`「20 metrics 中 19 条锚定」是 FIBO 映射分母、
+    `infra/adr/0022-*.md:349` 与 `docs/design/frontend-console-plan.md:555`「48 条」
+    是治理索引条数、`infra/adr/0023-*.md:571`「565 例」与
+    `docs/design/adr-0015-pattern-lexicon-en.md:84`「521 全绿」是契约测试数、
+    `docs/design/adr-0015-pattern-lexicon-en.md:86` 与
+    `docs/design/adr-0015-pattern-lexicon-zh.md:67`「EX 65/65 + 18/18」绑定具名报告
+    ——分母均与黄金集样本数无关。
+    **本清单自身的三次纠错（检索与引用方法缺陷）**：(a) 初稿曾把
+    `docs/design/adr-0015-pattern-lexicon-*.md` 列入过期计数，复核该两文件**只引用
+    具名样本 id**（gold-061/063/066/067/149~155），不含任何黄金集总数，引用不成立，
+    已删除。(b) **更严重**：初稿检索时加了 `grep -v "eval/reports/"` 过滤，而
+    **绑定具名报告正是 B 组的判定标志**，该过滤把 B 组条目系统性删除，导致漏掉
+    `README.md:171/:183`、`data/snapshots/README.md:60`、`eval/failures/README.md:28`
+    三处（含 README 自身），却在文中自称「完整清单」。去掉该过滤重跑检索后才有上表。
+    教训：**排除条件不得与分类判据同源**，否则筛选会静默吞掉整个类别；
+    「完整」这类全称声称必须附可复现的检索命令，且命令本身要接受审查。
+    (c) 初稿⑦ 曾写 `docs/design/adr-0015-pattern-lexicon-*.md:84`（**错误写法原样留档，
+    非有效引用**，自动校验器仍会报它越界，属已知例外），而该 glob 实测
+    匹配 **2 个文件**（`-en.md` 与 `-zh.md`）且两者行数不同（`-zh.md` 仅 82 行，
+    无 `:84`）——**glob 不得与行号连用**，已拆为逐文件引用。上述三处均由
+    自动引用校验器（逐条展开 glob + 比对行号是否越界）捕获，非人工复读发现。
+    上述五项中，**第一项为结构必需（非债务，不得「修」）**，第二~四项为待修债务，
+    第五项内 A 组 ① 已修、②~⑤ 待修，B 组 ⑥ 不改写，⑦ 不属本清单。
+    本批只如实登记不改代码：修 paraphrase 校验与 `--domain` 属 `eval` 类型变更，
+    改 airflow YAML 注释属 `chore`，改 AGENTS.md 属 `contract` 类型变更（须说明
+    理由），三者须分别单独提交（AGENTS.md §8 禁止一个 PR 混合类型）。
+    本清单的可复现检索命令（不含任何与分类判据同源的排除项）：
+    `grep -rn "48 例\|48 条\|50 条\|50 例\|51 例\|89 条\|89 例\|65 例\|70 条\|70 例\|19 条\|19 例" --include="*.md" --include="*.yaml" --include="*.yml" .`
+    （排除项只允许 `.venv/`、`eval/reports/` 产物本体与 `EVAL_REPORT.md` 机器生成物；
+    **不得**排除正文中引用 `eval/reports/` 的行，那正是 B 组判据。
+    2026-09-14 实测命中 **74 行**，其中包含本 KL 条目自身对上述数字的引用（自指），
+    需人工剔除后再按 A / B / ⑦ 三组归类）
+32. **前端不解除任何后端限制，且引入第二套工具链（ADR-0018，P0b，2026-09-16）**：
+    `workers=1` 约束仍在（0020 决策 ⑧ 收窄后的理由：会话/轮数/身份指纹已入 checkpoint，
+    仍为进程内态的是限流桶、审计写与 SQLite 单写者）；前端只是只读消费面，不改善可扩展性。
+    仓库同时从 Python 单语言变为双工具链：`uv sync` 不再足以准备开发环境，node 仅存于
+    nvm（实测 `~/.nvm/versions/node/v24.16.0/bin`），**非交互 shell 不可见**（实测
+    `command not found: node`），一切脚本化调用必须经 make 的 PATH 注入。`make ui-*`
+    与 `serve-dev` 探测不到 node 时打印指引并 `exit 1`，**不静默跳过**。fresh clone 无
+    `frontend/dist`（被局部 `.gitignore` 忽略）：API 照常启动（条件挂载跳过并打 warning），
+    但浏览器无界面可用——需先 `make ui-build`；P0b 本体也只有最小占位壳，五个面板与
+    图表属 P1~P3（**时点补充，2026-09-16**：P1 面板 1 与 P2 面板 2/3 + 面板 4 前
+    6 子页已落地，见 #33/#34；图表与 reports/snapshots 两子页属 P3——本条其余事实不变）。
+    构建门槛 `make ui-check`（tsc + vitest + build）在本地执行；
+    pre-commit 配置已就绪（`frontend/` 变更触发 `make ui-check`，`check-added-large-files`
+    已 exclude lock 文件），但本机 GitHub 不可达（实测 `git fetch` 被 reset），hook
+    环境初始化无法完成——门槛以 make 目标为准，pre-commit 端到端待网络可达时补验。
+33. **前端 P1 工作台的四条诚实边界（ADR-0018 P1 批次，2026-09-16）**：① **截断只报
+    「可能」**（门禁 G3 接受降级）：`row_count == limit` 的确定截断标志未进 0022 契约
+    （设计页 §6.5），`TruncationNote` 只显示「结果可能被 Plan 的 limit 截断（当前 = N）」
+    ——确定标志落地前不改语气（把推测写成事实即 N1/N2 违约）；与之并列的**前端渲染
+    上限是确定事实**：响应行已全部到达浏览器，表格对超过 500 行的部分仅渲染前 500
+    （前端常量，非后端截断），完整数据出口 = `atlas query --format json`（同一只读
+    网关）或收窄 Plan 的 `limit` 后重发，**不得**引导站外执行 SQL（N3）；② **前端
+    零遥测**（门禁 G1 裁定，0018 落地注记 P1 批次第 1 节）：无上报端点、无遥测 SDK，
+    错误原文如实渲染不吞错；③ **P1 只交付面板 1**（**时点更正，2026-09-16 P2 起**：
+    本子条记录的是 P1 交付时点的路由形态——彼时任意深层路径（如 /governance/metrics）
+    刷新均渲染同一工作台；P2 已落地 `/ask`、`/sessions`、`/governance/{6 子页}` 路由，
+    reports / snapshots 与图表属 P3。SPA 兜底 200 HTML 仍是 0018 判据 7 的能力，
+    与路由能力是两件事）；④ **token 只存内存**
+    （设计页 §3.5 约束 3）：顶栏粘贴通道刷新即失，签发只能 `make token ROLE=…`，
+    前端不内置签发逻辑或密钥。
+34. **前端 P2 治理面的四条诚实边界（ADR-0018 P2 批次，2026-09-16）**：① **会话时间线
+    只能展示当前运行的会话**（跨重启、跨标签页历史**无数据源**）：0022 未开
+    `/governance/sessions` 类端点，0020 的 SQLite checkpoint 是 Agent 内部状态存储、
+    不是可查询的会话目录——本标签页本次运行之外累积的 `session_id` 前端列不出来
+    （服务端重启后 `boot_id` 变化，历史会话仍在 SQLite 里但列不出来）；要列出历史
+    会话需新增只读端点并裁定其权限口径（会话含问句原文，属敏感面），**未裁定**；
+    ② **治理端点一律 Bearer**（2026-09-16 实测：无 token 请求
+    `/api/v1/governance/policies` → 401）→ 角色矩阵取不到就不能签发，**首次激活与
+    刷新后都必须先粘贴一次 `make token` 的输出**；③ **dev 签发通道仅 `make ui-dev`
+    存在**：`POST /__dev/sign` 是 vite dev-only 中间件（`spawn uv run --env-file .env`
+    调用 `serving.auth.sign_token`，与 `make token` 逐字同构，**vite 进程不读密钥**）；
+    `make serve-dev` 与容器无此端点，面板降级为「复制 make 命令 + 粘贴」——不伪造
+    第二套签发逻辑；④ **P2 治理面 6 子页挂载即发 6 条并发请求**
+    （models / metrics / dimensions / synonyms / values / policies），子页切换不重拉；
+    `reports` / `snapshots` 子页与 ReportDrawer 属 P3——该 6 条是 0022 决策 ⑥
+    「240/min 治理桶」推导的前提，**不得**为减请求数合并或懒加载。（**P3 时点
+    更正，2026-09-16**：`reports` / `snapshots` 两子页与 ReportDrawer 已随 P3
+    落地，治理面终态 8 条并发已实态化；本条其余各句不变。）
+35. **图表接入已落地（P3，ADR-0025，2026-09-16），能力边界仍有三条**：① **时间轴
+    列以编译声明为权威**——`yoy`/`pop`/`cumulative` 的 x 轴由
+    `Compiler.emitted_time_column` 声明携带（`render_chart` 的 `time_columns` 入参，
+    前端不推断）；非编译路径（`--llm` 候选链）走 `_TIME_COLUMN_NAMES` 兜底、命中时
+    spec 的 `note` 标注权威等级（与 #21 的 P3 追加同源）；② **`yoy`/`pop` 只画当期，
+    不画多序列对比**——对比值只在数据表与 `note` 里（扩多序列需推翻 ADR-0025
+    决策 ⑥，属 spec 破坏性变更）；③ **图表数据恒 ≤ 200 点**（`MAX_CATEGORIES`
+    超限降级表格并注记，非本批新增）。**与 #21 的分工**：#21 记录渲染语义
+    （spec 级确定性、无像素），本条记录**接入状态与能力边界**（ADR-0025 裁定于
+    2026-09-14，接入落地于 P3 2026-09-16），两条不得合并阅读。
 
 **如果有真实企业数据，我会优先补做**：数据契约、IAM 集成、审计留痕、容灾、并发压测、模型红队测试、变更管理流程。
 
@@ -745,16 +963,31 @@ per-user identity 透传属 0011 决策 4 独立项——见 KL #28 ③。
 | OpenTelemetry + PromptOps + LLM Judge | 已有工程经验 | 接入 SQL 调用链、成本、回归评测 |
 | 声明式语义层、指标版本血缘 | **需新建** | 基于 Apache Ossie 规范实现编译器、治理扩展与测试 |
 | Data Agent 状态机与工具链（LangGraph 编排 / MCP 暴露 / 防幻觉图表 / 反馈与 handoff） | 已有工程经验 | 以确定性优先落地 agent/ 状态机（8 节点）+ tools 四件套 + MCP 工具服务器 + chart + feedback；7 场景 e2e 实测（含多轮追问 S7）见 docs/e2e-acceptance.md（数字全部出自 eval/reports/e2e-acceptance.json，不另立声明） |
+| 图表 spec 级确定性渲染与接入（无像素；前端零图表类型决策） | 已有工程经验 | 以 ADR-0025 接入 `/ask` 响应链：时间轴列由 `Compiler.emitted_time_column` 声明携带、兜底命中 note 显式标注、`yoy`/`pop` 只画当期、恒 ≤ 200 点；`tests/test_chart.py` 16 既有用例逐字未改 + 6 新增全绿；浏览器走查实测（截图 `docs/screenshots/p3-walkthrough-1-ask-chart.png`） |
 | Ossie / Polaris / Iceberg / Doris | **需新建** | 单机部署、基准测试、维护 ADR（0002/0004/0005） |
 | Agent 安全执行与自动洞察 | **需新建** | 先做安全工具，再扩展规划与归因 |
-| HTTP API / 认证中间件 | 已有工程经验 | 以 FastAPI 落地 serving/api.py（ADR-0012：/health /plan /compile /ask + JWT），/api 契约测试 43 例（+17 硬化：身份注入/会话冲突 422/限流 429/审计字段集）+ 真链验收 api-verify A1-A7 在档 |
+| HTTP API / 认证中间件 | 已有工程经验 | 以 FastAPI 落地 serving/api.py + serving/governance.py（ADR-0012 + ADR-0022 契约 v2：`/api/v1` 前缀 + 治理面 8 集合/2 钻取 + 限流两桶 + `/plan/execute` + JWT），/api 契约测试 96 例（身份注入/会话冲突 422/限流两桶 429/契约 v2 防漂移 16 路径/审计字段集）+ 真链验收 api-verify A1-A9 在档 |
 
 ---
 
 ## 12. 许可与声明
 
-- 代码：`Apache-2.0`
-- 数据：TPC-DI / BIRD / FIBO（MIT）/ OMG Commons（研究用途）遵循各自原始许可
+- **代码**：`Apache-2.0`（全文见 [`LICENSE`](LICENSE)；版权归属与第三方声明见 [`NOTICE`](NOTICE)）
+- **数据与本体**（均不入库，Atlas 不分发；由使用者自行获取、各自遵循原始许可）：
+  - TPC-DI 源数据：TPC 基准条款；生成工具 PDGF 受 BANKMARK EULA 约束（`data/raw/gen_tpcdi.sh`）
+  - TPC-DS kit（SF0.1）：TPC EULA v2.2；clone 指令见 `scripts/setup_tpcds.sh`
+  - FIBO 本体（FND+FBC+BE）：MIT License（Copyright 2020 EDM Council）；FIBO 为 EDM Council 商标；clone 指令见 `data/fibo/README.md`
+  - OMG Commons / LCC：RDF 内容由使用者自行下载（`data/fibo/vendor/` 不入库），其许可条款**未在本仓留存文本**，使用前需自行向 OMG 确认；本仓只入库 IRI 标识符字符串
+  - BIRD finance：公开学术基准，仅作历史对照、不新增接入（ADR-0014）
+- **依赖**：声明见 `pyproject.toml` / `uv.lock`；GPLv2 / LGPL-3.0 数据库驱动已于 P0a 移除（ADR-0023）；机器生成清单：`make license-check REPORT=1` → [`exports/dependency-licenses.json`](exports/dependency-licenses.json)（GNU make 不接受 `--report` 长选项，故用变量触发；脚本侧 `python -m infra.license_check --report` 原样可用）
+- **第三方工具与素材**：
+  - `scripts/tpcds_kit_sf01.patch`：含 48 行 TPC-DS kit 源码（16 删除 + 32 上下文），受 TPC EULA v2.2 约束，**不适用** Apache-2.0（文件头声明块 + `NOTICE` §2）
+  - Remotion（`docs/outreach-video/`）：source-available 两层许可——个人 / ≤3 人营利组织 / 非营利适用 Free License，否则需 Company License；`node_modules` 与渲染视频不入库（`NOTICE` §3）
+  - 入库媒体（`docs/contact-wechat.png`、`docs/outreach-wechat-assets/*` 等）为自产，无第三方素材
+
+**许可证版本边界**：历史 tag（v0.1.0 / v0.1.1 / v0.1.3）树内不含 `LICENSE` 文件；MIT 文本于 `b547489` 入库、经合并 `14f210a` 进入主干；自 P0a 批次（2026-09-16）起统一为 Apache-2.0 全文。历史文本不追溯改写，判别以 Git 历史为准。
+
+**TPC 性能结果约束**（TPC-DS kit EULA 4.c）：README 中的耗时/行数类数字均为 Atlas 自身链路实测，非 TPC 工具性能结果；今后若公开 dsdgen/dsqgen 相关性能数字，需按 4.c 加显式标识（TPC Benchmark Result / 学术研究且非营销声明 / 声明不可比）。
 
 ---
 

@@ -29,25 +29,13 @@ from pathlib import Path
 from typing import Any
 
 from agent.compiler import SemanticModel
+from data.identity import git_short_sha
 from retrieval.bm25 import Bm25Index
 from retrieval.metric_docs import build_metric_docs
 
 REPO = Path(__file__).resolve().parent.parent
 GOLD_DIR = REPO / "eval" / "gold"
 REPORTS_DIR = REPO / "eval" / "reports"
-
-
-def git_short_sha() -> str:
-    """当前 HEAD 短 sha（与 runner.py 同口径：报告绑定 commit）。"""
-    import subprocess
-
-    return subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=REPO,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
 
 
 def load_queries() -> list[dict[str, str]]:
