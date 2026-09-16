@@ -6,7 +6,7 @@ default = true
 
 [project]
 name = "atlas"
-version = "0.1.3"
+version = "0.1.4"
 description = "Atlas - 可信 AI 问数平台（Apache Ossie 语义层 + 受控 NL2SQL + 可解释 Data Agent）"
 readme = "README.md"
 requires-python = ">=3.11"
