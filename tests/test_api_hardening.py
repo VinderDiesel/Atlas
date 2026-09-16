@@ -1,11 +1,16 @@
-"""HTTP 服务面硬化契约测试（C2：身份下推 + 会话指纹 + 审计 + 限流）。
+"""HTTP 服务面硬化契约测试（C2：身份下推 + 会话指纹 + 审计 + 限流；URL 契约 v2 见 ADR-0022）。
 
 口径（serving/api.py 同源注入模式，仿 tests/test_api.py）：
 - fake agent_factory + fake 执行器（SQL 落盘断言 = 身份注入面）；
 - 审计 AuditLog 注入 tmp 目录（不碰仓库 serving/audit/）；限流 RateLimiter
   注入小窗口（不碰真实 .env）；JWT 用模块级固定测试密钥。
 - 会话指纹绑定语义：多轮/续接请求必须复用同一 token（换 token = 新身份）；
-  401 在 require_bearer 先拒（不限流不审计）；/health 公开（不限流不审计）。
+  指纹自 ADR-0020 决策 ⑥ 起存在 **Agent 的 checkpoint** 里（不再是 api 的进程内
+  字典），故 fake 工厂必须**按域各建一个 Agent**——真实 `_live_agent` 也是按域各一，
+  共用一个实例会让两个域撞在同一张图里。
+- 401 在 require_bearer 先拒（不限流不审计）；/health 公开（不限流不审计）。
+- 契约 v2（ADR-0022）：业务端点带 `/api/v1` 前缀；审计行带 bucket 字段
+  （业务面 "business"；治理面 "governance" 见 tests/test_api_contract_v2.py）。
 """
 
 from __future__ import annotations
@@ -28,6 +33,9 @@ from serving.ratelimit import RateLimiter
 
 REPO = Path(__file__).resolve().parent.parent
 
+# 契约 v2 前缀（ADR-0022 决策 ②硬切）：业务端点一律带前缀
+API = "/api/v1"
+
 # 锁定快照表白名单（与 tests/test_api.py 同口径；P7 起补零售 4 表模拟双源）
 _META = json.loads((REPO / "data/snapshots" / "7d48dcb.meta.json").read_text(encoding="utf-8"))
 ALLOWED = frozenset(
@@ -42,6 +50,9 @@ MODEL = SemanticModel()
 SECRET = "api-harden-test-secret"
 GOLD102_Q = "按分支统计 2013 年佣金收入，列出前 5 名"
 AMBIGUOUS_Q = "最近交易情况怎么样？"  # gold-104：相对时间 → 反问
+# 与 serving/rls_verify.py RETAIL_QUESTION / api_acceptance A7 同串（载体同源），
+# 防问句漂移——hardening 不 import rls_verify（避免 eval.runner 重链）
+RETAIL_Q = "2000 年按门店城市和品类统计销售额，列出前 3 名"
 
 
 class FakeExecutor:
@@ -72,12 +83,20 @@ class ApiHardeningTest(unittest.TestCase):
         self._secret_was_set = "ATLAS_JWT_SECRET" in os.environ
         os.environ["ATLAS_JWT_SECRET"] = SECRET
         self.executor = FakeExecutor()
-        self.agent = DataAgent(executor=self.executor, budget=BUDGET)
+        self._agents: dict[str, DataAgent] = {}
+
+        def factory(model_name: str) -> DataAgent:
+            # 按域各建一个（真实 _live_agent 同形）：轮数与身份指纹都存进各自图的
+            # checkpoint（ADR-0020 决策 ⑤⑥），共用实例会让 finance 的绑定误判 retail
+            if model_name not in self._agents:
+                self._agents[model_name] = DataAgent(executor=self.executor, budget=BUDGET)
+            return self._agents[model_name]
+
         self._audit_tmp = tempfile.TemporaryDirectory(prefix="atlas-audit-")
         self.audit = AuditLog(Path(self._audit_tmp.name))
         self.client = TestClient(
             create_app(
-                agent_factory=lambda _domain: self.agent,
+                agent_factory=factory,
                 audit=self.audit,
                 rate_limiter=RateLimiter(max_requests=10_000, window_seconds=60),
             )
@@ -105,7 +124,7 @@ class ApiHardeningTest(unittest.TestCase):
     def test_ask_branch_manager_injects_predicate_and_visibility(self) -> None:
         """branch_manager{east} token /ask → 执行 SQL 含分支谓词 + 生效句可见。"""
         resp = self.client.post(
-            "/ask",
+            f"{API}/ask",
             json={"question": GOLD102_Q},
             headers=self._auth(_token("branch_manager", {"branch": "east"})),
         )
@@ -122,11 +141,69 @@ class ApiHardeningTest(unittest.TestCase):
     def test_ask_hq_admin_injects_1eq1(self) -> None:
         """hq_admin token /ask → 谓词 1=1（无行过滤语义，enforce 如实注入）。"""
         resp = self.client.post(
-            "/ask", json={"question": GOLD102_Q}, headers=self._auth()
+            f"{API}/ask", json={"question": GOLD102_Q}, headers=self._auth()
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["kind"], "answer")
         self.assertIn("1 = 1", self.executor.calls[0])
+
+    def test_ask_cross_domain_identity_rejected_no_execution(self) -> None:
+        """region_manager（零售策略角色）× finance model → kind=error，零 SQL（判据 12）。
+
+        旧行为是 Guard 兜底拒绝（blocked，谓词列无 join 路径）；ADR-0021 起身份层
+        按域拒绝（域不匹配），先于 Guard——不执行任何 SQL，审计行 kind 同步 error。
+        """
+        resp = self.client.post(
+            f"{API}/ask",
+            json={"question": GOLD102_Q},
+            headers=self._auth(_token("region_manager", {"region": "TN"})),
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["kind"], "error")
+        self.assertIn("域不匹配", str(body["error"]))
+        self.assertEqual(self.executor.calls, [])  # Guard 之前即拒：零 SQL 达执行器
+        row = self._lines()[0]  # 审计行与回合 kind 同步
+        self.assertEqual(row["endpoint"], f"{API}/ask")
+        self.assertEqual(row["kind"], "error")
+        self.assertEqual(row["status"], 200)
+        self.assertEqual(row["claims"]["role"], "region_manager")
+
+    def test_ask_retail_hq_admin_policy_name_follows_domain(self) -> None:
+        """零售域 hq_admin /ask → 策略名报 rp_dept_visible（判据 11，跨域误报回归锁）。
+
+        旧 ROLE_DIRECTORY 把 hq_admin 的策略名写死 rp_branch_visible：零售域谓词
+        1=1 无过滤故结果对、归因错；ADR-0021 起策略名按模型 default_row_policy
+        解析（域 → 策略），审计行 kind 同步 answer。
+        """
+        retail = SemanticModel(REPO / "semantic" / "ossie" / "atlas_retail.ossie.yaml")
+        executor = FakeExecutor()
+        client = TestClient(
+            create_app(
+                agent_factory=lambda _m: DataAgent(model=retail, executor=executor, budget=BUDGET),
+                audit=self.audit,
+                rate_limiter=RateLimiter(max_requests=10_000, window_seconds=60),
+            )
+        )
+        try:
+            resp = client.post(
+                f"{API}/ask",
+                json={"question": RETAIL_Q, "model": "retail"},
+                headers=self._auth(),
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["kind"], "answer")
+            effect = str(body["explanation"]["policy_effect"])
+            self.assertIn("hq_admin", effect)
+            self.assertIn("rp_dept_visible", effect)
+            self.assertNotIn("rp_branch_visible", effect)  # 跨域策略名误报回归锁
+            row = self._lines()[0]
+            self.assertEqual(row["kind"], "answer")
+            self.assertEqual(row["claims"]["role"], "hq_admin")
+            self.assertEqual(row["status"], 200)
+        finally:
+            client.close()
 
     # ---- ② 会话身份指纹：同 session 换身份 → 422 ----
 
@@ -135,11 +212,11 @@ class ApiHardeningTest(unittest.TestCase):
         sid = "harden-sess-1"
         headers = self._auth(_token("branch_manager", {"branch": "east"}))
         r1 = self.client.post(
-            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=headers
+            f"{API}/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=headers
         )
         self.assertEqual(r1.status_code, 200)
         r2 = self.client.post(
-            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
+            f"{API}/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
         )
         self.assertEqual(r2.status_code, 422)
         self.assertIn("会话身份冲突", r2.json()["detail"])
@@ -150,7 +227,7 @@ class ApiHardeningTest(unittest.TestCase):
         headers = self._auth(_token("branch_manager", {"branch": "east"}))
         for _ in range(2):
             resp = self.client.post(
-                "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=headers
+                f"{API}/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=headers
             )
             self.assertEqual(resp.status_code, 200)
         # 同身份不产生冲突审计行
@@ -161,25 +238,25 @@ class ApiHardeningTest(unittest.TestCase):
         sid = "harden-sess-3"
         branch = self._auth(_token("branch_manager", {"branch": "east"}))
         r1 = self.client.post(
-            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=branch
+            f"{API}/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=branch
         )
         self.assertEqual(r1.status_code, 200)
         # finance 会话已绑 branch 指纹 → 换 hq token 冲突
         r2 = self.client.post(
-            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
+            f"{API}/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
         )
         self.assertEqual(r2.status_code, 422)
-        # retail 同 sid 是独立会话键：hq token 首启不冲突（retail Agent = 同一
-        # fake，仅验证会话指纹键隔离不误伤）
+        # retail 同 sid 落在另一个 Agent（按域各一）的独立线程上：hq token 首启不冲突
+        # （指纹进 checkpoint 后，跨域隔离靠 thread_id 的模型前缀，见决策 ④）
         r3 = self.client.post(
-            "/ask",
+            f"{API}/ask",
             json={"question": GOLD102_Q, "session_id": sid, "model": "retail"},
             headers=self._auth(),
         )
         self.assertEqual(r3.status_code, 200)
         # 但 retail 会话随后换 token 同样冲突
         r4 = self.client.post(
-            "/ask",
+            f"{API}/ask",
             json={"question": GOLD102_Q, "session_id": sid, "model": "retail"},
             headers=self._auth(_token("branch_manager", {"branch": "west"})),
         )
@@ -189,7 +266,7 @@ class ApiHardeningTest(unittest.TestCase):
         """不带 session_id（单轮自动会话）：换 token 无冲突（无绑定可冲突）。"""
         for _ in range(2):
             resp = self.client.post(
-                "/ask",
+                f"{API}/ask",
                 json={"question": GOLD102_Q},
                 headers=self._auth(_token("branch_manager", {"branch": "east"})),
             )
@@ -203,7 +280,7 @@ class ApiHardeningTest(unittest.TestCase):
         audit = AuditLog(Path(tmp.name))
         client = TestClient(
             create_app(
-                agent_factory=lambda _domain: self.agent,
+                agent_factory=lambda _domain: DataAgent(executor=self.executor, budget=BUDGET),
                 audit=audit,
                 rate_limiter=RateLimiter(max_requests=max_requests, window_seconds=60),
             )
@@ -216,9 +293,9 @@ class ApiHardeningTest(unittest.TestCase):
         try:
             headers = self._auth()
             for _ in range(2):
-                resp = client.post("/plan", json={"question": GOLD102_Q}, headers=headers)
+                resp = client.post(f"{API}/plan", json={"question": GOLD102_Q}, headers=headers)
                 self.assertEqual(resp.status_code, 200)
-            resp = client.post("/plan", json={"question": GOLD102_Q}, headers=headers)
+            resp = client.post(f"{API}/plan", json={"question": GOLD102_Q}, headers=headers)
             self.assertEqual(resp.status_code, 429)
             self.assertIn("Retry-After", resp.headers)
             self.assertGreaterEqual(int(resp.headers["Retry-After"]), 1)
@@ -229,7 +306,7 @@ class ApiHardeningTest(unittest.TestCase):
             rl = [r for r in rows if r["kind"] == "rate_limited"]
             self.assertEqual(len(rl), 1)
             self.assertEqual(rl[0]["status"], 429)
-            self.assertEqual(rl[0]["endpoint"], "/plan")
+            self.assertEqual(rl[0]["endpoint"], f"{API}/plan")
             self.assertEqual(rl[0]["claims"]["role"], "hq_admin")
         finally:
             client.close()
@@ -241,9 +318,9 @@ class ApiHardeningTest(unittest.TestCase):
         try:
             headers = self._auth()
             hits = [
-                client.post("/plan", json={"question": GOLD102_Q}, headers=headers),
+                client.post(f"{API}/plan", json={"question": GOLD102_Q}, headers=headers),
                 client.post(
-                    "/compile",
+                    f"{API}/compile",
                     json={
                         "metric": "commission_revenue",
                         "dimensions": ["Branch"],
@@ -252,11 +329,11 @@ class ApiHardeningTest(unittest.TestCase):
                     },
                     headers=headers,
                 ),
-                client.post("/ask", json={"question": GOLD102_Q}, headers=headers),
+                client.post(f"{API}/ask", json={"question": GOLD102_Q}, headers=headers),
             ]
             for resp in hits:
                 self.assertEqual(resp.status_code, 200, resp.text[:120])
-            fourth = client.post("/plan", json={"question": GOLD102_Q}, headers=headers)
+            fourth = client.post(f"{API}/plan", json={"question": GOLD102_Q}, headers=headers)
             self.assertEqual(fourth.status_code, 429)
         finally:
             client.close()
@@ -267,17 +344,17 @@ class ApiHardeningTest(unittest.TestCase):
         client, _audit, tmp = self._small_client(max_requests=1)
         try:
             r1 = client.post(
-                "/plan",
+                f"{API}/plan",
                 json={"question": GOLD102_Q},
                 headers=self._auth(_token("hq_admin", subject="user-a")),
             )
             r2 = client.post(
-                "/plan",
+                f"{API}/plan",
                 json={"question": GOLD102_Q},
                 headers=self._auth(_token("hq_admin", subject="user-b")),
             )
             r3 = client.post(
-                "/plan",
+                f"{API}/plan",
                 json={"question": GOLD102_Q},
                 headers=self._auth(_token("hq_admin", subject="user-a")),
             )
@@ -295,11 +372,11 @@ class ApiHardeningTest(unittest.TestCase):
             # 两个 /health + 一个 401（无/坏 token）都不消耗配额
             self.assertEqual(client.get("/health").status_code, 200)
             self.assertEqual(client.get("/health").status_code, 200)
-            resp = client.post("/plan", json={"question": GOLD102_Q})
+            resp = client.post(f"{API}/plan", json={"question": GOLD102_Q})
             self.assertEqual(resp.status_code, 401)
             # 配额仍可用 → 有效 token 请求放行（若 401 被计数则应 429）
             resp = client.post(
-                "/plan", json={"question": GOLD102_Q}, headers=self._auth()
+                f"{API}/plan", json={"question": GOLD102_Q}, headers=self._auth()
             )
             self.assertEqual(resp.status_code, 200)
         finally:
@@ -325,28 +402,39 @@ class ApiHardeningTest(unittest.TestCase):
     # ---- ④ 审计：JSONL 每业务请求一行（tmp 目录 + 字段集断言） ----
 
     def test_audit_row_fieldset_stable(self) -> None:
-        """审计行字段全集恒定（8 键 + claims{role,sub}）；不含 SQL 与条件值。"""
-        self.client.post("/plan", json={"question": GOLD102_Q}, headers=self._auth())
+        """审计行字段全集恒定（9 键含 bucket + claims{role,sub}）；不含 SQL 与条件值。"""
+        self.client.post(f"{API}/plan", json={"question": GOLD102_Q}, headers=self._auth())
         rows = self._lines()
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual(
             set(row),
-            {"ts", "claims", "endpoint", "session_id", "kind", "row_count", "latency_ms", "status"},
+            {
+                "ts",
+                "claims",
+                "endpoint",
+                "session_id",
+                "kind",
+                "row_count",
+                "latency_ms",
+                "status",
+                "bucket",
+            },
         )
         self.assertEqual(set(row["claims"]), {"role", "sub"})
         self.assertNotIn("sql", row)  # SQL 细节由 OTel span 承担，不入审计
         self.assertNotIn("user_context", row["claims"])  # 条件值不外泄
-        self.assertEqual(row["endpoint"], "/plan")
+        self.assertEqual(row["endpoint"], f"{API}/plan")
         self.assertEqual(row["kind"], "plan")
         self.assertEqual(row["status"], 200)
+        self.assertEqual(row["bucket"], "business")  # 契约 v2 决策 ⑥：行标桶名
         self.assertEqual(row["claims"]["role"], "hq_admin")
 
     def test_audit_plan_clarify_and_compile_kinds(self) -> None:
         """/plan 歧义 /compile 成功·失败 → 各自 kind 与 status 如实落行。"""
-        self.client.post("/plan", json={"question": AMBIGUOUS_Q}, headers=self._auth())
+        self.client.post(f"{API}/plan", json={"question": AMBIGUOUS_Q}, headers=self._auth())
         self.client.post(
-            "/compile",
+            f"{API}/compile",
             json={
                 "metric": "commission_revenue",
                 "dimensions": ["Branch"],
@@ -356,23 +444,23 @@ class ApiHardeningTest(unittest.TestCase):
             headers=self._auth(),
         )
         self.client.post(
-            "/compile",
+            f"{API}/compile",
             json={"metric": "no_such_metric"},
             headers=self._auth(),
         )
         rows = self._lines()
         kinds = {r["kind"]: r for r in rows}
-        self.assertEqual(kinds["clarify"]["endpoint"], "/plan")
+        self.assertEqual(kinds["clarify"]["endpoint"], f"{API}/plan")
         self.assertEqual(kinds["clarify"]["status"], 200)
         self.assertEqual(kinds["compiled"]["status"], 200)
-        self.assertEqual(kinds["compile_error"]["endpoint"], "/compile")
+        self.assertEqual(kinds["compile_error"]["endpoint"], f"{API}/compile")
         self.assertEqual(kinds["compile_error"]["status"], 422)
 
     def test_audit_ask_answer_row_fields(self) -> None:
         """/ask answer 行：kind/row_count/latency_ms/session_id 语义如实。"""
         sid = "audit-sess-1"
         resp = self.client.post(
-            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
+            f"{API}/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
         )
         self.assertEqual(resp.status_code, 200)
         row = self._lines()[0]
@@ -387,10 +475,10 @@ class ApiHardeningTest(unittest.TestCase):
         sid = "audit-sess-2"
         headers_a = self._auth(_token("branch_manager", {"branch": "east"}))
         self.client.post(
-            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=headers_a
+            f"{API}/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=headers_a
         )
         self.client.post(
-            "/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
+            f"{API}/ask", json={"question": GOLD102_Q, "session_id": sid}, headers=self._auth()
         )
         conflicts = [r for r in self._lines() if r["kind"] == "conflict"]
         self.assertEqual(len(conflicts), 1)
@@ -403,7 +491,7 @@ class ApiHardeningTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(prefix="atlas-audit-off-")
         try:
             audit = AuditLog(Path(tmp.name), enabled=False)
-            audit.record(endpoint="/plan", claims={"role": "hq_admin", "sub": "u"})
+            audit.record(endpoint=f"{API}/plan", claims={"role": "hq_admin", "sub": "u"})
             self.assertFalse((Path(tmp.name) / AUDIT_FILENAME).exists())
         finally:
             tmp.cleanup()

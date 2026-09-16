@@ -20,7 +20,8 @@ Guard 注入行级策略后在 Doris 实测。输出绑定 git sha 的报告 + H
 
 产出
 ----
-- eval/reports/p1-chain-<git sha>.json：结构化验收证据（绑定 HEAD）
+- eval/reports/p1-chain-<git sha>.json：结构化验收证据（文件名 = 代码 HEAD；内含
+  snapshot_* 三键记实际绑定的快照，二者可以不同，见 ADR-0019 决策 ① 与代价 ③）
 - docs/screenshots/p1-chain.html：同一证据的 HTML 快照（供截图留证）
 - 用法：uv run --env-file .env python serving/p1_acceptance.py
 """
@@ -29,7 +30,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 import time
 from html import escape
@@ -41,6 +41,11 @@ sys.path.insert(0, str(REPO_ROOT))
 from agent.compiler import Compiler, OrderSpec, Plan, SemanticModel, TimeSpec  # noqa: E402
 from agent.planner import Planner  # noqa: E402
 from agent.security.sql_guard import Policy, UnsafeQuery, enforce  # noqa: E402
+from data.identity import (  # noqa: E402
+    SnapshotUnavailable,
+    git_short_sha,
+    resolve_runtime_snapshot,
+)
 from eval.runner import build_budget, execute_sql, result_hash  # noqa: E402
 from semantic.governance_validate import collect_metric_governance  # noqa: E402
 from serving.auth import resolve_policy, sign_token  # noqa: E402
@@ -84,24 +89,18 @@ class Trace:
         return self._events
 
 
-def git_short_sha() -> str:
-    out = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return out.stdout.strip()
-
-
 def load_budget():
-    """快照行数白名单（与 eval/runner.build_budget 同口径，取最新 meta）。"""
-    metas = sorted((REPO_ROOT / "data" / "snapshots").glob("*.meta.json"))
-    if not metas:
-        raise SystemExit("[error] data/snapshots 无 meta.json，先锁定快照")
-    meta = json.loads(metas[-1].read_text(encoding="utf-8"))
-    return build_budget(meta)
+    """Guard 预算：快照行数白名单（与 eval/runner.build_budget 同口径）。
+
+    返回 (预算, 快照解析结果)——验收报告要如实记下数字绑在哪份快照上。改造前取
+    `sorted(metas)[-1]`（字典序）而 docstring 写「取最新」：ADR-0019 背景节实测
+    字典序选中 `dc4f350`（2026-09-04），按 `created_at` 应为 `a11d779`（2026-09-09）。
+    """
+    try:
+        snapshot = resolve_runtime_snapshot()
+    except SnapshotUnavailable as exc:
+        raise SystemExit(f"[error] {exc}") from None
+    return build_budget(snapshot.meta), snapshot
 
 
 def metric_governance() -> dict:
@@ -217,7 +216,8 @@ def main() -> int:
     trace.step("compile", f"LIMIT/分组/年份断言通过，SQL {len(sql)} 字符")
 
     # -- 阶段 4：Guard 恶意拦截门槛（10 条全拒） -----------------------------------
-    budget = load_budget()
+    budget, snapshot = load_budget()
+    print(f"[snapshot] {snapshot.describe()}")
     gate = run_malicious_gate(budget)
     if not gate["all_blocked"]:
         leaked = [c for c in gate["cases"] if not c["blocked"]]
@@ -228,7 +228,7 @@ def main() -> int:
     # -- 阶段 5：加策略并执行（hq_admin 全量 → EX 匹配 gold-102；branch_manager 分支） --
     gold = json.loads(GOLD_FILE.read_text(encoding="utf-8"))
     # hq_admin：策略 1=1（总部全量），执行结果必须与 gold-102 锚定 hash 一致
-    resolved_hq = resolve_policy(sign_token("hq_admin", {}))
+    resolved_hq = resolve_policy(sign_token("hq_admin", {}), policy_name="rp_branch_visible")
     guarded_hq, _ = enforce(
         sql,
         policy=Policy(name=resolved_hq.policy_name, condition=resolved_hq.condition),
@@ -242,7 +242,9 @@ def main() -> int:
 
     # branch_manager：分支谓词注入（分支取自总部 Top 第一个无空格值）
     branch = pick_branch_value(rows_hq, columns_hq)
-    resolved_bm = resolve_policy(sign_token("branch_manager", {"branch": branch}))
+    resolved_bm = resolve_policy(
+        sign_token("branch_manager", {"branch": branch}), policy_name="rp_branch_visible"
+    )
     guarded_bm, _ = enforce(
         sql,
         policy=Policy(name=resolved_bm.policy_name, condition=resolved_bm.condition),
@@ -259,6 +261,11 @@ def main() -> int:
     sha = git_short_sha()
     report = {
         "sha": sha,
+        # 报告文件名用代码 HEAD，而数字绑在解析出的快照上（二者可以不同）。这三个键
+        # 防的就是「以 <HEAD>.json 命名 → 被读成 HEAD 的评测结果」（ADR-0019 代价 ③）
+        "snapshot_sha": snapshot.sha,
+        "snapshot_source": snapshot.source,
+        "snapshot_bound_to_head": snapshot.bound_to_head,
         "question": QUESTION,
         "gold_file": str(GOLD_FILE.relative_to(REPO_ROOT)),
         "metric_id": EXPECTED_METRIC_ID,
@@ -329,6 +336,10 @@ def _write_html(report: dict, path: Path) -> None:
     plan = report["plan"]
     parts = [
         f"<h1>P1 端到端验收 <code>{report['sha']}</code></h1>",
+        # 留证物上必须同屏显示代码 HEAD 与实际快照（二者可以不同，ADR-0019 代价 ③）
+        f"<p>快照绑定：<code>{esc(str(report['snapshot_sha']))}</code> · "
+        f"source=<code>{esc(str(report['snapshot_source']))}</code> · "
+        f"bound_to_head={esc(str(report['snapshot_bound_to_head']).lower())}</p>",
         f"<p>问句：{esc(report['question'])}（gold-102）</p>",
         f"<p>链路：Planner → {esc(report['metric_id'])} → Compiler → Guard → Doris</p>",
         f"<p>Plan：metric={esc(plan['metric'])} dimensions={plan['dimensions']} "

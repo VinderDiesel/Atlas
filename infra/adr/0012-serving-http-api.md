@@ -96,3 +96,73 @@ api-verify 报告 eval/reports/api-acceptance-4a547e7.json（A5 三角色差异 
 身份冲突 / A7 零售品类受限 + 跨域 Guard 拒绝）；契约测试现 43 例（test_api.py 26
 + test_api_hardening.py 17）。仍未兑现：生产部署验证、Doris identity mode 下推
 真实用户（ADR-0011 决策 4 独立项）；「真实多租户/外部访问」推翻条件未触发。
+
+## 落地注记：会话持久化批次（2026-09-14~15，ADR-0020；沿 0011 增补口径先例，不改正文）
+
+决策 1 的 **workers=1 结论不变，理由收窄**。原理由「checkpointer（MemorySaver）与
+`DataAgent._session_turns` 是进程内状态，多 worker = 会话分裂」中，会话轨迹、轮数、
+会话×身份指纹三项已由 ADR-0020 持久化到 SQLite checkpointer（`ATLAS_CHECKPOINT_DB`
+显式开启），不再分裂；仍为进程内的是 `RateLimiter._hits`（serving/ratelimit.py:33，
+多 worker = 实际配额 N × 阈值）、审计 JSONL 追加写（serving/audit.py:52 docstring
+明示「单 worker 无锁冲突」）与 Agent 单例（各自持有 SQLite 连接）。故 workers=1
+仍必须，理由改为「限流桶 + 审计写 + SQLite 单写者」。
+
+推翻条件第 1 条（「多 worker/多实例需求 → langgraph **Postgres** checkpointer」）
+**未触发**：ADR-0020 选 SQLite 的目标是「重启不失忆」，不是横向扩展；真要解除
+workers=1 时仍应按本条改走 Postgres，并同时解决限流与审计的跨进程一致性。
+
+代价段「单进程内存会话：重启即失、无横向扩展」如实收窄为「重启不失（会话/轮数/
+身份指纹已持久化），无横向扩展」。`/ask` 端点 docstring 同批改写（按符号 `def ask`
+定位）、`holder["sessions"]` 的进程内指纹绑定整块删除——指纹改存 checkpoint（只存
+哈希，授权仍每轮用本轮 claims），422 语义跨重启成立。`/health` 同批扩字段（ADR-0019
+决策 ⑥ + ADR-0020 决策 ⑦：`snapshot_source` / `snapshot_bound_to_head` / `boot_id`），
+既有键不改名；`atlas-api` 的 healthcheck 只探 URL，不受影响（按 `healthcheck` +
+服务名定位——本批给 atlas-api 加了卷挂载与透传，行号已漂）。
+
+判据 13/14 的副本同步（2026-09-15 收窄落地；定位一律用符号名，行号随 0020 批次
+持续漂移）：判据 13 列的 7 处中，Makefile serve 注释 / docker-compose.yml /
+infra/docker/api/Dockerfile / serving/api.py 模块 docstring / README KL #28 ①②
+五处改写为收窄后的理由，`agent/graph.py` 模块 docstring 与 `tests/test_api.py`
+口径行已随工作项 9 同步（本批核对锁定）。按行为检索又找到 11 处同类失真一并同步
+（跨 8 个文件：README.md / README.en.md / ADR-0011 / ADR-0018 / 前端计划 /
+serving/audit.py / agent/cli.py / tests/test_demo_e2e.py）——其中 ADR-0011
+落地注记、ADR-0018 决策 ⑦ 与前端计划 #32 草案三处曾把「身份指纹是进程内态」
+**转述**给 ADR-0020 决策 ⑧，而 0020 表格自始即列「身份指纹已入 checkpoint」，
+属转述错误而非时态漂移。`tests/test_session_persistence.py::
+TestWorkers1RationaleNarrowed` 把副本清单固化为断言（旧符号 `_session_turns`
+绝迹 + 收窄后三关键词在场），后续批次回退即红。
+
+## 落地注记：HTTP 契约 v2 批次（2026-09-14，ADR-0022；沿 `:89` 增补口径先例，不改正文）
+
+**本注记记录的是 ADR-0022 的裁定，落地批次为 P-2api，尚未实现**——本 ADR 决策 2
+描述的 4 条无前缀路由仍是当前实测状态（`app.openapi()["paths"]` 实测 4 条：
+`/ask` `/compile` `/health` `/plan`，`serving/api.py:337/:347/:363/:382`）。
+
+决策 2 的端点清单被 ADR-0022 **取代**（不是扩充）：`/plan` `/compile` `/ask` 三条
+迁到 `/api/v1` 前缀下且旧路径直接删除（硬切，无兼容层），`/health` **双挂**
+（根路径保留 + `/api/v1/health`），另新增 `POST /api/v1/plan/execute` 与
+`GET /api/v1/governance/*`（8 集合 + 2 钻取）。迁移后 openapi paths 目标为
+**16 条**（ADR-0022 判据 1）。决策 2 中各端点的请求/响应语义、认证方式（决策 3）、
+序列化规则（决策 4）、问句长度上限（决策 5）**均不变**。
+
+**推翻条件第 3 条（「LLM 引擎需要服务化 → engine 参数开放（v2，本 ADR 不设计）」）
+未触发**：ADR-0022 标题里的「v2」与 URL 里的 `/api/v1` 是两个不同计数器——
+「契约 v2」指本 ADR 之后的第二版契约**文档**，URL `/api/v1` 是首个对消费者做过
+兼容承诺的命名空间（此前 4 条无前缀路由从未做版本承诺）。ADR-0022 **不开放
+`engine` 参数**，确定性默认（engine=stub）不变，LLM 引擎服务化仍属未裁定的未来项。
+在此显式声明以避免「v2」一词被读成能力已扩展（N2）。
+
+代价段第 3 条「`SemanticModel()` 构造加载语义层 YAML 依赖 cwd → API 进程工作目录
+必须是仓库根」**不扩散到治理面**：ADR-0022 决策 ④ 要求治理端点一律用 `REPO_ROOT`
+绝对路径读文件（沿 `serving/api.py:68-73` 先例），故治理面对进程 cwd 无依赖；
+业务面（`_agent` 构造路径）仍受本条约束，不变。
+
+**落地状态更新（2026-09-16，P-2api 收口）**：上段注记撰写时（09-14）的「尚未实现」
+时态已失效，迁移已实现并实测——`app.openapi()["paths"]` 实测 **16 条**；无前缀
+旧路径（`/ask` `/plan` `/compile` `/plan/execute`）一律 404（硬切，判据 1/9 由
+`tests/test_api_contract_v2.py` 的 `EXPECTED_PATHS` 16 条字面量逐条锁定）；
+`/health` 双挂同 body（判据 2 的 `git diff` 断言成立：本批对 `docker-compose.yml`
+仅新增注释 4 行，healthcheck `test:` 字符串逐字未变）；真链 `make api-verify`
+A1-A9 全绿（11 场景，报告 `eval/reports/api-acceptance-95cba68.json`）。上段
+「4 条无前缀路由仍是当前实测状态（…4 条…）」的括号内容保留为 2026-09-14 的
+时点记录，当前状态以本段为准。

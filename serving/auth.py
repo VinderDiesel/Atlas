@@ -1,10 +1,20 @@
-"""三角色 JWT 签发/校验与角色 → 行级策略绑定（行级权限链路的 JWT 服务，Day 25 落地）。
+"""JWT 签发/校验与角色 → 行级策略绑定（行级权限链路的 JWT 服务，Day 25 落地）。
+
+HTTP 认证依赖（require_bearer / BearerClaims）也在此定义：业务面（serving/api.py）
+与治理面（serving/governance.py）两个 router 共用同一份 401 语义（ADR-0022 决策 ①
+的两个 router 若各写一份，401 文案与 WWW-Authenticate 头会漂移）。
+
+二维事实源（ADR-0021 决策 ①）
+----------------------------
+- 域 → 策略：语义模型的 custom_extensions.policy.default_row_policy（ossie YAML）
+- 策略 → 角色 → 条件：semantic/policies/row_policy.yml（Git 唯一事实源）
+- 本模块 ROLE_DIRECTORY：角色注册 + claims 契约（**不含策略名**——策略由域决定）
 
 口径（诚实声明）
 --------------------
 - 当前数据域是 TPC-DI 金融 dwd（数据已在 Doris 且绑定快照）：gold-146
   「按分支和客户等级统计 2015 年交易额 Top5」同一 SQL 下，hq_admin /
-  branch_manager / compliance_auditor 三角色注入不同谓词 → 结果不同。
+  branch_manager / broker / compliance_auditor 四角色注入不同谓词 → 结果不同。
 - 零售域（rp_dept_visible）角色同构已注册；2026-09-04 TPC-DS SF0.1 零售
   数据落地后，region/product_category 未落地逻辑列对齐物理 dim_store.s_state /
   dim_item.i_category（P5），category_analyst 列表值经 sql_in 过滤器渲染，
@@ -32,8 +42,10 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
 import yaml
+from fastapi import Depends, Header, HTTPException
 
 # 相对仓库根：serving/auth.py → semantic/policies/row_policy.yml
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -41,37 +53,35 @@ POLICY_PATH = _REPO_ROOT / "semantic" / "policies" / "row_policy.yml"
 
 TOKEN_TTL_SECONDS = 3600  # 本地开发 token 有效期 1 小时
 
-# 角色 → (策略文件内策略名, 策略文件内角色名, 说明)
-# 角色条件来自 semantic/policies/row_policy.yml（Git 唯一事实源），不在此复制。
-ROLE_DIRECTORY: dict[str, tuple[str, str, str]] = {
+# 角色注册表：claims 契约 + 说明（**不含策略名**——域 → 策略见 ossie
+# default_row_policy，ADR-0021 决策 ①；角色条件来自 semantic/policies/row_policy.yml
+# （Git 唯一事实源），不在此复制）。required_claims / list_claims 与 YAML 条件模板
+# 的占位符交叉校验（make lint，决策 ⑥）。
+
+
+@dataclass(frozen=True)
+class RoleSpec:
+    """角色注册项：claims 契约 + 说明。**不含策略名**——策略由域决定（决策 ①）。"""
+
+    required_claims: tuple[str, ...]
+    list_claims: frozenset[str] = frozenset()  # 需 sql_in 渲染的列表值键
+    description: str = ""
+
+
+ROLE_DIRECTORY: dict[str, RoleSpec] = {
     # 金融域（rp_branch_visible）：gold-146 问句可注入
-    "hq_admin": (
-        "rp_branch_visible",
-        "hq_admin",
-        "总部管理员：全量可见（条件 1=1）",
-    ),
-    "branch_manager": (
-        "rp_branch_visible",
-        "branch_manager",
-        "分支经理：仅见本分支（dim_broker.branch = 本人分支）",
-    ),
-    "compliance_auditor": (
-        "rp_branch_visible",
-        "compliance_auditor",
-        "合规审计：仅见低敏感客户档（dim_customer.tier <= 上限）",
+    "hq_admin": RoleSpec((), frozenset(), "总部管理员：全量可见（条件 1=1，两域共用）"),
+    "branch_manager": RoleSpec(("branch",), frozenset(), "分支经理：仅见本分支"),
+    "broker": RoleSpec(("brokerid",), frozenset(), "经纪人：仅见本人 brokerid 名下"),
+    "compliance_auditor": RoleSpec(
+        ("max_tier",), frozenset(), "合规审计：仅见 tier ≤ 上限的客户档"
     ),
     # 零售域（rp_dept_visible）：region/product_category 逻辑列已对齐物理
     # （dim_store.s_state / dim_item.i_category，2026-09-04 P5 实测，见
     # eval/reports/rls-verify-<sha>.json）；claims：region + categories（sql_in）
-    "region_manager": (
-        "rp_dept_visible",
-        "region_manager",
-        "大区（州）经理：仅见本州门店数据（dim_store.s_state = 本人州）",
-    ),
-    "category_analyst": (
-        "rp_dept_visible",
-        "category_analyst",
-        "品类分析师：本州 + 指定品类（dim_item.i_category IN 本人品类集）",
+    "region_manager": RoleSpec(("region",), frozenset(), "大区（州）经理：仅见本州门店"),
+    "category_analyst": RoleSpec(
+        ("region", "categories"), frozenset({"categories"}), "品类分析师：本州 + 指定品类集"
     ),
 }
 
@@ -106,6 +116,10 @@ def sign_token(
 ) -> str:
     """签发 HS256 JWT，claims 含 role 与策略渲染所需的 user_context。
 
+    签发期即校验 claims 契约（ADR-0021 决策 ④）：缺 required_claims 任何键、
+    或 list_claims 键的值不是非空列表 → AuthError——把「注定解析失败的 token」
+    拦在签发时（前端角色切换器据此渲染表单，ADR-0018）。
+
     Parameters
     ----------
     role : 角色名，须在 ROLE_DIRECTORY 注册
@@ -119,10 +133,18 @@ def sign_token(
 
     Raises
     ------
-    AuthError : role 未注册 / 密钥缺失
+    AuthError : role 未注册 / 缺必需 claims 键 / 列表值形态错 / 密钥缺失
     """
-    if role not in ROLE_DIRECTORY:
+    spec = ROLE_DIRECTORY.get(role)
+    if spec is None:
         raise AuthError(f"角色未注册：{role!r}（ROLE_DIRECTORY 可加）")
+    missing = [key for key in spec.required_claims if key not in user_context]
+    if missing:
+        raise AuthError(f"角色 {role!r} 缺少必需 claims 键：{missing}（签发期拒绝）")
+    for key in spec.list_claims:
+        value = user_context.get(key)
+        if not isinstance(value, list | tuple) or not value:
+            raise AuthError(f"角色 {role!r} 的 claims {key!r} 需为非空列表：{value!r}")
     secret = secret or _jwt_secret()
     now = int(time.time())
     header = {"alg": "HS256", "typ": "JWT"}
@@ -168,6 +190,45 @@ def verify_token(token: str, *, secret: str | None = None) -> dict[str, object]:
     if payload.get("role") not in ROLE_DIRECTORY:
         raise AuthError(f"JWT role 未注册：{payload.get('role')!r}")
     return payload
+
+
+# ---------------------------------------------------------------------------
+# FastAPI 认证依赖（serving/api.py 业务面与 serving/governance.py 治理面共用，
+# ADR-0022 决策 ①：认证语义单源，两个 router 只装配不复制）
+# ---------------------------------------------------------------------------
+
+
+def require_bearer(authorization: str | None = Header(default=None)) -> dict[str, object]:
+    """Bearer JWT → claims。失败一律 401，不外泄校验细节（0011 口径）。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401, detail="缺少 Bearer 访问令牌", headers={"WWW-Authenticate": "Bearer"}
+        )
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        return verify_token(token)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail="访问令牌无效或已过期") from exc
+
+
+BearerClaims = Annotated[dict[str, object], Depends(require_bearer)]
+
+
+def claims_fingerprint(claims: dict[str, object]) -> str:
+    """已验证 claims → 会话身份指纹（sha256 摘要，跨进程稳定）。
+
+    用途（ADR-0020 决策 ⑥）：会话首轮把指纹写进 checkpoint，后续轮比对——
+    同会话换身份（含重签 token）必须换 session_id。**全量 claims 参与**（含
+    iat/exp）：重签 token 即新身份，口径偏严不偏松（与原进程内实现一致）。
+
+    为什么是哈希而不是 claims 本体：指纹会落进 checkpoint 文件（磁盘/卷），
+    存本体等于把身份细节留档（ADR-0011 不外泄）；校验只需要相等性，不需要原值。
+
+    为什么固定 canonical JSON（sort_keys + 紧凑分隔符）：同一 claims 必须
+    在任何进程/重启后得到同一摘要——序列化形态一变，老会话在重启后全成假冲突。
+    """
+    canonical = json.dumps(claims, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -286,36 +347,41 @@ class ResolvedPolicy:
 def resolve_claims(
     claims: dict[str, object],
     *,
+    policy_name: str,
     policy_path: Path = POLICY_PATH,
 ) -> ResolvedPolicy:
     """已验证 claims → (策略名, 已渲染谓词)：策略解析的纯函数内核。
 
-    resolve_policy(token) 在 verify_token 之后委托本函数；DataAgent 身份注入
-    （graph.ask identity）与 rls-verify/demo 同走本内核——角色条件来自
-    row_policy.yml + claims（Git 唯一事实源，不在此复制）。
+    policy_name 由调用方按当前语义模型传入（`model.default_row_policy`——
+    域 → 策略的唯一事实源在 ossie YAML，ADR-0021 决策 ①③；不再从
+    ROLE_DIRECTORY 推断）。resolve_policy(token, policy_name=...) 在
+    verify_token 之后委托本函数；DataAgent 身份注入（graph.ask identity）
+    与 rls-verify/demo 同走本内核——角色条件来自 row_policy.yml + claims
+    （Git 唯一事实源，不在此复制）。
 
     claims 须已过签名/有效期校验（verify_token 输出形态：role + user_context）；
-    本函数只做角色目录查表与占位符渲染。渲染在服务端做（Guard 的
-    Policy.render 同规则：{{ user.<key> }} 占位符，非法字面量由 Guard 兜底拒绝，
-    这里不做二次实现）。
+    本函数只做角色注册查表、策略内角色存在性判定与占位符渲染。渲染在服务端做
+    （Guard 的 Policy.render 同规则：{{ user.<key> }} 占位符，非法字面量由
+    Guard 兜底拒绝，这里不做二次实现）。
     """
     role = claims.get("role")
     if not isinstance(role, str) or role not in ROLE_DIRECTORY:
         raise AuthError(f"claims role 未注册：{role!r}（ROLE_DIRECTORY 可加）")
-    policy_name, role_name, _ = ROLE_DIRECTORY[role]
     user_context = claims.get("user_context")
     if not isinstance(user_context, dict):
         raise AuthError("JWT 缺少 user_context")
     doc = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    policy = next((p for p in doc["policies"] if p["name"] == policy_name), None)
+    if policy is None:
+        raise AuthError(f"策略不存在：{policy_name!r}（{policy_path}）")
     condition: str | None = None
-    for policy in doc["policies"]:
-        if policy["name"] == policy_name:
-            for r in policy["roles"]:
-                if r["name"] == role_name:
-                    condition = r["condition"]
-                    break
+    for r in policy["roles"]:
+        if r["name"] == role:
+            condition = r["condition"]
+            break
     if condition is None:
-        raise AuthError(f"策略 {policy_name!r} 中找不到角色 {role_name!r}（{policy_path}）")
+        # 「用零售角色查金融域」由静默按一维表解析 → 显式拒绝（ADR-0021 决策 ③）
+        raise AuthError(f"角色 {role!r} 不属于策略 {policy_name!r}（域不匹配）")
     rendered = condition
     for key, value in user_context.items():
         if isinstance(value, list | tuple):
@@ -339,18 +405,37 @@ def resolve_claims(
 def resolve_policy(
     token: str,
     *,
+    policy_name: str,
     secret: str | None = None,
     policy_path: Path = POLICY_PATH,
 ) -> ResolvedPolicy:
     """token → (策略名, 已渲染谓词)：verify_token 后委托 resolve_claims。
 
+    policy_name 与 resolve_claims 同源（调用方按语义模型传入，ADR-0021
+    决策 ③——签名破坏性变更，与 resolve_claims 同一提交内改完）。
     渲染在服务端做（Guard 的 Policy.render 同规则：{{ user.<key> }} 占位符，
-    非法字面量由 Guard 兜底拒绝，这里不做二次实现）。本函数保留原签名，
-    行为逐字符不变（拆分仅把 verify_token 之后的部分抽为 resolve_claims 纯函数，
-    供 DataAgent 身份注入复用——见 agent/graph.py）。
+    非法字面量由 Guard 兜底拒绝，这里不做二次实现）。
     """
     claims = verify_token(token, secret=secret)
-    return resolve_claims(claims, policy_path=policy_path)
+    return resolve_claims(claims, policy_name=policy_name, policy_path=policy_path)
+
+
+def roles_for_policy(
+    policy_name: str,
+    *,
+    policy_path: Path = POLICY_PATH,
+) -> tuple[str, ...]:
+    """策略名 → 该策略下**已注册**的角色（按 row_policy.yml 声明顺序）。
+
+    供前端角色切换器（ADR-0018）与帮助文本按域过滤（ADR-0021 决策 ⑤）；
+    未注册角色不返回（该债务由 make lint 决策 ⑥ 拦截，本函数只暴露
+    可签发的角色集合）。
+    """
+    doc = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    for policy in doc["policies"]:
+        if policy["name"] == policy_name:
+            return tuple(r["name"] for r in policy["roles"] if r["name"] in ROLE_DIRECTORY)
+    raise AuthError(f"策略不存在：{policy_name!r}（{policy_path}）")
 
 
 def _literal(value: object) -> str:

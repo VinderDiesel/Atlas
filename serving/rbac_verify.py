@@ -49,6 +49,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from pyiceberg.catalog import load_catalog  # noqa: E402
 
+from data.identity import git_short_sha  # noqa: E402
+
 MGMT = os.environ.get("POLARIS_MGMT_BASE", "http://127.0.0.1:8181/api/management/v1")
 CATALOG_URI = os.environ.get("POLARIS_URI", "http://127.0.0.1:8181/api/catalog")
 RBAC_PRINCIPAL = "atlas_analyst"
@@ -56,19 +58,6 @@ RBAC_PRINCIPAL_ROLE = "analyst_principal_role"
 RBAC_CATALOG_ROLE = "analyst_catalog_role"
 GRANTED_TABLES = ["dim_broker", "dim_customer"]  # dwd 下仅授这两张
 SCOPE = "PRINCIPAL_ROLE:ALL"
-
-
-def git_short_sha() -> str:
-    import subprocess
-
-    out = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return out.stdout.strip()
 
 
 def _root_credentials() -> tuple[str, str]:

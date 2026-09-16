@@ -11,7 +11,8 @@
 产出
 ----
 - stdout：每指标编译 SQL / Guard 通过 / Doris 实测值
-- eval/reports/metrics-verify-<git sha>.json：结构化证据（绑定 HEAD）
+- eval/reports/metrics-verify-<git sha>.json：结构化证据（文件名 = 代码 HEAD；内含
+  snapshot_* 三键记实际绑定的快照，二者可以不同，见 ADR-0019 决策 ① 与代价 ③）
 - docs/screenshots/metrics-verify.html：同一证据的 HTML 快照（供截图留证）
 
 用法：
@@ -22,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from decimal import Decimal
 from html import escape
@@ -33,6 +33,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from agent.compiler import Compiler, Plan, SemanticModel  # noqa: E402
 from agent.security.sql_guard import Budget, enforce  # noqa: E402
+from data.identity import (  # noqa: E402
+    RuntimeSnapshot,
+    SnapshotUnavailable,
+    git_short_sha,
+    resolve_runtime_snapshot,
+)
 from eval.runner import execute_sql  # noqa: E402
 
 # Day 27 审核发布的指标（审核判定见 semantic/migrations/2026-09-02-*）
@@ -46,28 +52,23 @@ DAY27_METRICS = (
 MAX_ROWS = 10000
 
 
-def git_short_sha() -> str:
-    """当前 HEAD 短 sha（报告绑定提交，防产物与代码漂移）。"""
-    out = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
+def load_budget() -> tuple[Budget, RuntimeSnapshot]:
+    """Guard 预算：快照行数白名单（口径与 eval/runner.build_budget 一致）。
+
+    返回 (预算, 快照解析结果)——报告要如实记下数字绑在哪份快照上。改造前取
+    `sorted(metas)[-1]`（字典序）而 docstring 写「取最新」：ADR-0019 背景节实测
+    字典序选中 `dc4f350`（2026-09-04），按 `created_at` 应为 `a11d779`（2026-09-09）。
+    """
+    try:
+        snapshot = resolve_runtime_snapshot()
+    except SnapshotUnavailable as exc:
+        raise SystemExit(f"[error] {exc}") from None
+    row_counts = snapshot.meta["row_counts"]
+    allowed = {f"atlas.{ns}.{table}" for ns, tables in row_counts.items() for table in tables}
+    return (
+        Budget(dialect="doris", max_rows=MAX_ROWS, allowed_tables=frozenset(allowed)),
+        snapshot,
     )
-    return out.stdout.strip()
-
-
-def load_budget() -> Budget:
-    """快照行数白名单（口径与 eval/runner.build_budget 一致，仅取最新 meta）。"""
-    metas = sorted((REPO_ROOT / "data" / "snapshots").glob("*.meta.json"))
-    if not metas:
-        raise SystemExit("[error] data/snapshots 无 meta.json，先锁定快照")
-    meta = json.loads(metas[-1].read_text(encoding="utf-8"))
-    allowed = {
-        f"atlas.{ns}.{table}" for ns, tables in meta["row_counts"].items() for table in tables
-    }
-    return Budget(dialect="doris", max_rows=MAX_ROWS, allowed_tables=frozenset(allowed))
 
 
 def _scalar(value: object) -> object:
@@ -118,8 +119,12 @@ def _verify_metric(
     return outcome
 
 
-def render_html(outcomes: dict[str, dict], sha: str) -> str:
-    """证据 → 自包含 HTML（无外链资源，供浏览器截图留证）。"""
+def render_html(outcomes: dict[str, dict], sha: str, snapshot: RuntimeSnapshot) -> str:
+    """证据 → 自包含 HTML（无外链资源，供浏览器截图留证）。
+
+    `snapshot` 用于回显数字实际绑在哪份快照上：HTML 是 docs/screenshots 的留证物，
+    只写代码 HEAD 会让「绑最新快照」的数字看起来像 HEAD 的产物（ADR-0019 代价 ③）。
+    """
     rows_html = []
     for name in DAY27_METRICS:
         o = outcomes[name]
@@ -154,6 +159,10 @@ pre {{ margin: 0; white-space: pre-wrap; font-size: 12px; }}
 <p class="meta">git sha <code>{escape(sha)}</code> · 语义层 "
 "<code>semantic/ossie/atlas_finance.ossie.yaml</code> ·
 实测执行走 Doris 只读（eval/runner.execute_sql）· 语义表达式来源为 YAML 权威定义，脚本不复制口径</p>
+<p class="meta">快照绑定 <code>{escape(snapshot.sha)}</code> ·
+source=<code>{escape(snapshot.source)}</code> ·
+bound_to_head={str(snapshot.bound_to_head).lower()} ·
+created_at=<code>{escape(str(snapshot.meta.get("created_at")))}</code></p>
 <p><span class="badge ok">Guard 通过 · {len(DAY27_METRICS)} 个指标实测 OK</span></p>
 <table>
 <thead><tr><th style="width:22%">指标</th><th style="width:30%">口径</th>"
@@ -178,7 +187,8 @@ def main() -> int:
         raise SystemExit(f"[error] 语义层缺少 Day 27 指标：{missing}（先发布到 YAML）")
 
     compiler = Compiler(model)
-    budget = load_budget()
+    budget, snapshot = load_budget()
+    print(f"[snapshot] {snapshot.describe()}")
     outcomes: dict[str, dict] = {}
     for name in DAY27_METRICS:
         outcome = _verify_metric(name, compiler, model, budget, args.no_execute)
@@ -189,6 +199,12 @@ def main() -> int:
     report = {
         "tool": "metrics-verify",
         "git_sha": sha,
+        # 数字绑定的快照可以与代码 HEAD 不同（ADR-0019 决策 ① 第 3 级回退）。报告
+        # 文件名用 git_sha，故必须同时记下实际快照：否则这份以 <HEAD>.json 命名的
+        # 产物会被读成「HEAD 的评测结果」——代价 ③ 明令禁止的互引正是这个。
+        "snapshot_sha": snapshot.sha,
+        "snapshot_source": snapshot.source,
+        "snapshot_bound_to_head": snapshot.bound_to_head,
         "date": "2026-09-02",
         "semantic_file": "semantic/ossie/atlas_finance.ossie.yaml",
         "metrics": outcomes,
@@ -200,7 +216,7 @@ def main() -> int:
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n报告：{report_path.relative_to(REPO_ROOT)}")
 
-    html = render_html(outcomes, sha)
+    html = render_html(outcomes, sha, snapshot)
     shots_dir = REPO_ROOT / "docs" / "screenshots"
     shots_dir.mkdir(parents=True, exist_ok=True)
     html_path = shots_dir / "metrics-verify.html"
