@@ -88,6 +88,12 @@ def _git_worktree() -> bool:
     return proc.returncode == 0
 
 
+def _git_shallow_clone() -> bool:
+    """当前是否为浅克隆（shallow clone），浅克隆下历史 commit 不可见。"""
+    shallow_file = REPO_ROOT / ".git" / "shallow"
+    return shallow_file.exists()
+
+
 class TestGitShortShaBehavior(unittest.TestCase):
     """判据 4：env 优先，且证明注入路径上 git 未被调用。"""
 
@@ -332,6 +338,7 @@ class TestSnapshotLedgerCoverage(unittest.TestCase):
         )
 
     @unittest.skipUnless(_git_worktree(), "反向判定要查 commit 是否存在")
+    @unittest.skipIf(_git_shallow_clone(), "浅克隆下历史 commit 不可见，跳过 commit 验证")
     def test_documented_hex_is_snapshot_or_real_commit(self) -> None:
         unknown = sorted(
             t for t in self._readme_tokens() - self._metas() if not self._is_real_commit(t)
