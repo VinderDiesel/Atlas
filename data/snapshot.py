@@ -20,15 +20,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from data.identity import SNAPSHOT_DIR, git_short_sha
 from data.loader import build_catalog, open_table
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SNAPSHOT_DIR = REPO_ROOT / "data" / "snapshots"
 # data_range 口径：主事实表交易时间戳的实际覆盖范围（实测，不取模板示例）
 RANGE_TABLE = ("tpcdi", "trade")
 RANGE_COLUMN = "t_dts"
@@ -40,18 +39,6 @@ RETAIL_DWD_TABLES = ("store_sales", "date_dim", "dim_item", "dim_store")
 RAW_DIR = REPO_ROOT / "data" / "raw" / "tpcdi"
 
 TZ = timezone(timedelta(hours=8))  # 契约要求：时间戳显式 +08:00
-
-
-def git_short_sha() -> str:
-    """返回当前 HEAD 的短 sha（meta.json 的文件名与绑定键）。"""
-    out = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return out.stdout.strip()
 
 
 def measure_row_counts() -> dict[str, dict[str, int]]:

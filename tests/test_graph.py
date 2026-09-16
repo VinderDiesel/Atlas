@@ -94,6 +94,10 @@ class FlakyCompiler:
             raise CompileError("flaky 模拟的编译失败（仅测试）")
         return self.inner.compile(plan)
 
+    def emitted_time_column(self, plan: Plan) -> str | None:
+        """镜像 Compiler 的时间列访问器（node_execute 会调用，ADR-0025 决策 ①3）。"""
+        return self.inner.emitted_time_column(plan)
+
 
 class FakeLinker:
     """注入候选的 schema linker（测试 retrieve/generate 链路由，不碰真实检索）。"""
@@ -267,9 +271,7 @@ class TestIdentityInjection(unittest.TestCase):
 
     def test_branch_manager_injects_predicate_without_leaking_value(self) -> None:
         """identity=branch_manager{east}：SQL 含分支谓词；生效句不给条件值。"""
-        r = self.agent.ask(
-            GOLD102_Q, identity=self._claims("branch_manager", branch="east")
-        )
+        r = self.agent.ask(GOLD102_Q, identity=self._claims("branch_manager", branch="east"))
         self.assertEqual(r.kind, "answer")
         sql = self.executor.calls[0]
         self.assertIn("= 'east'", sql)  # 行级谓词已随 Guard 注入执行 SQL
@@ -306,6 +308,32 @@ class TestIdentityInjection(unittest.TestCase):
         self.assertNotIn("east", self.executor.calls[1])  # 无谓词残留
         assert r2.explanation is not None
         self.assertNotIn("policy_effect", r2.explanation)
+
+    def test_missing_policy_model_rejects_identity(self) -> None:
+        """判据 1：模型缺 default_row_policy + 带 identity → error 不执行（决策 ②）。
+
+        模型未声明策略时不降级为无策略执行（default_deny 精神）；同模型
+        无身份路径零变化（缺失只在带身份时拒绝）。
+        """
+        import tempfile
+
+        source = (REPO / "semantic" / "ossie" / "atlas_finance.ossie.yaml").read_text(
+            encoding="utf-8"
+        )
+        stripped = source.replace('"default_row_policy": "rp_branch_visible",', "", 1)
+        self.assertNotIn("default_row_policy", stripped, "剥离失败：请检查 YAML 原文")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp) / "atlas_finance_no_policy.ossie.yaml"
+            tmp_path.write_text(stripped, encoding="utf-8")
+            model = SemanticModel(tmp_path)
+        self.assertIsNone(model.default_row_policy)
+        agent = DataAgent(model=model, executor=self.executor, budget=BUDGET)
+        r = agent.ask(GOLD102_Q, identity=self._claims("hq_admin"))
+        self.assertEqual(r.kind, "error")
+        self.assertIn("default_row_policy", r.error or "")
+        self.assertEqual(self.executor.calls, [])
+        r2 = agent.ask(GOLD102_Q)  # 无身份路径不受影响（决策 ② 零变化）
+        self.assertEqual(r2.kind, "answer")
 
 
 class TestClarifyAcceptance(unittest.TestCase):
@@ -495,8 +523,9 @@ class TestSessionTurns(unittest.TestCase):
         self.assertEqual(r2.kind, "clarify")
         r3 = agent.ask(GOLD102_Q, session_id="sess-test-2")
         self.assertEqual(r3.turns_in_session, 1)
-        self.assertEqual(agent.sessions[sid], 2)
-        self.assertEqual(agent.sessions["sess-test-2"], 1)
+        # 轮数单一事实源在 checkpoint 状态（ADR-0020 决策 ⑤）：进程内 sessions 表已删
+        # （`sid` 第 2 轮的轮数已由 r2.turns_in_session 断言，此处只锁「私有记账面消失」）
+        self.assertFalse(hasattr(DataAgent, "sessions"))
 
     def test_resume_answer_after_clarify_same_session(self) -> None:
         """同 session 交叉轮（反问↔命中）：plan 节点每轮冲刷，残留不误判。
@@ -614,6 +643,67 @@ class TestFollowupResolution(unittest.TestCase):
         self.assertEqual(r3.kind, "answer")
         self.assertIn("CalendarYearID = 2014", self.executor.calls[1])
         self.assertIn("dim_broker.Branch", self.executor.calls[1])
+
+
+class TestChartWiring(unittest.TestCase):
+    """ADR-0025 决策 ①②：time_column 随状态携带、chart 在 turn_from_state 渲染。
+
+    - answer 轮：time_column = 编译声明列（yoy 实测别名 calendaryearid），
+      chart 由 render_chart 一次渲染（CLI 与 HTTP 共用该单点）；
+    - 非 answer 轮与空结果：chart=None（不伪装空图，也不反噬回答）；
+    - 跨轮冲刷：反问轮的状态里不得残留上轮 time_column（checkpoint 累积面）。
+    """
+
+    YOY_ROWS = [(2014, 100.0, None), (2015, 150.0, 100.0)]
+    YOY_COLUMNS = ["calendaryearid", "total_trade_value", "prev_period_value"]
+
+    def test_yoy_answer_carries_time_column_and_line_chart(self) -> None:
+        executor = FakeExecutor(rows=self.YOY_ROWS, columns=self.YOY_COLUMNS)
+        r = DataAgent(executor=executor, budget=BUDGET).ask(load_gold_question("gold-172"))
+        self.assertEqual(r.kind, "answer")
+        self.assertEqual(r.time_column, "calendaryearid")
+        self.assertIsNotNone(r.chart)
+        assert r.chart is not None
+        self.assertEqual(r.chart["type"], "line")
+        self.assertEqual(r.chart["x"], "calendaryearid")
+        self.assertEqual(r.chart["y"], ["total_trade_value"])
+
+    def test_plain_answer_time_column_none_chart_bar(self) -> None:
+        executor = FakeExecutor(rows=[("华中", 123.0)], columns=["Branch", "commission_revenue"])
+        r = DataAgent(executor=executor, budget=BUDGET).ask(GOLD102_Q)
+        self.assertEqual(r.kind, "answer")
+        self.assertIsNone(r.time_column)
+        self.assertIsNotNone(r.chart)
+        assert r.chart is not None
+        self.assertEqual(r.chart["type"], "bar")
+
+    def test_empty_result_answer_chart_null_not_error(self) -> None:
+        """空结果：ChartError 降为 chart=None，回答本身仍按表格契约返回。"""
+        executor = FakeExecutor(rows=[], columns=["Branch", "commission_revenue"])
+        r = DataAgent(executor=executor, budget=BUDGET).ask(GOLD102_Q)
+        self.assertEqual(r.kind, "answer")
+        self.assertEqual(r.row_count, 0)
+        self.assertIsNone(r.chart)
+
+    def test_non_answer_turn_chart_and_time_column_null(self) -> None:
+        r = DataAgent(executor=FakeExecutor(), budget=BUDGET).ask(load_gold_question("gold-104"))
+        self.assertEqual(r.kind, "clarify")
+        self.assertIsNone(r.chart)
+        self.assertIsNone(r.time_column)
+
+    def test_time_column_flushed_between_turns(self) -> None:
+        """跨轮冲刷：plan 节点把上轮 time_column 置 None，反问轮状态不残留。"""
+        executor = FakeExecutor(rows=self.YOY_ROWS, columns=self.YOY_COLUMNS)
+        agent = DataAgent(executor=executor, budget=BUDGET)
+        sid = "s-chart-flush"
+        r1 = agent.ask(load_gold_question("gold-172"), session_id=sid)
+        self.assertEqual(r1.time_column, "calendaryearid")
+        r2 = agent.ask(load_gold_question("gold-104"), session_id=sid)
+        self.assertEqual(r2.kind, "clarify")
+        state = agent._graph.get_state(
+            {"configurable": {"thread_id": f"{MODEL.name}:{sid}"}}
+        ).values
+        self.assertIsNone(state.get("time_column"))
 
 
 if __name__ == "__main__":

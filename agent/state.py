@@ -4,12 +4,15 @@
 ------------------------------------------------
 - 状态 = 单次问答的完整事实轨迹（question / plan / sql / rows / 归因…），
   每轮由 checkpointer 按 session_id 持久化，可回溯可审计。
-- **多轮（ADR-0014 ② 指代消解 MVP）**：同一会话支持「连续提问 + 每轮事实留痕
+- **多轮（ADR-0014 ②）**：同一会话支持「连续提问 + 每轮事实留痕
   + 同构追问补全」——last_plan（最近成功轮采纳的 Plan，explain 回写）在 plan
   节点做指代预检：残句（无指标词）命中链接词形态（"那 2014 年呢 / 换成 X /
   按 X 呢"）时复用上轮 metric/维度/过滤/排序，仅替换本轮解析出的时间/维度
   片段，合并 Plan 仍走编译预检；其余指代（自由代词"它/这些"、无法归属碎片、
   换维遇上轮维度值过滤）→ 澄清不猜（见 agent/planner.py followup docstring）。
+- **跨轮记账也在状态里（ADR-0020 决策 ⑤⑥）**：轮数（turns，plan 节点 +1）与
+  身份指纹（session_fingerprint，首轮由 DataAgent.ask 随输入写入）同属
+  checkpoint 状态——没有进程内会话表，重启后两者与 last_plan 一起存活。
 - 回合输出 TurnResult 按 kind 分类：answer（执行成功）/ clarify（反问，
   不猜）/ blocked（Guard 拒绝）/ error（执行期故障）/ handoff（人工接管，
   Day 48）。
@@ -43,6 +46,10 @@ class TurnState(TypedDict, total=False):
 
     question: str
     session_id: str
+    turns: int  # 已连续轮数（plan 节点 +1；ADR-0020 决策 ⑤ 的单一事实源）
+    session_fingerprint: str  # 首轮写入的身份指纹哈希（决策 ⑥；校验在 DataAgent.ask）
+    plan_override: Plan  # `/plan/execute` 注入的直执计划（ADR-0022 决策 ③）：
+    # plan 节点首行短路优先于 Planner；用后即焚（同轮写回 None，不残留到下一轮）
     plan: Plan  # Planner 命中（deterministic）或候选链 validate 通过（candidate）
     last_plan: Plan  # 最近成功轮采纳的 Plan（explain 回写；同构追问补全基线，ADR-0014 ②）
     clarification: ClarificationRequest  # 反问输出（歧义直出 / clarify 终端组装）
@@ -54,6 +61,8 @@ class TurnState(TypedDict, total=False):
     sql: str  # Guard enforce 之后的最终执行 SQL（execute 产物，供解释与审计）
     rows: tuple[tuple[Any, ...], ...]
     columns: tuple[str, ...]
+    time_column: str | None  # 编译声明的时间轴列别名（ADR-0025 决策 ①3）；
+    # execute 写入、plan 冲刷，渲染 chart 的轴选择依据（非执行器列名推断）
     row_count: int
     latency_ms: float  # 仅执行耗时（compile/guard 为确定性本地计算，不计入）
     usage: dict[str, int]  # 候选链 LLM token 用量（deterministic 链为空）
@@ -74,17 +83,20 @@ class TurnResult:
 
     kind 与字段的对应关系：
     - answer：metric / sql / columns / rows / row_count / latency_ms / engine /
-      usage / explanation / validation_issues
+      usage / explanation / validation_issues / time_column / chart
     - clarify：clarification（reasons + candidates）
     - blocked：block_reason
     - error：error
     - handoff：handoff_reason（Day 48）
+
+    chart 是渲染派生数据（sql/rows/columns/time_column 的确定性函数，ADR-0025
+    决策 ②）：不落 checkpoint、不反噬回答（渲染拒绝 → None），非 answer 轮恒 None。
     """
 
     kind: TurnKind
     session_id: str
     question: str
-    turns_in_session: int = 1  # 同一 session 已连续轮数（Agent 层维护）
+    turns_in_session: int = 1  # 同一 session 已连续轮数（来自状态 turns，决策 ⑤）
     # answer
     metric: str | None = None
     sql: str | None = None
@@ -97,6 +109,8 @@ class TurnResult:
     usage: dict[str, int] = field(default_factory=dict)
     validation_issues: tuple[str, ...] = ()
     explanation: dict[str, Any] | None = None  # explain 节点归因（Day 46 扩展）
+    time_column: str | None = None  # 编译声明的时间轴列别名（ADR-0025 决策 ①3）
+    chart: dict[str, Any] | None = None  # 图表 spec（turn_from_state 渲染，决策 ②）
     # clarify / blocked / error / handoff
     clarification: ClarificationRequest | None = None
     block_reason: str | None = None

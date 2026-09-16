@@ -42,8 +42,9 @@ explain，落地为 **plan 先行** 的条件路由图（AGENTS.md 决策优先�
 候选链仅当 allow_candidate=True（RAG 评测 / 端到端场景演示）才从 unmatched
 问句进入，且与 eval/rag_eval.py 同口径（歧义问句给答案 = 评测失败）。
 
-**多轮（ADR-0014 ②）**：checkpointer（MemorySaver）按 session_id 持久化每轮事实
-轨迹；DataAgent 维护会话轮数。plan 节点以最近成功轮采纳的 Plan（last_plan，
+**多轮（ADR-0014 ②）**：checkpointer（默认 MemorySaver，可换 SqliteSaver——ADR-0020）
+按 session_id 持久化每轮事实轨迹；轮数（turns）与身份指纹（session_fingerprint）同为
+状态字段（决策 ⑤⑥），没有进程内记账表。plan 节点以最近成功轮采纳的 Plan（last_plan，
 explain 回写）做指代预检——同构追问（"那 2014 年呢 / 换成 X 统计"）残句无
 指标词时复用上轮 metric/维度/过滤结构，仅替换本轮时间/维度片段，合并 Plan
 仍过编译预检；自由代词与无法归属的碎片不猜 → 反问完整重述。
@@ -53,11 +54,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
 import sqlglot
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
@@ -65,7 +68,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RunnableConfig
 from sqlglot import exp
 
-from agent.compiler import Compiler, Plan, SemanticModel
+from agent.compiler import CompileError, Compiler, Plan, SemanticModel
 from agent.feedback import (
     DEFAULT_FEEDBACK_DIR,
     FeedbackKind,
@@ -82,10 +85,12 @@ from agent.security.sql_guard import (
     enforce,
 )
 from agent.state import TurnResult, TurnState
+from agent.tools.chart import ChartError, render_chart
 from agent.tools.execution_validator import ExecutionValidator
 from agent.tools.schema_linker import SchemaLinker
+from data.identity import RuntimeSnapshot
 from observability.otel import record_turn
-from serving.auth import AuthError, resolve_claims
+from serving.auth import AuthError, claims_fingerprint, resolve_claims
 
 # 执行器同构约定（与 eval/runner.execute_sql 一致）：只读执行 guarded SQL
 Executor = Callable[[str], tuple[list[tuple[Any, ...]], list[str]]]
@@ -93,18 +98,33 @@ Executor = Callable[[str], tuple[list[tuple[Any, ...]], list[str]]]
 DEFAULT_CANDIDATE_K = 5
 MAX_GENERATE_ATTEMPTS = 2  # 候选链 validate 失败重试上限（共 2 次 generate 尝试）
 
-# checkpointer 序列化白名单：TurnState 中的自研 dataclass（Plan/TimeSpec/
-# OrderSpec/ClarificationRequest）在构造时显式注册——JsonPlusSerializer 默认
-# permissive（允许一切但警告），with_msgpack_allowlist 在 permissive 模式下
-# 直接返回 self 不合并（langgraph 1.2.11 实测），因此必须走构造参数。
+# checkpointer 序列化白名单：TurnState 里**所有**自研 dataclass，含嵌在 Plan 内的成员。
+# 两条实测口径（langgraph 1.2.11 / checkpoint 4.2.0，别按直觉改回去）：
+# ① 白名单非空时未注册类型是被 **blocked 并退化成 dict**，不是「permissive 放行 + 警告」
+#    ——警告只在完全不传白名单（属性为字面量 True）时才有。所以「嵌在 Plan 里就不用列」
+#    是错的：`Filter` / `ComparisonSpec` 少列一项，跨轮读回的 `last_plan` 就编译失败
+#    （"'dict' object has no attribute 'column'"，症状伪装成反问，tests/test_session_persistence
+#    的 TestCheckpointStateFidelity 锁死这条）。
+# ② `with_msgpack_allowlist()` 在 permissive 模式下直接返回 self 不合并，因此只能走构造参数。
 _CHECKPOINT_SERDE = JsonPlusSerializer(
     allowed_msgpack_modules=(
         ("agent.compiler", "TimeSpec"),
         ("agent.compiler", "OrderSpec"),
+        ("agent.compiler", "Filter"),
+        ("agent.compiler", "ComparisonSpec"),
         ("agent.compiler", "Plan"),
         ("agent.planner", "ClarificationRequest"),
     )
 )
+
+
+class SessionIdentityConflict(Exception):
+    """同会话换身份（ADR-0020 决策 ⑥）：会话已绑定另一 claims 指纹。
+
+    类型化异常而不是布尔返回：`serving/api.py` 要把它翻成 422 + 审计行
+    （`kind=conflict`），CLI 侧则是一个说得清的失败原因——「静默拒绝」与
+    「静默放行接受新身份」都是要消灭的失效形态。
+    """
 
 
 def _extract_tables(sql: str | None, dialect: str) -> tuple[str, ...]:
@@ -150,8 +170,9 @@ def build_graph(
     linker: SchemaLinker | None = None,
     compiler: Compiler | None = None,
     snapshot_meta: dict[str, Any] | None = None,
+    checkpointer: BaseCheckpointSaver[Any] | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
-    """组装并编译 LangGraph 状态机（含 MemorySaver checkpointer）。
+    """组装并编译 LangGraph 状态机（checkpointer 可注入，默认 MemorySaver）。
 
     参数
     ----
@@ -165,11 +186,20 @@ def build_graph(
     snapshot_meta   : 锁定快照元数据（runner.build_budget 同源；仅用于 explain
                       的数据版本归因：sha/created_at。None = 未绑定快照，
                       归因里这两个字段为空——不编造刷新时间）。
+    checkpointer    : 会话轨迹存储（ADR-0020 决策 ①）。None = 每图新建一个
+                      `MemorySaver(serde=_CHECKPOINT_SERDE)`，与注入前的历史行为
+                      完全一致（`tests/` 30 处 + `eval/` 9 处构造点零影响、零落盘，
+                      计数口径见 ADR-0020 决策 ① 的实测注）；传入实例则**原样
+                      使用**——本函数不复制、不重包、不替调用方决定 serde（决策 ②：
+                      白名单漏传会让 `Plan` 在严格模式下退化为 dict，而退化发生在
+                      谁手里谁才修得动）。
 
     返回
     ----
     LangGraph CompiledStateGraph：invoke({"question": q}, config={"configurable":
-    {"thread_id": session_id}})，最终状态字段见 agent/state.TurnState；
+    {"thread_id": "<model.name>:<session_id>"}})——thread_id 的模型前缀是约定
+    （ADR-0020 决策 ④），由 DataAgent.ask 负责拼装；直接用本图者须自己带上，否则
+    多域共享同一 checkpoint 文件时会互相覆写。最终状态字段见 agent/state.TurnState；
     组装 TurnResult 请用 ask() / DataAgent。
 
     异常
@@ -189,11 +219,17 @@ def build_graph(
 
     # -- 节点：plan（确定性解析入口 + 每轮状态冲刷） ------------------------
     def node_plan(state: TurnState) -> dict[str, Any]:
+        # Plan 直执短路（ADR-0022 决策 ③）：`/plan/execute` 经 invoke 注入的
+        # plan_override 优先于 Planner——不调 Planner、不进 unmatched/候选链。
+        # **用后即焚**：冲刷字典把 plan_override 写回 None（本轮的 override 只对
+        # 本轮有效），否则带 session 的后续 /ask 轮会被陈旧 override 劫持。
+        override = state.get("plan_override")
         # 冲刷：plan 节点是新一轮逻辑起点，先清上一轮终点残留的结果键
         # （checkpointer 跨轮恢复；LangGraph 1.2.11 无删除键 API，None 覆盖 =
         # 置空——路由与组装全部 isinstance/truthy 判定，空值不参与路由）
         out: dict[str, Any] = {
             "plan": None,
+            "plan_override": None,
             "clarification": None,
             "candidates": None,
             "unmatched": False,
@@ -203,6 +239,7 @@ def build_graph(
             "sql": None,
             "rows": None,
             "columns": None,
+            "time_column": None,
             "row_count": 0,
             "latency_ms": 0.0,
             "validation_issues": None,
@@ -213,7 +250,14 @@ def build_graph(
             "block_reason": None,
             "error": None,
             "handoff_reason": None,
+            # 轮数单一事实源（决策 ⑤）：与 last_plan 同构的跨轮状态——本节点是每轮
+            # 逻辑起点，读 checkpoint 里的旧值 +1 写回。它属于「承接」而非「残留」，
+            # 刻意不放进上面的冲刷集合；`or 0` 兜住首轮（键不存在）与 None
+            "turns": int(state.get("turns") or 0) + 1,
         }
+        if isinstance(override, Plan):
+            out["plan"] = override
+            return out
         question = str(state["question"])
         result = planner.plan(question)
         if isinstance(result, ClarificationRequest) and result.kind == "unmatched":
@@ -323,23 +367,35 @@ def build_graph(
     # -- 节点：execute（编译→Guard→执行 的唯一通道） ------------------------
     # identity 经 invoke config 注入（每轮独立、不落 checkpoint，见 DataAgent.ask
     # docstring）；非 None 时先 resolve_claims 渲染行级策略（与 rls-verify/demo
-    # 同机制：Policy(name, condition) → enforce 注入），谓词非法/无 join 路径
-    # 由 Guard 拒绝（blocked，不外泄细节）——graph 层不做二次校验实现。
+    # 同机制：Policy(name, condition) → enforce 注入），策略名由当前语义模型
+    # 的 default_row_policy 决定（ADR-0021：域 → 策略的唯一事实源；缺失即拒绝，
+    # 不降级为无策略执行）；谓词非法/无 join 路径由 Guard 拒绝（blocked，不外泄
+    # 细节）——graph 层不做二次校验实现。
     def node_execute(state: TurnState, config: RunnableConfig) -> dict[str, Any]:
         plan = state.get("plan")
         if not isinstance(plan, Plan):
             return {"error": "内部状态缺失 Plan（不应到达 execute）"}
         sql = state.get("sql")
         if sql is None:  # deterministic 链：validate 未预检，现场编译
-            sql, _ = compiler.compile(plan)
+            try:
+                sql, _ = compiler.compile(plan)
+            except CompileError as exc:
+                # `/plan/execute` 可注入任意 Plan（ADR-0022 决策 ③/代价⑤）：编译失败
+                # 是回合级 error 而非 500——HTTP 面不得复制编译预检（N3 单通道），
+                # 故捕获点只能在这里
+                return {"error": f"{type(exc).__name__}: {exc}"}
         policy: Policy | None = None
         effect: str | None = None
         identity = (config or {}).get("configurable", {}).get("identity")
         if identity is not None:
             if not isinstance(identity, dict):
                 return {"error": "identity 必须为已验证 claims 字典（role + user_context）"}
+            policy_name = compiler.model.default_row_policy
+            if policy_name is None:
+                # 缺失即拒绝（ADR-0021 决策 ②，default_deny 精神）：不降级为无策略执行
+                return {"error": "语义模型未声明 default_row_policy，无法注入行级策略"}
             try:
-                resolved = resolve_claims(identity)
+                resolved = resolve_claims(identity, policy_name=policy_name)
             except AuthError as exc:
                 # 身份不可解析 → 拒绝执行（防御：不携带被拒原因之外的细节）
                 return {"error": f"身份策略解析失败：{exc}"}
@@ -366,6 +422,9 @@ def build_graph(
             "sql": guarded,
             "rows": rows_t,
             "columns": tuple(columns),
+            # 编译声明的实际时间轴别名（ADR-0025 决策 ①3）：与本轮 plan 同源；
+            # plain/rank 与候选链 plan 为 None（渲染端走列名兜底）
+            "time_column": compiler.emitted_time_column(plan),
             "row_count": len(rows_t),
             "latency_ms": latency_ms,
             "validation_issues": issues,
@@ -496,16 +555,31 @@ def build_graph(
     builder.add_edge("clarify", END)
     builder.add_edge("handoff", END)
     builder.add_edge("explain", END)
-    return builder.compile(checkpointer=MemorySaver(serde=_CHECKPOINT_SERDE))
+    # 默认分支保持逐字不变（决策 ①：注入是加法，不改历史行为）。用 `is None` 而不是
+    # `or`：checkpointer 是第三方对象，其真值语义不由我们定义（空存储若实现
+    # `__len__` 就会被 `or` 误判为「没传」，于是静默换回 MemorySaver——正是要防的形态）
+    return builder.compile(
+        checkpointer=(
+            MemorySaver(serde=_CHECKPOINT_SERDE) if checkpointer is None else checkpointer
+        )
+    )
 
 
 def turn_from_state(state: dict[str, Any], session_id: str, turns: int = 1) -> TurnResult:
-    """图最终状态 → 对外 TurnResult（kind 判定顺序：blocked → error → clarify → answer）。"""
+    """图最终状态 → 对外 TurnResult（kind 判定顺序：blocked → error → clarify → answer）。
+
+    轮数的单一事实源是状态里的 `turns`（ADR-0020 决策 ⑤，plan 节点每轮 +1）；
+    参数 `turns` 只在状态里没有该键时兜底（直调测试的桩状态），调用方不再记账。
+
+    图表渲染点是本函数（ADR-0025 决策 ②）：chart 只挂 answer 轮，由本轮
+    sql/rows/columns + 编译声明的 time_column 确定性渲染——CLI 与 HTTP 共用
+    此单一调用点，spec 不落 checkpoint（派生数据，重算即可）。
+    """
     question = str(state.get("question", ""))
     base = dict(
         session_id=session_id,
         question=question,
-        turns_in_session=turns,
+        turns_in_session=int(state.get("turns") or turns),
         usage=state.get("usage") or {},
         engine=state.get("engine", "deterministic"),
         path=state.get("path"),
@@ -524,7 +598,7 @@ def turn_from_state(state: dict[str, Any], session_id: str, turns: int = 1) -> T
     plan = state.get("plan")
     if not isinstance(plan, Plan):
         return TurnResult(kind="error", error="状态机未产出结果（内部错误）", **base)
-    return TurnResult(
+    turn = TurnResult(
         kind="answer",
         metric=plan.metric,
         sql=state.get("sql"),
@@ -532,8 +606,16 @@ def turn_from_state(state: dict[str, Any], session_id: str, turns: int = 1) -> T
         rows=state.get("rows") or (),
         row_count=state.get("row_count", 0),
         latency_ms=state.get("latency_ms", 0.0),
+        time_column=state.get("time_column"),
         **base,
     )
+    # 渲染拒绝（空结果/坏数值/行宽不齐）→ chart=None：数据仍按既有契约返回，
+    # 图表失败不反噬回答，也不把「画不了」伪装成空图
+    try:
+        chart = render_chart(turn, time_columns=(turn.time_column,) if turn.time_column else ())
+    except ChartError:
+        return turn
+    return replace(turn, chart=chart)
 
 
 class DataAgent:
@@ -548,6 +630,24 @@ class DataAgent:
 
     多轮边界见 agent/state.py docstring：同一 session 连续提问 + 每轮留痕，
     支持同构追问补全（"那 2014 年呢"，ADR-0014 ②），自由代词指代不猜。
+
+    快照绑定的两个参数（ADR-0019 决策 ①⑥）
+    --------------------------------------
+    snapshot      : 运行时解析出的完整绑定 `data.identity.RuntimeSnapshot`——含
+                    meta **加上**「这份 meta 是怎么被选中的」（source）与「是否
+                    等于 HEAD」（bound_to_head），后两者是 `/ask` 回显的键。给了它
+                    就不必再给 snapshot_meta；两个都给且 meta 不一致 → 构造即抛
+                    ValueError（预算与回显不得来自两份 meta）。
+    snapshot_meta : 只给 meta（评测与测试桩：绑哪份由外部决定，无解析来源可言）→
+                    `self.snapshot` 为 None，回显为 null，而不是假称「未绑定 HEAD」。
+
+    会话存储（ADR-0020 决策 ①）
+    --------------------------
+    checkpointer  : None = 进程内 `MemorySaver`（会话轨迹随重启消失）；传入
+                    `SqliteSaver` 等实例则跨重启续接。是否持久化由**部署方**经
+                    `agent.factory.create_live_agent()` 读 `ATLAS_CHECKPOINT_DB`
+                    决定，不在图构造层隐式默认——本类的全部既有调用方（评测与
+                    tests/ 的 27 处 `DataAgent(` 构造）因此零变化、零落盘。
     """
 
     def __init__(
@@ -562,8 +662,22 @@ class DataAgent:
         linker: SchemaLinker | None = None,
         compiler: Compiler | None = None,
         snapshot_meta: dict[str, Any] | None = None,
+        snapshot: RuntimeSnapshot | None = None,
+        checkpointer: BaseCheckpointSaver[Any] | None = None,
     ) -> None:
+        if snapshot is not None and snapshot_meta is not None and snapshot.meta != snapshot_meta:
+            # 消息带出两份 sha：只说「参数不一致」会让人回去翻调用栈才知道是哪个
+            # 快照被绑错（同 ADR-0019 判据 6 对消息内容的要求）
+            raise ValueError(
+                "DataAgent 的快照绑定有两个来源：snapshot.meta 与 snapshot_meta 不一致"
+                f"（snapshot.sha={snapshot.sha}，snapshot_meta.sha="
+                f"{snapshot_meta.get('sha')}）——只传其一即可：Guard 白名单与 `/ask` "
+                "回显必须是同一份 meta（ADR-0019 决策 ②）"
+            )
         self.model = model or SemanticModel()
+        # 注入的 saver 由本实例长期持有（决策 ③ 的连接生命周期 = 进程）：
+        # SqliteSaver 包着 sqlite3.Connection，若无引用持有则会被 GC 关掉连接
+        self.checkpointer = checkpointer
         self._graph = build_graph(
             self.model,
             engine=engine,
@@ -573,10 +687,57 @@ class DataAgent:
             generator=generator,
             linker=linker,
             compiler=compiler,
-            snapshot_meta=snapshot_meta,
+            snapshot_meta=snapshot.meta if snapshot is not None else snapshot_meta,
+            checkpointer=checkpointer,
         )
-        self.snapshot_meta = snapshot_meta
-        self._session_turns: dict[str, int] = {}
+        self.snapshot_meta = snapshot.meta if snapshot is not None else snapshot_meta
+        # 完整绑定事实（决策 ①/⑥）：`snapshot_meta` 只有内容，没有「这份 meta 是怎么
+        # 被选中的」（source）与「是否等于 HEAD」（bound_to_head）——而后者正是
+        # `/ask` 与 `/health` 必须回显的键。None = 未经运行时解析构造的 agent
+        # （测试桩 / 评测脚本只给 meta），回显为 null，不假称「绑在 HEAD 上」。
+        self.snapshot = snapshot
+
+    def _invoke_turn(
+        self,
+        sid: str,
+        payload: dict[str, Any],
+        identity: dict[str, object] | None,
+    ) -> TurnResult:
+        """回合装配与执行（ask / run_plan 共享）：thread_id、身份校验、invoke、埋点。
+
+        thread_id 带模型命名空间（ADR-0020 决策 ④）：多域 Agent 共享同一个
+        checkpoint 文件后，裸 sid 会让 finance / retail 两条会话互相覆写同一
+        thread——用户表现为在零售里问完、换到金融用同 sid 追问，补全出来的是
+        **另一个域**的 last_plan。用 model.name 而不是文件名：模型名是语义身份、
+        与 ossie 文件名解耦（compiler.py 的既有注释），换绑定文件不该让历史会话
+        失效。对外仍是裸 sid（`TurnResult.session_id` / HTTP 契约不变）。
+
+        用 RunnableConfig 标注而不是裸 dict：`get_state` 与 `invoke` 的重载只认它
+        （裸 dict 实测被 mypy 判为「无匹配重载」）。configurable 是同一个 dict 引用，
+        下面补 identity 对两个调用都可见，不必重建 config。
+        """
+        configurable: dict[str, Any] = {"thread_id": f"{self.model.name}:{sid}"}
+        config: RunnableConfig = {"configurable": configurable}
+        if identity is not None:
+            configurable["identity"] = identity
+            # 身份绑定与校验（ADR-0020 决策 ⑥）：指纹随状态进 checkpoint（跨重启仍
+            # 可校验），校验**在 invoke 之前**——冲突轮不写状态、不执行 SQL、不推进
+            # 轮数。只写哈希不写 claims 本体（0011 不外泄身份细节）。
+            fingerprint = claims_fingerprint(identity)
+            bound = self._graph.get_state(config).values.get("session_fingerprint")
+            if bound is not None and bound != fingerprint:
+                raise SessionIdentityConflict(
+                    f"会话 {sid} 已绑定另一身份：换身份必须换新 session_id"
+                    "（ADR-0020 决策 ⑥；重签 token 也算换身份）"
+                )
+            payload["session_fingerprint"] = fingerprint
+        final = self._graph.invoke(payload, config=config)
+        # 轮数来自状态字段 turns（决策 ⑤），组装只是读它——不再有进程内记账
+        turn = turn_from_state(dict(final), sid)
+        # Day 50 全链路埋点：atlas.turn span + 指标（未 configure 时 no-op，
+        # 埋点故障被隔离——观测绝不反噬主链路，见 observability/otel.py）
+        record_turn(turn, snapshot_sha=(self.snapshot_meta or {}).get("sha"))
+        return turn
 
     def ask(
         self,
@@ -591,36 +752,70 @@ class DataAgent:
         ----
         question   : 自然语言问句（每轮全量解析；同构残句追问走 last_plan 补全，
                      自由代词指代会反问完整重述，见 ADR-0014 ②）。
-        session_id : 会话键（缺省生成随机会话，单轮）。
+        session_id : 会话键（缺省生成随机会话，单轮）。checkpoint 里的 thread_id 是
+                     `f"{model.name}:{sid}"`，但**返回值与 HTTP 契约仍是裸 `sid`**。
         identity   : 已验证 claims 字典（verify_token 输出形态：role + user_context
                      …，ADR-0011 硬化项）：非 None 时本轮按角色渲染行级策略并随
-                     Guard 注入。**每轮独立**——经 invoke config 传递不落 checkpoint；
-                     不传即无策略（多轮会话中由 API 层每轮显式下推，见 serving/api）。
+                     Guard 注入。**每轮独立**——claims 本体经 invoke config 传递不落
+                     checkpoint；不传即无策略（多轮会话中由 API 层每轮显式下推，见
+                     serving/api）。**落 checkpoint 的只有校验用指纹哈希**：首轮写入
+                     `session_fingerprint`，续轮在 invoke 前比对，不一致抛
+                     `SessionIdentityConflict`（ADR-0020 决策 ⑥）。
 
         返回
         ----
         TurnResult：kind ∈ answer / clarify / blocked / error。
+
+        抛出
+        ----
+        SessionIdentityConflict：同 `session_id` 换身份（含重签 token）。
         """
         sid = session_id or f"session-{uuid4().hex[:8]}"
-        config: dict[str, Any] = {"configurable": {"thread_id": sid}}
-        if identity is not None:
-            config["configurable"]["identity"] = identity
-        final = self._graph.invoke(
-            {"question": question, "session_id": sid},
-            config=config,
-        )
-        turns = self._session_turns.get(sid, 0) + 1
-        self._session_turns[sid] = turns
-        turn = turn_from_state(dict(final), sid, turns=turns)
-        # Day 50 全链路埋点：atlas.turn span + 指标（未 configure 时 no-op，
-        # 埋点故障被隔离——观测绝不反噬主链路，见 observability/otel.py）
-        record_turn(turn, snapshot_sha=(self.snapshot_meta or {}).get("sha"))
-        return turn
+        return self._invoke_turn(sid, {"question": question, "session_id": sid}, identity)
 
-    @property
-    def sessions(self) -> dict[str, int]:
-        """会话 → 已连续轮数（多轮状态留痕的可见部分）。"""
-        return dict(self._session_turns)
+    def run_plan(
+        self,
+        plan: Plan,
+        *,
+        session_id: str | None = None,
+        identity: dict[str, object] | None = None,
+        question: str | None = None,
+    ) -> TurnResult:
+        """执行一个给定的 Plan（`/api/v1/plan/execute` 的底层，ADR-0022 决策 ③）。
+
+        与 ask() 共享回合装配（`_invoke_turn`），只差初始 state 多一个
+        `plan_override`——`node_plan` 首行短路，不调 Planner、不进候选链；执行仍只
+        经 `node_execute` 唯一通道（编译 → `resolve_claims` 渲染策略 → Guard
+        enforce + 二次只读校验 → 执行），查询逻辑不在 HTTP 层复制（N3）。
+
+        参数
+        ----
+        plan       : 结构化指标计划（`/compile` 请求体同构）。语义层里不存在的
+                     指标名等非法计划**不在本方法内预检**：在前方执行链上以
+                     `kind="error"` 如实返回（ADR-0022 代价 ⑤），不是异常。
+        session_id : 会话键（缺省生成随机会话——一次性，不写任何可续接的会话态）。
+                     给定则与 /ask 同一会话空间（thread_id 命名空间相同），同受
+                     身份指纹 422 约束；`node_explain` 会把该 Plan 写进 last_plan，
+                     成为下一轮残句追问的补全基线（代价 ⑥，期望行为）。
+        identity   : 已验证 claims（与 ask 同语义：身份指纹校验 + 行级策略注入）。
+        question   : 展示/审计用问句（**不参与解析**；缺省 `plan:<metric>` 形态）。
+
+        返回
+        ----
+        TurnResult：kind ∈ answer / blocked / error——无自然语言解析面故
+        clarify 不可达；不进候选链故 handoff 不可达（ADR-0022 决策 ③）。
+
+        抛出
+        ----
+        SessionIdentityConflict：同 `session_id` 换身份（与 ask 同一校验路径）。
+        """
+        sid = session_id or f"session-{uuid4().hex[:8]}"
+        payload: dict[str, Any] = {
+            "question": question or f"plan:{plan.metric}",
+            "session_id": sid,
+            "plan_override": plan,
+        }
+        return self._invoke_turn(sid, payload, identity)
 
     def submit_feedback(
         self,

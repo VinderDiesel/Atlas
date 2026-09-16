@@ -1,0 +1,79 @@
+{
+  "sha": "ccb4c8b",
+  "created_at": "2026-09-15T16:08:31+08:00",
+  "source": "TPC-DI + TPC-DS SF0.1",
+  "data_range": "2012-07-07T00:03:11~2017-07-07T23:59:59",
+  "raw_size_bytes": 179254938,
+  "row_counts": {
+    "dwd": {
+      "date_dim": 73049,
+      "dim_account": 6094,
+      "dim_broker": 2865,
+      "dim_customer": 3056,
+      "dim_date": 25933,
+      "dim_item": 18000,
+      "dim_security": 1198,
+      "dim_store": 12,
+      "fact_cash_balances": 219214,
+      "fact_holdings": 241661,
+      "fact_trades": 241661,
+      "store_sales": 240485
+    },
+    "tpcdi": {
+      "account_action": 8698,
+      "cash_transaction": 241335,
+      "customer_action": 10000,
+      "daily_market": 713120,
+      "dim_date": 25933,
+      "dim_time": 86400,
+      "finwire_security": 1600,
+      "holding_history": 241661,
+      "hr_employee": 10000,
+      "industry": 102,
+      "prospect": 9988,
+      "status_type": 6,
+      "tax_rate": 320,
+      "trade": 261261,
+      "trade_history": 655791,
+      "trade_type": 5,
+      "watch_history": 600300
+    }
+  },
+  "snapshot_ids": {
+    "dwd": {
+      "date_dim": 5937942870856706114,
+      "dim_account": 6988011158035696216,
+      "dim_broker": 7331205792756269810,
+      "dim_customer": 9218921131117714302,
+      "dim_date": 2315669793276976095,
+      "dim_item": 3707133098626471158,
+      "dim_security": 5311816379519345715,
+      "dim_store": 5999313312883020319,
+      "fact_cash_balances": 3113714503549123669,
+      "fact_holdings": 890104936004743740,
+      "fact_trades": 8422094709696583827,
+      "store_sales": 3971292069044022483
+    },
+    "tpcdi": {
+      "account_action": 8045011000481412618,
+      "cash_transaction": 5273223873758368593,
+      "customer_action": 6754007880624656664,
+      "daily_market": 2117834061528211328,
+      "dim_date": 547662153478041962,
+      "dim_time": 928189682431562494,
+      "finwire_security": 7825410603792771970,
+      "holding_history": 2349786579888473845,
+      "hr_employee": 5479212601357344558,
+      "industry": 5089001759174900748,
+      "prospect": 7827866792035149587,
+      "status_type": 5840244819824539898,
+      "tax_rate": 3910486785556661597,
+      "trade": 5629338510909008449,
+      "trade_history": 8252474711528393142,
+      "trade_type": 8912555392876120685,
+      "watch_history": 4668900931228109585
+    }
+  },
+  "generation_seconds": null,
+  "notes": "全库锁定：TPC-DI Batch1 + DWD 加工（金融 8 表）+ TPC-DS SF0.1 零售装载（data/tpcds_loader.py，dwd 4 表）；row_counts 口径 pyiceberg scan count；snapshot_ids 为各表 current snapshot id；data_range 口径 tpcdi.trade.t_dts（金融主事实表；零售销售窗口见 eval/gold/retail/data-profile.md）；raw_size_bytes 口径 data/raw/tpcdi 递归字节。"
+}

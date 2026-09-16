@@ -11,8 +11,9 @@
   不参与选轴。
 - **行数校验**：空结果拒绝渲染；超过 MAX_CATEGORIES 的密集结果降级为表格
   并如实注记（不丢数据，只是不画误导性密集图）。
-- **图表类型确定性规则**：有数值列 → 柱状；x 为时间列（dim_date 物理列或
-  列名含 date/year/quarter/month 等时间词）→ 折线；无数值列 → 表格。
+- **图表类型确定性规则**：有数值列 → 柱状；x 为时间列（编译路径由
+  `Compiler.emitted_time_column` 声明并随 `time_columns` 入参携带）→ 折线；
+  无数值列 → 表格。
 - **可审计**：输出带 sql_sha256（执行 SQL 摘要），schema 可溯源到具体 SQL。
 
 已知边界（MVP，诚实声明）
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Collection
 from dataclasses import dataclass
 from numbers import Number
 from typing import Any, Protocol
@@ -36,8 +38,14 @@ MAX_CATEGORIES = 200
 # 表格降级时的最大展示行数（截断并注记，不静默丢数据）
 MAX_TABLE_ROWS = 500
 
-# 时间列识别（执行结果列名约定：金融 TPC-DI dim_date ID 列 + 通用 date/time；
-# 识别为时间轴的列进 X 轴，未识别列按类目处理——零售结果集列名识别待实测扩展）
+# 时间列兜底集合（ADR-0025 决策 ③）：**本集合不是时间列权威源**——编译路径的
+# 时间列由 `Compiler.emitted_time_column` 声明并随 `time_columns` 入参携带；
+# 本集合仅兜底非编译路径（`--llm` 候选链 / 直接喂 `execute_readonly` 输出）的
+# 裸物理列名，命中时 note 追加权威等级标注（决策 ③3）。只做精确成员判定，无
+# 子串匹配——加子串匹配会把 update_date / years_held 一类列误判为时间轴。
+#
+# 判据 6 探针（延后执行，不产出数字，N1）：`--llm` 候选链上线后统计「走兜底且
+# 命中本集合」的次数，连续两个评测批次为 0 触发 ADR-0025 推翻条件第 5 条。
 _TIME_COLUMN_NAMES = frozenset(
     {"CalendarYearID", "CalendarQtrID", "CalendarMonthID", "DateValue", "date", "time"}
 )
@@ -77,14 +85,19 @@ class _ColumnStats:
 def _is_numeric(value: Any) -> bool:
     """数值判定（含 Decimal 等 numbers.Number；bool 不是数值）。
 
-    真实执行器（Doris via mysql.connector）SUM(decimal) 返回 Decimal，
+    真实执行器（Doris via pymysql）SUM(decimal) 返回 Decimal，
     只认 int/float 会把真数值列误判为维度（Day 48 e2e 实测 S5 退化）。
     """
     return isinstance(value, Number) and not isinstance(value, bool)
 
 
-def _classify_columns(rows: list[list[Any]], columns: list[str]) -> list[_ColumnStats]:
-    """按值类型确定性分类（数值/维度/全 NULL），不做任何推断。"""
+def _classify_columns(
+    rows: list[list[Any]], columns: list[str], *, time_names: Collection[str]
+) -> list[_ColumnStats]:
+    """按值类型确定性分类（数值/维度/全 NULL），不做任何推断。
+
+    `time_names` 是时间轴列名集合（编译声明或兜底集合），只做精确成员判定。
+    """
     stats: list[_ColumnStats] = []
     for idx, name in enumerate(columns):
         values = [row[idx] for row in rows if idx < len(row)]
@@ -98,7 +111,7 @@ def _classify_columns(rows: list[list[Any]], columns: list[str]) -> list[_Column
                 name=name,
                 numeric=numeric,
                 all_null=False,
-                time_like=name in _TIME_COLUMN_NAMES,
+                time_like=name in time_names,
             )
         )
     return stats
@@ -124,15 +137,19 @@ def _validate_rows(rows: list[list[Any]], columns: list[str]) -> None:
             )
 
 
-def render_chart(execution: ExecutionLike) -> dict[str, Any]:
+def render_chart(execution: ExecutionLike, *, time_columns: Collection[str] = ()) -> dict[str, Any]:
     """从已执行结果渲染确定性图表 spec。
 
     参数
     ----
-    execution : 带 sql/rows/columns 的执行产物，支持两种形状——
-                TurnResult 对象（属性访问）与 execute_readonly 输出
-                （dict 键访问）；sql 必须非空，rows/columns 与执行器
-                返回同构。
+    execution    : 带 sql/rows/columns 的执行产物，支持两种形状——
+                   TurnResult 对象（属性访问）与 execute_readonly 输出
+                   （dict 键访问）；sql 必须非空，rows/columns 与执行器
+                   返回同构。
+    time_columns : 时间轴列名集合（ADR-0025 决策 ①4）——编译路径由
+                   `Compiler.emitted_time_column` 声明并随回合携带；入参
+                   为空时回落 `_TIME_COLUMN_NAMES` 兜底（非编译路径，如
+                   `--llm` 候选链）。轴选择只依据本入参，不做名称推断。
 
     返回
     ----
@@ -159,7 +176,9 @@ def render_chart(execution: ExecutionLike) -> dict[str, Any]:
         raise ChartError("缺少已执行 SQL 引用：schema 必须来自已执行结果（不渲染裸数据）")
     _validate_rows(rows, columns)
 
-    stats = _classify_columns(rows, columns)
+    # 时间轴判定源（ADR-0025 决策 ①4）：入参非空 = 编译声明（权威，轴选择只依据
+    # 它）；为空 = 非编译路径，回落列名兜底集合
+    stats = _classify_columns(rows, columns, time_names=time_columns or _TIME_COLUMN_NAMES)
     # 时间列（如 CalendarYearID 数值形态）是轴不是度量：排除出 y 候选
     numeric_cols = [s for s in stats if s.numeric and not s.all_null and not s.time_like]
     time_cols = [s for s in stats if s.time_like and not s.all_null]
@@ -200,6 +219,9 @@ def render_chart(execution: ExecutionLike) -> dict[str, Any]:
         chart_type = "line"
         if len(time_cols) > 1:
             note_parts.append(f"多个时间列，取首个 {x_col.name} 作 x 轴")
+        if not time_columns:
+            # 决策 ③3：兜底路径必须在 spec 里可见（权威等级低于编译声明）
+            note_parts.append("时间轴按列名兜底识别（非编译器声明）")
     elif cat_cols:
         x_col = cat_cols[0]
         chart_type = "bar"

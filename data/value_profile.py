@@ -32,7 +32,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -45,11 +44,11 @@ sys.path.insert(0, str(REPO_ROOT))
 from agent.compiler import SemanticModel  # noqa: E402
 from agent.security.sql_guard import Budget, enforce  # noqa: E402
 from agent.value_domain import VALUES_DIR  # noqa: E402
+from data.identity import SNAPSHOT_DIR, git_short_sha  # noqa: E402
 from eval.runner import DOMAIN_MODELS, build_budget, execute_sql, verify_snapshot  # noqa: E402
 
 TZ = timezone(timedelta(hours=8))  # 契约要求：时间戳显式 +08:00
 DEFAULT_MAX_CARDINALITY = 200
-SNAPSHOT_DIR = REPO_ROOT / "data" / "snapshots"
 
 # 标识符白名单：表/列名只接受 [A-Za-z_][A-Za-z0-9_]*。语义模型是可信配置，但
 # 值域 SQL 要过 Guard 执行，任何非预期字符（空格/引号/点号以外的结构）都说明
@@ -201,18 +200,6 @@ def build_profile(
     }
 
 
-def head_sha() -> str:
-    """当前 HEAD 短 sha（与 data/snapshot.py --check 校验的对象同源）。"""
-    out = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return out.stdout.strip()
-
-
 def generate(
     domains: list[str],
     max_cardinality: int,
@@ -222,7 +209,9 @@ def generate(
 ) -> list[dict[str, Any]]:
     """生成（或 dry-run 预览）指定域全部注册维度的值域，返回 payload 列表。"""
     verify_snapshot()
-    sha = head_sha()
+    # 原为本模块私有 head_sha()（不认 ATLAS_GIT_SHA 的第 11 份副本，ADR-0019 决策 ②）；
+    # 改用单一事实源后容器内注入身份可正常生成，不再因镜像无 .git 而抛错。
+    sha = git_short_sha()
     meta_path = SNAPSHOT_DIR / f"{sha}.meta.json"
     if not meta_path.exists():  # --check 已过仍缺 = 快照纪律被绕过
         raise RuntimeError(f"--check 通过但 HEAD {sha} 无锁定快照 meta：{meta_path}")

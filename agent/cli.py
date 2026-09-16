@@ -49,7 +49,8 @@ from agent.generator import Generator
 from agent.planner import ClarificationRequest, Planner
 from agent.security.sql_guard import Budget, BudgetExceeded, Policy, UnsafeQuery, enforce
 from agent.state import TurnResult
-from eval.runner import SNAPSHOT_DIR, build_budget, execute_sql
+from data.identity import RuntimeSnapshot, resolve_runtime_snapshot
+from eval.runner import build_budget, execute_sql
 from serving.auth import AuthError, resolve_claims
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -72,7 +73,7 @@ def _load_dotenv() -> None:
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
-            line = line[len("export "):]
+            line = line[len("export ") :]
         key, sep, val = line.partition("=")
         if not sep:
             continue
@@ -126,11 +127,16 @@ def cmd_ask(args: argparse.Namespace) -> int:
     except SnapshotUnavailable as exc:
         print(f"[ask] {exc}", file=sys.stderr)
         return 1
+    # 绑定回显（ADR-0019 决策 ⑥；补实施裁定 7 登记的缺口——改造前 ask 不回显，
+    # 于是「commit 后未重锁」窗口里的数字来自哪份快照只有 query 路径看得见）。
+    # 与 cmd_query 同格式同流：describe() 共用一份格式，stderr 不污染可机读的 stdout。
+    if agent.snapshot is not None:
+        print(f"[snapshot] {agent.snapshot.describe()}", file=sys.stderr)
     if args.question is not None:
         _print_turn(agent.ask(args.question))
         return 0
     print("[ask] 交互会话（真实 Doris + 锁定快照；空行退出）")
-    sid = f"cli-{uuid4().hex[:8]}"  # 进程内会话键（checkpointer 内存态，重启即新会话）
+    sid = f"cli-{uuid4().hex[:8]}"  # 单次运行的会话键（sid 每次运行新生成，不跨运行复用）
     try:
         while True:
             try:
@@ -190,16 +196,21 @@ def cmd_compile(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _load_budget() -> Budget:
+def _load_budget() -> tuple[Budget, RuntimeSnapshot]:
     """锁定快照表白名单预算（口径与 eval/runner.build_budget / metrics_verify 一致）。
 
-    无快照 meta 时抛 SystemExit——query 必须绑固定快照（AGENTS.md N3/N6），
-    不允许查未入快照的漂移表。
+    返回 (预算, 快照解析结果)：query 的数字必须能说清绑在哪份快照上（ADR-0019
+    决策 ① 的第 3 级回退让「非 HEAD 绑定」成为可达状态，代价 ③ 的唯一约束是回显）。
+
+    快照不可用时（resolve_runtime_snapshot 抛 SnapshotUnavailable）转 SystemExit
+    并原样带出消息——query 必须绑固定快照（AGENTS.md N3/N6），不允许查未入快照的
+    漂移表；调用方 cmd_query 捕获后返回 exit 1（同 cmd_ask 的出口码）。
     """
-    metas = sorted(SNAPSHOT_DIR.glob("*.meta.json"))
-    if not metas:
-        raise SystemExit("[error] data/snapshots 无 meta.json，先 make seed 锁定快照")
-    return build_budget(json.loads(metas[-1].read_text(encoding="utf-8")))
+    try:
+        snapshot = resolve_runtime_snapshot()
+    except SnapshotUnavailable as exc:
+        raise SystemExit(f"[error] {exc}") from None
+    return build_budget(snapshot.meta), snapshot
 
 
 def _parse_role_ctx(s: str | None) -> dict[str, str]:
@@ -327,10 +338,13 @@ def cmd_query(args: argparse.Namespace) -> int:
 
     # 1. 预算：锁快照表白名单（无快照即拒绝，ExitError）
     try:
-        budget = _load_budget()
+        budget, snapshot = _load_budget()
     except SystemExit as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_ERROR
+    # 绑定回显走 stderr：--format json 的 stdout 是机读契约，加键属变更（决策 ⑥ 的
+    # /health 与 /ask 扩字段同批处理）。非 HEAD 绑定必须可见（代价 ③ 的唯一约束）
+    print(f"[snapshot] {snapshot.describe()}", file=sys.stderr)
 
     # 2. 解析：Planner（确定性）→ 已知 Plan；未知按 --llm 决定走 LLM 还是澄清
     parsed = Planner(model).plan(args.question)
@@ -358,12 +372,19 @@ def cmd_query(args: argparse.Namespace) -> int:
         print(f"[error] 编译失败：{exc}", file=sys.stderr)
         return EXIT_ERROR
 
-    # 4. 行级策略（可选）：--role 经 resolve_claims 渲染谓词 → Policy → enforce 注入
+    # 4. 行级策略（可选）：--role 经 resolve_claims 渲染谓词 → Policy → enforce 注入；
+    # 策略名由当前语义模型的 default_row_policy 决定（ADR-0021 决策 ②③；缺失即拒绝）
     policy: Policy | None = None
     if args.role:
         claims = {"role": args.role, "user_context": _parse_role_ctx(args.role_ctx)}
+        if model.default_row_policy is None:
+            print(
+                "[blocked] 语义模型未声明 default_row_policy，无法注入行级策略",
+                file=sys.stderr,
+            )
+            return EXIT_BLOCKED
         try:
-            resolved = resolve_claims(claims)
+            resolved = resolve_claims(claims, policy_name=model.default_row_policy)
         except (AuthError, ValueError) as exc:
             print(f"[blocked] 行级策略解析失败：{exc}", file=sys.stderr)
             return EXIT_BLOCKED
@@ -408,14 +429,22 @@ def main(argv: list[str] | None = None) -> int:
 
     p_plan = sub.add_parser("plan", help="问句 → Plan")
     p_plan.add_argument("question", help="自然语言问句")
-    p_plan.add_argument("--domain", choices=["finance", "retail"], default="finance",
-                        help="语义模型域（默认 finance）")
+    p_plan.add_argument(
+        "--domain",
+        choices=["finance", "retail"],
+        default="finance",
+        help="语义模型域（默认 finance）",
+    )
     p_plan.set_defaults(func=cmd_plan)
 
     p_compile = sub.add_parser("compile", help="query.plan.json → 只读 SQL")
     p_compile.add_argument("plan_file", help="Plan JSON 文件路径")
-    p_compile.add_argument("--domain", choices=["finance", "retail"], default="finance",
-                           help="语义模型域（默认 finance）")
+    p_compile.add_argument(
+        "--domain",
+        choices=["finance", "retail"],
+        default="finance",
+        help="语义模型域（默认 finance）",
+    )
     p_compile.set_defaults(func=cmd_compile)
 
     p_ask = sub.add_parser("ask", help="多轮问数（真实 Doris + 锁定快照）")
@@ -424,20 +453,42 @@ def main(argv: list[str] | None = None) -> int:
 
     p_query = sub.add_parser("query", help="一步问数（Planner→Compiler→Guard→Doris）")
     p_query.add_argument("question", help="自然语言问句")
-    p_query.add_argument("--domain", choices=["finance", "retail"], default="finance",
-                         help="语义模型域（默认 finance）")
-    p_query.add_argument("--format", choices=["table", "json"], default="table",
-                         help="输出格式（默认 table；json 机读、含 SQL/rows/退出状态）")
-    p_query.add_argument("--llm", action="store_true",
-                         help="unmatched 问句走 LLM 候选链（需 OPENAI_API_KEY；默认澄清）")
-    p_query.add_argument("--engine", choices=["openai", "stub"], default="openai",
-                         help="候选链引擎（默认 openai）")
-    p_query.add_argument("--candidate-k", type=int, default=5, dest="candidate_k",
-                         help="候选链检索候选数 k（默认 5）")
-    p_query.add_argument("--role", default=None,
-                         help="注入行级策略角色（如 branch_manager）；需配合 --role-ctx")
-    p_query.add_argument("--role-ctx", default=None, dest="role_ctx",
-                         help="角色上下文 k=v，逗号分隔（如 branch=BR_A1）")
+    p_query.add_argument(
+        "--domain",
+        choices=["finance", "retail"],
+        default="finance",
+        help="语义模型域（默认 finance）",
+    )
+    p_query.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="输出格式（默认 table；json 机读、含 SQL/rows/退出状态）",
+    )
+    p_query.add_argument(
+        "--llm",
+        action="store_true",
+        help="unmatched 问句走 LLM 候选链（需 OPENAI_API_KEY；默认澄清）",
+    )
+    p_query.add_argument(
+        "--engine", choices=["openai", "stub"], default="openai", help="候选链引擎（默认 openai）"
+    )
+    p_query.add_argument(
+        "--candidate-k",
+        type=int,
+        default=5,
+        dest="candidate_k",
+        help="候选链检索候选数 k（默认 5）",
+    )
+    p_query.add_argument(
+        "--role", default=None, help="注入行级策略角色（如 branch_manager）；需配合 --role-ctx"
+    )
+    p_query.add_argument(
+        "--role-ctx",
+        default=None,
+        dest="role_ctx",
+        help="角色上下文 k=v，逗号分隔（如 branch=BR_A1）",
+    )
     p_query.set_defaults(func=cmd_query)
 
     args = parser.parse_args(argv)
