@@ -1,0 +1,323 @@
+{
+  "schema_version": 1,
+  "purpose": "HTTP API 真实链路验收（ADR-0012 服务面 + ADR-0022 URL 契约 v2；与 e2e-acceptance 同数据口径）",
+  "head_sha": "b95a9e9",
+  "snapshot_sha": "b933e20",
+  "created_at": "2026-09-16T222223Z",
+  "engine": "真实 Doris（eval/runner.execute_sql）+ 确定性链路（engine=stub）",
+  "transport": "fastapi TestClient（ASGI 全栈：pydantic 校验 + JWT + 序列化）",
+  "scenarios": [
+    {
+      "id": "A1",
+      "title": "问→编→问全链（只读 + EX）",
+      "goal": "gold-102 经 /plan→/compile→/ask，EX 与锁定快照一致",
+      "question": "按分支统计 2013 年佣金收入，列出前 5 名",
+      "plan": {
+        "metric": "commission_revenue",
+        "dimensions": [
+          "Branch"
+        ],
+        "time": {
+          "granularity": "year",
+          "value": 2013
+        },
+        "filters": [],
+        "order_by": [
+          {
+            "column": "commission_revenue",
+            "desc": true
+          }
+        ],
+        "limit": 5
+      },
+      "sql": "SELECT dim_broker.Branch AS Branch, SUM(fact_trades.Commission) AS commission_revenue FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.CalendarYearID = 2013 GROUP BY dim_broker.Branch ORDER BY commission_revenue DESC LIMIT 5",
+      "sql_readonly": "pass",
+      "kind": "answer",
+      "metric": "commission_revenue",
+      "row_count": 5,
+      "rows_sample": [
+        [
+          "jKgsNAQeUQpTwGTOJGUBqRQF",
+          "372849.61"
+        ],
+        [
+          null,
+          "172777.70"
+        ],
+        [
+          "wjYPZaGSUHUxxicvCRtQYjjLIIoEQx",
+          "99531.57"
+        ]
+      ],
+      "result_hash": "557479f4a0f2",
+      "gold_result_hash_prefix": "557479f4a0f2",
+      "executor_calls": 1
+    },
+    {
+      "id": "A2",
+      "title": "歧义反问（HTTP 化）",
+      "goal": "歧义问句经 HTTP → 200 + kind=clarify，不猜答",
+      "question": "最近交易情况怎么样？",
+      "kind": "clarify",
+      "clarification_kind": "unmatched",
+      "reasons": [
+        "无法确定指标口径（问句未命中任何指标同义词）"
+      ],
+      "executor_calls": 0
+    },
+    {
+      "id": "A3",
+      "title": "认证拦截",
+      "goal": "无 token / 伪造签名 → 401",
+      "missing_token_status": 401,
+      "forged_signature_status": 401
+    },
+    {
+      "id": "A4",
+      "title": "存活探针（/health 双挂同 body）",
+      "goal": "/health 根与前缀挂点公开 200 且 body 相同（记录实际快照绑定状态）",
+      "status": "ok",
+      "head_sha": "b95a9e9",
+      "snapshot_sha": "7c966e9",
+      "dual_mount_root_status": 200,
+      "dual_mount_prefixed_status": 200
+    },
+    {
+      "id": "A5",
+      "title": "三角色行级差异（gold-146 载体）",
+      "goal": "hq_admin 全量 vs branch_manager 本分支：过滤生效 + 策略名可见且条件值不外泄",
+      "question": "按分支和客户等级统计 2015 年交易额，列出前 5 名",
+      "branch": "uHtbMrIxbLVfWHFhCIeAnTu",
+      "hq": {
+        "row_count": 5,
+        "rows_top5": [
+          [
+            3,
+            null,
+            "42454216.3900"
+          ],
+          [
+            2,
+            null,
+            "20963094.5100"
+          ],
+          [
+            1,
+            null,
+            "6408146.1400"
+          ],
+          [
+            null,
+            null,
+            "1449421.9300"
+          ],
+          [
+            3,
+            "uHtbMrIxbLVfWHFhCIeAnTu",
+            "787213.2800"
+          ]
+        ],
+        "result_hash": "ef4f389454e5",
+        "gold_result_hash_prefix": "ef4f389454e5",
+        "policy_effect": "行级策略已生效（角色 hq_admin，策略 rp_branch_visible）"
+      },
+      "branch_manager": {
+        "row_count": 2,
+        "rows_top5": [
+          [
+            3,
+            "uHtbMrIxbLVfWHFhCIeAnTu",
+            "787213.2800"
+          ],
+          [
+            2,
+            "uHtbMrIxbLVfWHFhCIeAnTu",
+            "137351.3600"
+          ]
+        ],
+        "policy_effect": "行级策略已生效（角色 branch_manager，策略 rp_branch_visible）"
+      }
+    },
+    {
+      "id": "A6",
+      "title": "会话身份冲突（HTTP 422）",
+      "goal": "同 session_id 换 token → 422 冲突文案（C2 指纹绑定生效）",
+      "session_id": "api-verify-a6-conflict",
+      "first_role": "branch_manager",
+      "second_role": "hq_admin",
+      "second_status": 422,
+      "detail": "会话身份冲突，请换新 session_id"
+    },
+    {
+      "id": "A7a",
+      "title": "零售档品类受限（category_analyst）",
+      "goal": "retail model + TN + Shoes/Electronics → 结果品类 ⊆ 受限集",
+      "question": "2000 年按门店城市和品类统计销售额，列出前 3 名",
+      "claims": {
+        "region": "TN",
+        "categories": [
+          "Shoes",
+          "Electronics"
+        ]
+      },
+      "row_count": 3,
+      "categories_seen": [
+        "Electronics",
+        "Shoes"
+      ],
+      "policy_effect": "行级策略已生效（角色 category_analyst，策略 rp_dept_visible）"
+    },
+    {
+      "id": "A7c",
+      "title": "零售档策略名按域（hq_admin）",
+      "goal": "retail model + hq_admin → policy_effect 报 rp_dept_visible（判据 11）",
+      "question": "2000 年按门店城市和品类统计销售额，列出前 3 名",
+      "row_count": 3,
+      "policy_effect": "行级策略已生效（角色 hq_admin，策略 rp_dept_visible）"
+    },
+    {
+      "id": "A7b",
+      "title": "跨域身份拒绝（region_manager × finance）",
+      "goal": "身份策略解析失败：域不匹配 → kind=error 且零 SQL 达执行器（Guard 之前即拒）",
+      "question": "按分支和客户等级统计 2015 年交易额，列出前 5 名",
+      "claims": {
+        "region": "TN"
+      },
+      "kind": "error",
+      "error": "身份策略解析失败：角色 'region_manager' 不属于策略 'rp_branch_visible'（域不匹配）",
+      "executed_sql_count": 0
+    },
+    {
+      "id": "A8",
+      "title": "治理面一轮 + 两桶独立",
+      "goal": "8 集合全 200（信封 kind=governance.<名>）且治理请求不消耗业务桶（判据 4）",
+      "business_bucket_capacity": 3,
+      "governance_bucket_capacity": 10000,
+      "governance_status": {
+        "models": 200,
+        "metrics": 200,
+        "dimensions": 200,
+        "synonyms": 200,
+        "values": 200,
+        "policies": 200,
+        "reports": 200,
+        "snapshots": 200
+      },
+      "governance_kind": {
+        "models": "governance.models",
+        "metrics": "governance.metrics",
+        "dimensions": "governance.dimensions",
+        "synonyms": "governance.synonyms",
+        "values": "governance.values",
+        "policies": "governance.policies",
+        "reports": "governance.reports",
+        "snapshots": "governance.snapshots"
+      },
+      "business_ask_after_governance_status": 200
+    },
+    {
+      "id": "A9",
+      "title": "Plan 直接执行（/plan/execute 真链）",
+      "goal": "/plan 产物原样回填执行：kind=answer + EX 与锁定快照一致",
+      "plan": {
+        "metric": "commission_revenue",
+        "dimensions": [
+          "Branch"
+        ],
+        "time": {
+          "granularity": "year",
+          "value": 2013
+        },
+        "filters": [],
+        "order_by": [
+          {
+            "column": "commission_revenue",
+            "desc": true
+          }
+        ],
+        "limit": 5
+      },
+      "kind": "answer",
+      "question_text": "直接执行 Plan：commission_revenue，按 Branch，2013 year",
+      "row_count": 5,
+      "rows_sample": [
+        [
+          "jKgsNAQeUQpTwGTOJGUBqRQF",
+          "372849.61"
+        ],
+        [
+          null,
+          "172777.70"
+        ],
+        [
+          "wjYPZaGSUHUxxicvCRtQYjjLIIoEQx",
+          "99531.57"
+        ]
+      ],
+      "result_hash": "557479f4a0f2",
+      "gold_result_hash_prefix": "557479f4a0f2",
+      "session_id_echoed": "session-3433dbd4",
+      "executor_calls": 1
+    },
+    {
+      "id": "A10a",
+      "title": "多步贡献分析（hq_admin /analyze）",
+      "goal": "analyze → 四步 Guard/RLS → 贡献响应：四步全 SQL（LIMIT+2013+1 = 1）+ totals 三键齐 + 父轮不冒充行集",
+      "question": "分析 2013Q4 相对 2013Q3 的佣金收入按分支的变化贡献",
+      "kind": "answer",
+      "analysis_status": "ok",
+      "steps": 4,
+      "roles": [
+        "baseline_total",
+        "current_total",
+        "current_by_dimension",
+        "baseline_by_dimension"
+      ],
+      "totals_keys": [
+        "baseline",
+        "current",
+        "delta"
+      ],
+      "items_count": 2715,
+      "executor_calls": 4
+    },
+    {
+      "id": "A10b",
+      "title": "真实受限角色（branch_manager /analyze）",
+      "goal": "受限角色 /analyze → blocked（guard_blocked）+ 零 SQL 达执行器 + 同会话 /ask 仍可用（轮数接续 2）",
+      "question": "分析 2013Q4 相对 2013Q3 的佣金收入按分支的变化贡献",
+      "kind": "blocked",
+      "reason_code": "guard_blocked",
+      "block_reason": "UnsafeQuery: 策略引用表不在查询中且未提供语义模型（跨表谓词需 join 注入）：['dim_broker']",
+      "steps": 1,
+      "executor_calls": 1,
+      "turns_in_session_blocked": 1,
+      "followup_kind": "answer",
+      "followup_turns_in_session": 2
+    },
+    {
+      "id": "A10c",
+      "title": "同会话流（analyze → 普通问数）",
+      "goal": "/analyze 后同 sid /ask → answer，turns_in_session 接续为 2",
+      "question": "分析 2013Q4 相对 2013Q3 的佣金收入按分支的变化贡献",
+      "session_id": "api-verify-a10c-hq",
+      "analyze_kind": "answer",
+      "ask_kind": "answer",
+      "turns_in_session": 2
+    },
+    {
+      "id": "A10d",
+      "title": "跨身份会话冲突（HTTP 422）",
+      "goal": "A10c 的 sid 上换 bm token /ask → 422 会话身份冲突（C2 真链侧）",
+      "session_id": "api-verify-a10c-hq",
+      "first_role": "hq_admin",
+      "second_role": "branch_manager",
+      "second_status": 422,
+      "detail": "会话身份冲突，请换新 session_id"
+    }
+  ],
+  "summary": {
+    "total": 15,
+    "passed": 15
+  }
+}

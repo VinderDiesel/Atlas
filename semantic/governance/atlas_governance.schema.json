@@ -141,6 +141,28 @@
         }
       }
     },
+    "analysis": {
+      "type": "object",
+      "description": "ADR-0026 分析资格声明：指标 × 维度可加组合的封闭注册表。只允许出现在指标级 payload；未登记的组合一律不可做变更归因分析（余额/比率/DISTINCT 类指标须先裁定分解数学，不得在此放开）。",
+      "required": ["attribution"],
+      "additionalProperties": false,
+      "properties": {
+        "attribution": {
+          "type": "object",
+          "required": ["dimensions"],
+          "additionalProperties": false,
+          "properties": {
+            "dimensions": {
+              "type": "array",
+              "description": "可做归因分组的维度字段名（须为模型中非时间字段；唯一、非空）",
+              "items": { "type": "string", "minLength": 1 },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          }
+        }
+      }
+    },
     "time_dimension": {
       "type": "object",
       "description": "时间维度声明（P3，compiler 时间谓词的唯一来源，不再硬编码）：表/模式/粒度列映射——single=每粒度一个 ID 列（金融 TPC-DI CalendarYearID 等）；composite=year 列拆位 + 季/月列双等值（零售 TPC-DS d_year + d_qoy/d_moy）",

@@ -142,6 +142,23 @@ def _load_locked_snapshots(errors: list[str]) -> set[str] | None:
     return {p.name.removesuffix(".meta.json") for p in SNAPSHOT_DIR.glob("*.meta.json")}
 
 
+def _collect_model_fields(path: Path) -> tuple[set[str], set[str]]:
+    """ossie YAML → (全部字段名集, 时间字段名集)（analysis 块维度存在性校验用）。"""
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    fields: set[str] = set()
+    time_fields: set[str] = set()
+    for model in doc.get("semantic_model", []):
+        for ds in model.get("datasets", []):
+            for f in ds.get("fields", []):
+                name = f.get("name")
+                if not isinstance(name, str):
+                    continue
+                fields.add(name)
+                if f.get("dimension", {}).get("is_time"):
+                    time_fields.add(name)
+    return fields, time_fields
+
+
 def validate_file(path: Path, schema: dict[str, Any], errors: list[str]) -> None:
     """校验单个文件的所有治理扩展（模型级 + 指标级 payload）。"""
     registry = _load_registry(errors)
@@ -149,6 +166,7 @@ def validate_file(path: Path, schema: dict[str, Any], errors: list[str]) -> None
     gold_ids = _load_gold_ids(errors)
     gold_refs = _gold_refs_by_metric()
     locked_shas = _load_locked_snapshots(errors)
+    field_info = _collect_model_fields(path)
 
     for prefix, data, metric_name in iter_payloads(path):
         if "_parse_error" in data:
@@ -165,6 +183,7 @@ def validate_file(path: Path, schema: dict[str, Any], errors: list[str]) -> None
             gold_refs,
             locked_shas,
             errors,
+            field_info,
         )
 
 
@@ -179,12 +198,37 @@ def _check_payload(
     gold_refs: dict[str, set[str]] | None,
     locked_shas: set[str] | None,
     errors: list[str],
+    field_info: tuple[set[str], set[str]] | None = None,
 ) -> None:
-    """校验单个 ATLAS payload 的 schema 与各类引用（模型级 metric_name=None）。"""
+    """校验单个 ATLAS payload 的 schema 与各类引用（模型级 metric_name=None）。
+
+    field_info：本文件的 (全部字段名集, 时间字段名集)，供 analysis 块的维度
+    存在性 / 非时间字段校验（ADR-0026 T02）；None 时跳过这两条语义检查。
+    """
     try:
         jsonschema.validate(data, schema)
     except jsonschema.ValidationError as exc:
         errors.append(f"{prefix}: 未通过 atlas_governance.schema.json：{exc.message}")
+    # analysis 块（ADR-0026 T02）：封闭注册表只允许出现在指标级，且维度必须是
+    # 模型中真实存在、非时间的字段（时间走 Plan.time，不得作归因分组键）；
+    # 重复项已由 schema uniqueItems 拒绝，这里不重复报
+    analysis = data.get("analysis")
+    if analysis is not None:
+        if metric_name is None:
+            errors.append(f"{prefix}: analysis 声明只允许出现在指标级 payload（模型级无效）")
+        elif field_info is not None:
+            fields, time_fields = field_info
+            for dim in analysis.get("attribution", {}).get("dimensions", []):
+                if dim in time_fields:
+                    errors.append(
+                        f"{prefix}: analysis 维度 {dim} 是时间字段"
+                        f"（时间范围走 Plan.time，不得作归因维度）"
+                    )
+                elif dim not in fields:
+                    errors.append(
+                        f"{prefix}: analysis 维度 {dim} 不存在于模型字段"
+                        f"（封闭注册表只接受真实维度）"
+                    )
 
     alignment = data.get("fibo_alignment")
     if alignment:

@@ -8,19 +8,21 @@
  * 2. 提取正则（Python 侧，tests/test_api_contract_v2.py）：
  *    /"(\/(?:api\/v1|health)[a-z0-9_\/{}.-]*)"/g —— 仅匹配**双引号字面量**。
  *    故：路径一律用双引号；注释里提及路径只写反引号形式（如 `/api/v1/ask`），
- *    双引号包裹会被误提取成第 17 条而断言变红。
- * 3. 集合必须与后端契约 v2（ADR-0022）逐条对应：16 条 =
- *    15 条 /api/v1 前缀路径（1 探针 + 4 业务 + 8 治理集合 + 2 钻取）+ 1 条根探针。
+ *    双引号包裹会被误提取成多出的一条而断言变红。
+ * 3. 集合必须与后端契约 v2（ADR-0022；业务面增量见 ADR-0026）逐条对应：
+ *    17 条 = 16 条 /api/v1 前缀路径（1 探针 + 5 业务 + 8 治理集合 + 2 钻取）
+ *    + 1 条根探针。
  */
 export const API = {
   // 前缀探针（POST/GET 面不消费；与根探针同 body，ADR-0022 决策 ①）
   health: "/api/v1/health",
 
-  // 业务面 4 条（POST；ADR-0022 决策 ③）
+  // 业务面 5 条（POST；ADR-0022 决策 ③ + ADR-0026 多步分析）
   plan: "/api/v1/plan",
   compile: "/api/v1/compile",
   ask: "/api/v1/ask",
   planExecute: "/api/v1/plan/execute",
+  analyze: "/api/v1/analyze",
 
   // 治理面 8 集合（GET，只读 Git 文件与产物目录；ADR-0022 决策 ⑤）
   governanceModels: "/api/v1/governance/models",
@@ -44,11 +46,11 @@ export const API = {
 export const PROBE_HEALTH = "/health";
 
 /**
- * dev 签发中间件路径（vite dev-only；**不属 0022 契约的 16 条**）。
+ * dev 签发中间件路径（vite dev-only；**不属 0022 契约的 17 条**）。
  *
  * 仅 `make ui-dev`（vite dev server）下由 `vite.config.ts` 的 devSignPlugin 提供；
  * `make serve-dev`（uvicorn 直服 dist）与容器无此端点 → 调用侧（api/devsign.ts）
  * 必须处理「不可用」降级。按判据 9 的正则定义（须以 `/api/v1` 或 `/health` 开头）
- * 本路径不会被提取，不影响 16 条集合相等断言。
+ * 本路径不会被提取，不影响 17 条集合相等断言。
  */
 export const DEV_SIGN = "/__dev/sign";

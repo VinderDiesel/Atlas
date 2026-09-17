@@ -1,0 +1,16 @@
+{
+  "id": "clarify-001",
+  "maturity": "ready",
+  "question": "分析 2013Q4 相对上季度的佣金收入变化贡献",
+  "expected_kind": "clarify",
+  "expected_sql_calls": 0,
+  "expected_clarification": {
+    "reasons": [
+      "不支持相对时间（固定快照评测下会漂移，请使用绝对日期）"
+    ],
+    "kind": "relative_time"
+  },
+  "snapshot_sha": "7c966e9",
+  "semantic_sha256": "a3ba5e2b708bcf578dc27b3587ca8050bef6ae0a4e2cc77290ffda586e345be4",
+  "tags": ["analysis", "clarification"]
+}

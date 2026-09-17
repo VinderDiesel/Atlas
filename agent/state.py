@@ -13,6 +13,13 @@
 - **跨轮记账也在状态里（ADR-0020 决策 ⑤⑥）**：轮数（turns，plan 节点 +1）与
   身份指纹（session_fingerprint，首轮由 DataAgent.ask 随输入写入）同属
   checkpoint 状态——没有进程内会话表，重启后两者与 last_plan 一起存活。
+- **多期间分析记账（ADR-0026 决策 ④）**：analysis_record 是分析父轮的有界事实
+  （版本/状态/问句/身份指纹/子步证据），随 checkpoint 持久化、可中断恢复；
+  analysis_followup_blocked 在分析期间挂起残句追问（不偷接分析前的旧 Plan），
+  一次明确的普通 Plan 执行成功（explain 回写）才解除。记录里的 rows 标量用
+  本模块的 encode_row_value / encode_rows 带类型编码（Decimal/bool 等不经编码
+  会在序列化里丢精度或丢类型），不存贡献率、叙事、claims 本体；贡献率与叙事
+  计算产物（AnalysisResult / Attribution）不进 checkpoint。
 - 回合输出 TurnResult 按 kind 分类：answer（执行成功）/ clarify（反问，
   不猜）/ blocked（Guard 拒绝）/ error（执行期故障）/ handoff（人工接管，
   Day 48）。
@@ -20,7 +27,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Literal, TypedDict
 
 from agent.compiler import Plan
@@ -35,6 +44,10 @@ TurnKind = Literal["answer", "clarify", "blocked", "error", "handoff"]
 
 # 生成引擎（explain 归因用）：deterministic 链为固定值；候选链 = generator.engine
 EngineName = Literal["deterministic", "stub", "openai"]
+
+# analysis_record 的形态版本（ADR-0026 决策 ④ ⑦）：记录里显式带版本，读取方
+# （中断恢复、评测器）按版本判定兼容性——无版本的记录无从谈起「迁移」。
+ANALYSIS_RECORD_VERSION = 1
 
 
 class TurnState(TypedDict, total=False):
@@ -75,6 +88,91 @@ class TurnState(TypedDict, total=False):
     block_reason: str  # kind=blocked：Guard 拒绝原因（不携带被拒 SQL）
     error: str  # kind=error：执行期故障描述
     handoff_reason: str  # kind=handoff（Day 48）：人工接管原因（候选链素材空）
+    # 多期间分析父轮记账（ADR-0026 决策 ④⑦）：只存有界原始事实（版本/状态/
+    # 问句/身份指纹/子步证据，rows 标量经 encode_rows 带类型编码），不存贡献率、
+    # 叙事、claims 本体；新用户轮由 plan 节点冲刷为 None（旧 running 被普通轮
+    # 覆盖即该轮无终态，历史快照仍留证）。AnalysisResult / Attribution 不进此字段。
+    analysis_record: dict[str, Any] | None
+    # 分析期间挂起残句追问：True 时 plan 节点拒绝对残句承接 last_plan（ADR-0026
+    # 决策 ⑥），明确提示完整重述；一次明确的普通 Plan 执行成功（explain 回写）才解除。
+    analysis_followup_blocked: bool
+
+
+# ---------------------------------------------------------------------------
+# analysis_record.rows 标量的带类型编码（ADR-0026 决策 ④⑦）
+# ---------------------------------------------------------------------------
+# rows 里的标量可能是 Decimal / str / int / float / bool / None。它们直接进
+# LangGraph msgpack 序列化时：Decimal 不在 JsonPlusSerializer 白名单（会崩或丢），
+# bool 是 int 的子类（True 与 1 往返后不可区分）。编码成 JSON 原生形态的带标记
+# dict（{"t": tag, "v": payload}）后可安全过 checkpointer，decode 回原类型与值，
+# 供中断恢复后的贡献率复算（T07/T09 复用本组工具）。
+# 消费方约束：float 仅为存储保真而保留（repr() 文本往返），下游不得将其作为
+# ADR-0026 T04 综合算术的输入——综合运算必须先把 float 转回 Decimal（str() 文本
+# 精确转换）再参与加减与贡献率计算，避免二进制浮点误差污染精确分解。
+
+
+def encode_row_value(value: Any) -> dict[str, Any]:
+    """把 rows 单个标量编码成 JSON 原生形态的带类型 dict。
+
+    支持 None / bool / int / float / str / Decimal；bool 判定必须先于 int
+    （bool 是 int 的子类，否则 True 会被错编成 int 而丢类型）。float 用
+    repr() 文本保精度往返；Decimal 用 str() 文本。其余类型直接拒绝（宁可
+    显式失败，不让静默丢类型进 checkpoint）。
+    消费方约束：float 仅存储保真，不得进 T04 综合算术——综合前必须转回
+    Decimal（str() 文本精确转换），二进制浮点值不得直接参与精确分解运算。
+    """
+    if value is None:
+        return {"t": "null"}
+    if isinstance(value, bool):  # bool 先于 int：bool 是 int 子类
+        return {"t": "bool", "v": value}
+    if isinstance(value, int):
+        return {"t": "int", "v": value}
+    if isinstance(value, float):
+        return {"t": "float", "v": repr(value)}
+    if isinstance(value, str):
+        return {"t": "str", "v": value}
+    if isinstance(value, Decimal):
+        return {"t": "decimal", "v": str(value)}
+    raise TypeError(
+        f"rows 标量编码不支持 {type(value).__name__}：只接受 None/bool/int/float/str/Decimal"
+    )
+
+
+def decode_row_value(encoded: Any) -> Any:
+    """把 encode_row_value 的产物解码回原类型与原值。
+
+    非法形态（非 dict、缺 "t" 标记、未知标记、str 标记载荷不是字符串）抛
+    ValueError——损坏的记录宁可显式报错，不做静默猜测。
+    """
+    if not isinstance(encoded, dict) or "t" not in encoded:
+        raise ValueError(f"rows 标量编码形态非法：{encoded!r}")
+    tag = encoded["t"]
+    if tag == "null":
+        return None
+    if tag == "bool":
+        return bool(encoded["v"])
+    if tag == "int":
+        return int(encoded["v"])
+    if tag == "float":
+        return float(encoded["v"])
+    if tag == "str":
+        v = encoded["v"]
+        if not isinstance(v, str):
+            raise ValueError(f"str 标记的载荷不是字符串：{v!r}")
+        return v
+    if tag == "decimal":
+        return Decimal(encoded["v"])
+    raise ValueError(f"rows 标量编码未知标记：{tag!r}")
+
+
+def encode_rows(rows: Iterable[Iterable[Any]]) -> list[list[Any]]:
+    """把整个 rows 逐行逐格编码成 list[list[带类型 dict]]（JSON 原生可序列化）。"""
+    return [[encode_row_value(v) for v in row] for row in rows]
+
+
+def decode_rows(encoded: Any) -> tuple[tuple[Any, ...], ...]:
+    """把 encode_rows 的产物解码回 tuple[tuple[Any, ...], ...]（TurnState.rows 形态）。"""
+    return tuple(tuple(decode_row_value(v) for v in row) for row in encoded)
 
 
 @dataclass(frozen=True)

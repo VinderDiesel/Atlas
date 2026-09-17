@@ -5,8 +5,9 @@
  * - `TurnPayload` 的 kind 无关字段是「字段全集稳定输出」（api.py `_turn_payload`
  *   docstring 原文）——一律 `| null` 而非 `?:`：服务端只会发 null，可选类型会让
  *   undefined 与 null 两种形态在组件里各写一遍分支（设计页 §3.4）；
- * - 键集与 `serving/api.py` 的 `_turn_payload()`（22 键）逐键对齐；键数由 Python
- *   侧契约测试（tests/test_api_contract_v2.py 等）锁定，本文件只做镜像；
+ * - 键集与 `serving/api.py` 的 `_turn_payload()`（23 键，0026 起含 `analysis`）
+ *   逐键对齐；键数由 Python 侧契约测试（tests/test_api_contract_v2.py 等）锁定，
+ *   本文件只做镜像；
  * - 治理面 8 集合的 item 类型随各自子页落地批补齐（P2 前 6 子页 / P3
  *   reports、snapshots 两子页）；键集与 serving/governance.py 的构造逐字对齐。
  */
@@ -49,7 +50,8 @@ export interface Explanation {
   policy_effect?: string; // 仅策略生效轮追加（ADR-0011 硬化）
 }
 
-/** `/api/v1/ask` 与 `/api/v1/plan/execute` 的响应（22 键，字段全集恒定）。 */
+/** `/api/v1/ask`、`/api/v1/plan/execute` 与 `/api/v1/analyze` 的响应
+ * （23 键，字段全集恒定）。 */
 export interface TurnPayload {
   kind: TurnKind;
   session_id: string;
@@ -74,6 +76,69 @@ export interface TurnPayload {
   handoff_reason: string | null;
   snapshot_sha: string | null;
   snapshot_bound_to_head: boolean | null;
+  /** 多步分析投影（ADR-0026 决策 ⑥）：键恒存，非分析请求值为 null 而非缺失。 */
+  analysis: AnalysisPayload | null;
+}
+
+/**
+ * 多步分析 17 键投影（ADR-0026 决策 ⑥，serving/api.py `_analysis_payload` 镜像）。
+ * 不适用字段为 null / 空数组（字段全集恒定，同 `_turn_payload` 纪律）。
+ */
+export interface AnalysisPayload {
+  schema_version: number;
+  intent: string;
+  /** ok | unavailable | blocked | error（`analysis_status` 的取值；clarify 不产本投影）。 */
+  status: "ok" | "unavailable" | "blocked" | "error";
+  metric: string;
+  dimension: string | null;
+  baseline: AnalysisPeriod;
+  current: AnalysisPeriod;
+  filters: PlanFilter[];
+  snapshot_sha: string | null;
+  semantic_sha256: string | null;
+  recipe_version: number;
+  /** Decimal→str 保精度：三值齐全才有对象（unavailable/blocked/error 为 null）。 */
+  totals: { baseline: string; current: string; delta: string } | null;
+  /** 贡献项（|delta| 降序；unavailable/blocked/error 为空数组）。 */
+  items: AnalysisItem[];
+  /** 步骤按角色序；失败步裁为安全摘要（sql null、columns/rows 空）。 */
+  steps: AnalysisStep[];
+  /** 机器可读原因码（ok 时 null）。 */
+  reason_code: string | null;
+  /** 面向用户的稳定文案（unavailable/blocked/error 非空；无编造数字）。 */
+  text: string | null;
+  /** 分析总耗时（父轮 latency_ms 是已执行子 SQL 耗时和，两者分工不同）。 */
+  elapsed_ms: number;
+}
+
+/** 两期描述（`{granularity, value}`；value 透传不解析）。 */
+export interface AnalysisPeriod {
+  granularity: string;
+  value: number | string;
+}
+
+/** 贡献项（决策⑤精确 Decimal 综合；数值一律字符串出网）。 */
+export interface AnalysisItem {
+  value: string;
+  baseline: string | null;
+  current: string | null;
+  delta: string | null;
+  contribution_pct: string | null;
+}
+
+/**
+ * 分析步骤：成功步携带 sql/columns/rows/latency_ms；失败步（blocked/error）
+ * 裁为安全摘要——sql 为 null、columns/rows 空、另带 reason_code
+ * （"guard_blocked" | "execution_error"），被拒 SQL 与底层数据不出网。
+ */
+export interface AnalysisStep {
+  role: string;
+  kind: "answer" | "blocked" | "error";
+  sql: string | null;
+  columns: string[];
+  rows: unknown[][];
+  latency_ms: number;
+  reason_code?: string;
 }
 
 /**

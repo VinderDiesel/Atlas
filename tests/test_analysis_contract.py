@@ -24,39 +24,29 @@ from pathlib import Path
 
 import jsonschema
 
-# TDD 红灯阶段：agent/analysis 尚未实现，跳过全部测试直到实现就绪
-try:
-    from agent.analysis import (
-        ANALYSIS_PLAN_PROJECTION_KEYS,
-        ANALYSIS_REASON_CODES,
-        ANALYSIS_ROLES,
-        ANALYSIS_STATUSES,
-        ATTRIBUTION_STATUSES,
-        MAX_SUB_PLANS,
-        PENDING,
-        UNAVAILABLE_REASON_CODES,
-        AnalysisPlan,
-        AnalysisResult,
-        Attribution,
-        AttributionItem,
-        analysis_status,
-        effective_reason_code,
-        plan_projection,
-        validate_analysis_plan,
-        validate_analysis_result,
-    )
-    _ANALYSIS_AVAILABLE = True
-except ImportError:
-    _ANALYSIS_AVAILABLE = False
+from agent.analysis import (
+    ANALYSIS_PLAN_PROJECTION_KEYS,
+    ANALYSIS_REASON_CODES,
+    ANALYSIS_ROLES,
+    ANALYSIS_STATUSES,
+    ATTRIBUTION_STATUSES,
+    MAX_SUB_PLANS,
+    PENDING,
+    UNAVAILABLE_REASON_CODES,
+    AnalysisPlan,
+    AnalysisResult,
+    Attribution,
+    AttributionItem,
+    analysis_status,
+    effective_reason_code,
+    plan_projection,
+    validate_analysis_plan,
+    validate_analysis_result,
+)
 from agent.compiler import ComparisonSpec, Filter, OrderSpec, Plan, TimeSpec
 from agent.planner import ClarificationRequest
 from agent.state import TurnResult
-
-# semantic.lint.check_analysis_schema 也属于 TDD 红灯阶段
-try:
-    from semantic.lint import check_analysis_schema
-except ImportError:
-    check_analysis_schema = None  # type: ignore[assignment]
+from semantic.lint import check_analysis_schema
 
 REPO = Path(__file__).resolve().parent.parent
 ANALYSIS_SCHEMA_PATH = REPO / "eval" / "analysis" / "schema.json"
@@ -249,7 +239,6 @@ def _error_result() -> AnalysisResult:
 # ---------------------------------------------------------------------------
 
 
-@unittest.skipUnless(_ANALYSIS_AVAILABLE, "agent/analysis 未实现（TDD 红灯阶段）")
 class TestTypeSignatures(unittest.TestCase):
     """brief 逐字签名：字段名与默认值必须与 ADR-0026 T01 完全一致。"""
 
@@ -309,7 +298,6 @@ class TestTypeSignatures(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-@unittest.skipUnless(_ANALYSIS_AVAILABLE, "agent/analysis 未实现（TDD 红灯阶段）")
 class TestPlanProjection(unittest.TestCase):
     """canonical Plan 投影：固定 7 键、键序稳定、值可复算。"""
 
@@ -350,7 +338,6 @@ class TestPlanProjection(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-@unittest.skipUnless(_ANALYSIS_AVAILABLE, "agent/analysis 未实现（TDD 红灯阶段）")
 class TestAnalysisPlanContract(unittest.TestCase):
     def test_valid_template_zero_violations(self) -> None:
         self.assertEqual(validate_analysis_plan(_baseline_plan()), ())
@@ -434,7 +421,6 @@ class TestAnalysisPlanContract(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-@unittest.skipUnless(_ANALYSIS_AVAILABLE, "agent/analysis 未实现（TDD 红灯阶段）")
 class TestClosureMatrix(unittest.TestCase):
     def test_ok_result_valid(self) -> None:
         self.assertEqual(analysis_status(_ok_result()), "ok")
@@ -549,9 +535,7 @@ class TestClosureMatrix(unittest.TestCase):
         self.assertEqual(effective_reason_code(_blocked_result()), "guard_blocked")
         self.assertEqual(effective_reason_code(_error_result()), "execution_error")
         self.assertIsNone(effective_reason_code(_ok_result()))
-        self.assertEqual(
-            effective_reason_code(_unavailable_result()), "zero_total_delta"
-        )
+        self.assertEqual(effective_reason_code(_unavailable_result()), "zero_total_delta")
         # result.reason_code 与优先级推导不一致 → 违规
         bad = replace(_blocked_result(), reason_code=None)
         violations = validate_analysis_result(bad)
@@ -561,6 +545,20 @@ class TestClosureMatrix(unittest.TestCase):
         """分析父轮不冒充单 SQL 结果（ADR-0026 决策⑥）。"""
         bad_turn = _parent_turn("answer", metric=METRIC, sql="SELECT 1", rows=(("1",),))
         bad = replace(_ok_result(), turn=bad_turn)
+        violations = validate_analysis_result(bad)
+        self.assertTrue(any("父轮" in v for v in violations), violations)
+
+    def test_parent_answer_turn_with_time_column_invalid(self) -> None:
+        """分析父轮不得携带单 SQL answer 工件 time_column（ADR-0026 决策⑥）。"""
+        bad = replace(_ok_result(), turn=_parent_turn("answer", metric=METRIC, time_column="month"))
+        violations = validate_analysis_result(bad)
+        self.assertTrue(any("父轮" in v for v in violations), violations)
+
+    def test_parent_answer_turn_with_chart_invalid(self) -> None:
+        """分析父轮不得携带 chart 渲染产物（ADR-0026 决策⑥）。"""
+        bad = replace(
+            _ok_result(), turn=_parent_turn("answer", metric=METRIC, chart={"kind": "bar"})
+        )
         violations = validate_analysis_result(bad)
         self.assertTrue(any("父轮" in v for v in violations), violations)
 
@@ -657,10 +655,10 @@ def _base_clarify_sample() -> dict:
         "expected_kind": "clarify",
         "expected_sql_calls": 0,
         "expected_clarification": {
-            "reasons": (
+            "reasons": [
                 "期间含相对时间表达「上季度」，固定快照下会漂移，需绝对期间",
                 "缺分组维度：按什么维度分解贡献",
-            ),
+            ],
             "kind": "relative_time",
         },
         "snapshot_sha": PENDING,
@@ -680,7 +678,16 @@ def _base_blocked_sample() -> dict:
     return sample
 
 
-@unittest.skipUnless(_ANALYSIS_AVAILABLE, "agent/analysis 未实现（TDD 红灯阶段）")
+def _ready_reference() -> dict:
+    """合成 ready 期参考 oracle（SQL/结果均为测试输入，非快照实测值）。"""
+    return {
+        "sql": ["SELECT 1"] * 4,
+        "results": [{"role": "baseline_total", "value": "100"}],
+        "reviewed_by": "human",
+        "reviewed_at": "2026-09-20T10:00:00+08:00",
+    }
+
+
 class TestAnalysisSchemaNegatives(unittest.TestCase):
     """schema 负例必须击穿（draft 形态约束 + additionalProperties:false + 判别字段）。"""
 
@@ -752,6 +759,57 @@ class TestAnalysisSchemaNegatives(unittest.TestCase):
         sample["snapshot_sha"] = PENDING
         self._assert_invalid(sample)
 
+    def test_ready_blocked_without_reference_valid(self) -> None:
+        """ready 的 blocked 样本不需要伪造未执行步骤的 SQL/结果（brief）。"""
+        sample = _base_blocked_sample()
+        sample["maturity"] = "ready"
+        sample["snapshot_sha"] = "abc1234"
+        sample["semantic_sha256"] = "deadbeef"
+        self._assert_valid(sample)
+
+    def test_ready_clarify_without_reference_valid(self) -> None:
+        """ready 的 clarify 样本按自身规则即合法：零 SQL、无 reference。"""
+        sample = _base_clarify_sample()
+        sample["maturity"] = "ready"
+        sample["snapshot_sha"] = "abc1234"
+        sample["semantic_sha256"] = "deadbeef"
+        self._assert_valid(sample)
+
+    def test_ready_clarify_with_reference_still_fails(self) -> None:
+        """ready 不豁免 clarify 自身规则：reference 仍被禁止。"""
+        sample = _base_clarify_sample()
+        sample["maturity"] = "ready"
+        sample["snapshot_sha"] = "abc1234"
+        sample["semantic_sha256"] = "deadbeef"
+        sample["reference"] = _ready_reference()
+        self._assert_invalid(sample)
+
+    def test_ready_with_null_sha_fails(self) -> None:
+        """ready 样本 sha 为 null 同样必须失败（不只 <待填写> 字面量）。"""
+        sample = _base_answer_sample()
+        sample["maturity"] = "ready"
+        sample["reference"] = _ready_reference()
+        sample["snapshot_sha"] = None
+        self._assert_invalid(sample)
+        sample["snapshot_sha"] = "abc1234"
+        sample["semantic_sha256"] = None
+        self._assert_invalid(sample)
+
+    def test_blocked_with_reference_forbidden(self) -> None:
+        """blocked 与 clarify 同规则：不得声明 reference。"""
+        sample = _base_blocked_sample()
+        sample["reference"] = _ready_reference()
+        self._assert_invalid(sample)
+
+    def test_error_with_reference_forbidden(self) -> None:
+        """error 与 clarify/blocked 同规则：不得声明 reference。"""
+        sample = _base_blocked_sample()
+        sample["id"] = "error-001"
+        sample["expected_kind"] = "error"
+        sample["expected_reason_code"] = "execution_error"
+        sample["reference"] = _ready_reference()
+        self._assert_invalid(sample)
+
     def test_clarify_without_zero_sql_calls_fails(self) -> None:
         sample = _base_clarify_sample()
         del sample["expected_sql_calls"]
@@ -789,7 +847,6 @@ class TestAnalysisSchemaNegatives(unittest.TestCase):
         self._assert_valid(sample)
 
 
-@unittest.skipUnless(_ANALYSIS_AVAILABLE, "agent/analysis 未实现（TDD 红灯阶段）")
 class TestSchemaPythonSync(unittest.TestCase):
     """schema 枚举与 Python 闭集常量必须同步（防两处漂移）。"""
 
@@ -835,6 +892,13 @@ class TestSchemaPythonSync(unittest.TestCase):
         self.assertEqual(ANALYSIS_STATUSES, ("ok", "unavailable", "clarify", "blocked", "error"))
         self.assertEqual(ATTRIBUTION_STATUSES, ("ok", "unavailable"))
 
+    def test_synthesizer_const_matches_python_default(self) -> None:
+        """schema 的 analysisPlan.synthesizer 钉死为 Python 默认值（防两处漂移）。"""
+        spec = self.schema["definitions"]["analysisPlan"]["properties"]["synthesizer"]
+        self.assertEqual(spec, {"const": "additive_delta_v1"})
+        default = AnalysisPlan.__dataclass_fields__["synthesizer"].default
+        self.assertEqual(default, spec["const"])
+
 
 # ---------------------------------------------------------------------------
 # 6) 仓库内 draft 样本双重校验
@@ -875,7 +939,6 @@ def _plan_from_sample(sample: dict) -> AnalysisPlan:
     )
 
 
-@unittest.skipUnless(_ANALYSIS_AVAILABLE, "agent/analysis 未实现（TDD 红灯阶段）")
 class TestRepoSamples(unittest.TestCase):
     def setUp(self) -> None:
         self.schema = json.loads(ANALYSIS_SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -886,11 +949,16 @@ class TestRepoSamples(unittest.TestCase):
     def test_attribution_001_valid_and_contract_consistent(self) -> None:
         sample = self._load("attribution-001.json")
         jsonschema.validate(sample, self.schema)
-        self.assertEqual(sample["maturity"], "draft")
+        self.assertEqual(sample["maturity"], "ready")
         self.assertEqual(sample["expected_kind"], "answer")
         self.assertEqual(sample["expected_sql_calls"], 4)
-        self.assertEqual(sample["snapshot_sha"], PENDING)
-        self.assertEqual(sample["semantic_sha256"], PENDING)
+        # T01 提升后样本绑定 7c966e9（资格证据 data/snapshots/7c966e9.analysis.json
+        # 记录同一 snapshot_sha / semantic_sha256），不再是 PENDING 占位
+        self.assertEqual(sample["snapshot_sha"], "7c966e9")
+        self.assertEqual(
+            sample["semantic_sha256"],
+            "a3ba5e2b708bcf578dc27b3587ca8050bef6ae0a4e2cc77290ffda586e345be4",
+        )
         plan = _plan_from_sample(sample)
         self.assertEqual(validate_analysis_plan(plan), ())
         # 角色顺序（ADR-0026 决策①固定顺序）与 T03 验收断言同形态
@@ -906,14 +974,16 @@ class TestRepoSamples(unittest.TestCase):
     def test_clarify_001_valid(self) -> None:
         sample = self._load("clarify-001.json")
         jsonschema.validate(sample, self.schema)
-        self.assertEqual(sample["maturity"], "draft")
+        self.assertEqual(sample["maturity"], "ready")
         self.assertEqual(sample["expected_kind"], "clarify")
         self.assertEqual(sample["expected_sql_calls"], 0)
         self.assertNotIn("expected_plan", sample)
         self.assertNotIn("expected_sub_plans", sample)
         reasons = sample["expected_clarification"]["reasons"]
         self.assertTrue(reasons)
-        self.assertIn(sample["expected_clarification"]["kind"], ("ambiguous", "relative_time", "unmatched"))
+        self.assertIn(
+            sample["expected_clarification"]["kind"], ("ambiguous", "relative_time", "unmatched")
+        )
 
     def test_sample_id_matches_filename(self) -> None:
         for name in ("attribution-001.json", "clarify-001.json"):
@@ -926,7 +996,6 @@ class TestRepoSamples(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-@unittest.skipUnless(_ANALYSIS_AVAILABLE, "agent/analysis 未实现（TDD 红灯阶段）")
 class TestLintAnalysisDir(unittest.TestCase):
     def test_real_repo_analysis_clean(self) -> None:
         """真实仓库 eval/analysis 零违规（含 schema.json 本身不被当样本扫描）。"""
@@ -963,6 +1032,88 @@ class TestLintAnalysisDir(unittest.TestCase):
             errors = check_analysis_schema(analysis_dir=base)
             self.assertEqual(len(errors), 1)
             self.assertIn("文件名", errors[0])
+
+    def test_missing_schema_file_is_lint_error(self) -> None:
+        """schema.json 缺失 → lint 错误条目，而非 traceback。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "analysis"
+            sample = base / "finance" / "attribution-001.json"
+            sample.parent.mkdir(parents=True)
+            sample.write_text(json.dumps(_base_answer_sample()), encoding="utf-8")
+            missing = Path(tmp) / "missing" / "schema.json"
+            errors = check_analysis_schema(analysis_dir=base, schema_path=missing)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("schema 缺失", errors[0])
+
+
+class TestPreGateStepBijection(unittest.TestCase):
+    """ADR-0026 T07 裁决：资格前置门与步骤数构成双射闭式。
+
+    - attribution.status="unavailable" 且 reason ∈ {missing_eligibility,
+      snapshot_mismatch}（前置门失败）→ result.steps 必须为空；
+    - 其余一切 answer 情形（status="ok" 或综合期 unavailable 码）→ steps 恰为 4。
+    """
+
+    PRE_GATE_REASONS = ("missing_eligibility", "snapshot_mismatch")
+
+    def _pre_gate_result(self, reason: str) -> AnalysisResult:
+        return AnalysisResult(
+            turn=_parent_turn("answer", metric=METRIC),
+            plan=_baseline_plan(),
+            steps=(),
+            attribution=Attribution(
+                status="unavailable",
+                baseline=None,
+                current=None,
+                delta=None,
+                items=(),
+                reason_code=reason,  # type: ignore[arg-type]
+                text="前置资格门未通过，无法执行分析。",
+            ),
+            reason_code=reason,  # type: ignore[arg-type]
+            elapsed_ms=1.0,
+            snapshot_sha="abc1234",
+            semantic_sha256="deadbeef",
+        )
+
+    def test_zero_step_pre_gate_shape_is_legal(self) -> None:
+        for reason in self.PRE_GATE_REASONS:
+            with self.subTest(reason=reason):
+                result = self._pre_gate_result(reason)
+                self.assertEqual(analysis_status(result), "unavailable")
+                self.assertEqual(effective_reason_code(result), reason)
+                self.assertEqual(
+                    validate_analysis_result(result),
+                    (),
+                    "前置门失败（零步、零 SQL）必须是合法 answer 终态",
+                )
+
+    def test_post_execution_four_steps_with_pre_gate_code_is_illegal(self) -> None:
+        """综合完成后不得携带前置门原因码：四步 + 前置门码 → 违例。"""
+        for reason in self.PRE_GATE_REASONS:
+            with self.subTest(reason=reason):
+                base = _unavailable_result("zero_total_delta")
+                attr = replace(base.attribution, reason_code=reason)
+                result = replace(base, attribution=attr, reason_code=reason)  # type: ignore[arg-type]
+                self.assertTrue(
+                    validate_analysis_result(result),
+                    "四步执行完毕却报前置门原因码，必须被契约为非法",
+                )
+
+    def test_pre_gate_reason_with_four_steps_is_illegal(self) -> None:
+        """status="unavailable" + 前置门码 + 四步 → 违例（双射的另一侧）。"""
+        base = _ok_result()
+        attr = replace(
+            base.attribution,
+            status="unavailable",
+            baseline=None,
+            current=None,
+            delta=None,
+            items=(),
+            reason_code="missing_eligibility",
+        )
+        result = replace(base, attribution=attr, reason_code="missing_eligibility")
+        self.assertTrue(validate_analysis_result(result))
 
 
 if __name__ == "__main__":

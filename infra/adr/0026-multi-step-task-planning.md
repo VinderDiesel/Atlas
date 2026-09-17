@@ -565,3 +565,26 @@ DataAgent 私有 `_begin_analysis(sid, question, identity) -> dict`、
 - 要支持可变数据、硬任务时限、并行步骤或多进程共享会话：先补一致读、取消、锁与恢复协议。
 - 相对时间有稳定评测锚点：联动 ADR-0014 修订；本 ADR 不单方面放宽。
 - 要输出业务因果、任务完成度或 LLM 叙事：另立 ADR，增加相应证据和评测，不把算术贡献当因果结论。
+
+## 实现回执（2026-09-16）
+
+> 本节为实现回执，不改变上文任务清单的复选框状态（交付审计属控制器职权）；状态行仍为 `proposed`，待用户决策确认后再定 accepted。本节全部数字引自控制器 2026-09-16 实测（T11 brief「可引用实测事实」节），均有 `eval/reports/` 下报告产物背书。
+
+**代码版本**：`b95a9e9`；工作树脏——当前全部改动未提交（用户约束：仅明确要求时才 commit）。
+
+**数据版本（三快照锚定关系）**：TPC-DI 零售经纪固定快照（ADR-0006）。分析评测与资格证据唯一绑定 `7c966e9`（`data/snapshots/` 唯一含 `*.analysis.json`）；旧问数 API 验收锚定 `b933e20`（`api_acceptance.py:88`）；e2e 12 场景实跑全部绑定 `7c966e9`（Makefile 动态缺省；裸跑不带 `--snapshot-sha` 时 S1~S7 代码缺省 `7d48dcb`，`e2e_acceptance.py:69`）；旧 eval（`make eval`）设计只认当前 HEAD，实跑锚定 `b95a9e9`（R11-6 重锁）。数据未变：gold result_hash 印章跨历史 sha 逐位复现（b47a6c1 49 条、ccb4c8b 15、92033c9 14、1e5d35b 13、30b8344 7、b7e9ce7 6、5d1e22b 2、None 13——None 全为 runner 不处理的 clarify/paraphrase 类），97/97 EX pass 即直接证据。
+
+**执行的命令清单**：`make lint`、`make test`、`make eval`、`make analysis-eval`（`ANALYSIS_SNAPSHOT_SHA=7c966e9`）、`make e2e`、`make api-verify`。
+
+**测试结论**：
+
+- `make lint`：全绿——黄金集结构校验 106 条样本；权威目录校验通过；值域快照绑定 21 个文件；analysis 样本 schema 校验 2 条样本。
+- `make test`：`Ran 1183 tests in 18.881s` → `OK (skipped=14)`；skip 为既有跳过（环境依赖类），非本次引入。
+- `make eval`：106 样本全绿，逐样本核实（非仅 exit 0）——97 执行类 EX 全 pass（finance 73/73 + retail 24/24，EX 口径 = 过 Guard 的编译 SQL 执行结果 sha256 与锚定 result_hash 一致）+ 9/9 clarify（ambiguous=True、无 SQL、无 ex 键）+ plan_acc 73/73 与 24/24；`ex_anchored=0`（无首次回填）、`exec_errors=0`、`guard_blocked=0`；gold 文件零改动。
+- `make analysis-eval`：`make analysis-eval ANALYSIS_SNAPSHOT_SHA=7c966e9` 裸跑 exit 0——attribution-001 ok（终态 answer、四步各带 SQL、attribution_totals/attribution_items、reason_code、bindings 全 pass）+ clarify-001 ok；42 检查 33 pass / 0 fail / 9 skip（skip 均为终态 kind 的设计性跳过）；报告指纹 code_sha=b95a9e9、dirty=true、snapshot_sha=7c966e9、semantic_sha256=a3ba5e2b…、snapshot_verified before/after=True。
+- `make e2e`：12/12 场景 pass（S1~S7 旧问数回归 + S8~S12 分析新增），文件名 sha 闸门通过；S8 实测 totals：baseline `906568.53` / current `872849.17` / delta `-33719.36`（与 `eval/analysis/finance/attribution-001.json` reference 逐位一致，快照 7c966e9）。
+- `make api-verify`：15/15 pass（A1~A9 旧契约回归 + A10a~A10d 分析新增）。
+- `/analyze` 真链行为：hq_admin 成功路径恰四步、每步带 SQL（LIMIT + 2013 时间窗 + 角色谓词 `1 = 1` 为 hq 渲染）；branch_manager 受限角色第一步即 Guard 拦截（`reason_code=guard_blocked`），零 SQL 达执行器，同会话后续普通问数正常（turns=2）。
+- 过程如实记录（R11-6/R11-7）：analysis-eval 在 HEAD 锁快照后裸跑曾失败（`missing_eligibility`——live agent 经 resolve_runtime_snapshot 绑 HEAD b95a9e9 而资格证据只登记在 7c966e9，前置门按设计诚实拒答，非缺陷）；经 `ATLAS_SNAPSHOT_SHA=7c966e9` 显式覆盖（ADR-0019 决策①③文档化补救）跑绿，再删除本会话自建的 `data/snapshots/b95a9e9.meta.json` 后裸跑复核 exit 0（最终报告即裸跑产物）。
+
+**报告路径清单**：`eval/reports/b95a9e9.json`（make eval）、`eval/reports/analysis-b95a9e9.json`（make analysis-eval）、`eval/reports/e2e-acceptance-b95a9e9.json`（make e2e）、`eval/reports/api-acceptance-b95a9e9.json`（make api-verify）。

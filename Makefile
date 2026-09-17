@@ -1,4 +1,4 @@
-.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance license-check export plan compile ask query eval baseline compare paraphrase e2e demo retrieve rag-eval schema-link extract-meta train train-distill train-dryrun lora-infer report report-latest test adr adr-list rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify profile-values ui-check ui-dev ui-build serve-dev
+.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance license-check export plan compile ask query eval analysis-eval baseline compare paraphrase e2e demo retrieve rag-eval schema-link extract-meta train train-distill train-dryrun lora-infer report report-latest test adr adr-list rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify profile-values ui-check ui-dev ui-build serve-dev
 
 PYTHON       ?= .venv/bin/python
 
@@ -47,6 +47,7 @@ help:
 	@echo ""
 	@echo "  评测"
 	@echo "    make eval            跑黄金集（Plan Acc + EX，自动复核数据快照）"
+	@echo "    make analysis-eval   analysis 四步链黄金集评测（T09；需 ANALYSIS_SNAPSHOT_SHA）"
 	@echo "    make paraphrase      同义改写鲁棒性评测（Planner-only，不需 Doris）"
 	@echo "    make demo            端到端演示测试（双语 12 + RLS 身份 2，需 Doris + 锁定快照）"
 	@echo "    make rls-verify      行级权限回归（双域：finance 差异集 3；retail 州/品类档）"
@@ -199,10 +200,16 @@ api-verify:
 	uv run --env-file .env python -m eval.api_acceptance
 
 # Data Agent 端到端验收门禁（eval/e2e_acceptance.py，Day 48）
-# 5 场景 + handoff：真实 Doris 逐场景断言，任一失败退出码 1
-# 产出 eval/reports/e2e-acceptance.json；文档 docs/e2e-acceptance.md
+# 12 场景 + handoff：真实 Doris 逐场景断言，任一失败退出码 1
+# 产出 eval/reports/e2e-acceptance-<code_sha>.json；文档 docs/e2e-acceptance.md
+# E2E_SNAPSHOT_SHA：全部场景（含 S1~S7 的 budget）绑定的锁定快照（分析场景 S8~S12
+# 还要求该快照已登记资格证据，缺失即场景 fail）。缺省 = 唯一已登记资格证据的快照
+# （data/snapshots/<sha>.analysis.json），不写死 sha 字面量（ADR-0019 决策 ④：
+# Makefile 内任何 7 位 hex 默认值都会随 HEAD 前进过期），重锁登记新证据后自动跟随；
+# 显式覆盖：make e2e E2E_SNAPSHOT_SHA=<sha>
+E2E_SNAPSHOT_SHA ?= $(basename $(basename $(notdir $(shell ls data/snapshots/*.analysis.json 2>/dev/null | tail -1))))
 e2e:
-	uv run --env-file .env python -m eval.e2e_acceptance --report eval/reports/e2e-acceptance.json
+	uv run --env-file .env python -m eval.e2e_acceptance --report eval/reports/e2e-acceptance-$$(git rev-parse --short HEAD).json --snapshot-sha $(E2E_SNAPSHOT_SHA)
 
 # 黄金集评测（eval/runner.py）：Planner→Compiler→Guard→Doris 执行→sha256
 # - 启动时自动复核 data/snapshots/<sha>.meta.json（漂移即拒绝出报告）
@@ -210,6 +217,15 @@ e2e:
 # - 产出 eval/reports/<git sha>.json；dry 模式：uv run python -m eval.runner --dry
 eval:
 	$(PYTHON) -m eval.runner
+
+# analysis 四步链独立评测器（eval/analysis_eval.py，ADR-0026 T09）：黄金集逐项断言
+# （不拼装 accuracy），快照指纹运行前后双验，源数据漂移即拒绝出报告。
+# - ANALYSIS_SNAPSHOT_SHA 必须显式注入：真链评测绝不默认 HEAD（缺省即拒绝，exit 2），
+#   与 `make eval` 的「HEAD 锁定快照自动复核」是两条独立入口，互不复用
+# - DRY=1 只做结构/计划校验（不执行、不落盘报告；draft 样本可用，执行项标 not_run，
+#   绝不可用于放行）；产出 eval/reports/analysis-<code_sha>.json
+analysis-eval:
+	$(PYTHON) -m eval.analysis_eval $(if $(ANALYSIS_SNAPSHOT_SHA),--snapshot-sha $(ANALYSIS_SNAPSHOT_SHA)) $(if $(DRY),--dry)
 
 # 维度值域画像（ADR-0016，B4）：从锁定快照 SELECT DISTINCT 生成 semantic/values/*.json
 # 前置 `data/snapshot.py --check`（数据指纹与已锁快照不一致 → 拒绝生成）

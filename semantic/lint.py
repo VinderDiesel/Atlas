@@ -7,6 +7,7 @@
 3. gold schema 校验   —— eval/gold/*.json 结构（FIBO 闭包深度校验见 eval/gold/validate_gold.py）
 4. 权威源唯一性     —— semantic/ 下语义定义文件只允许住在权威目录（ADR-0002/0015）
 5. values 快照锁定  —— semantic/values/*.json 可被运行时加载、且绑定当前锁定快照（ADR-0016）
+6. analysis schema   —— eval/analysis/**/*.json 结构（ADR-0026 T01；schema.json 自身不当样本）
 
 任一环节失败即返回非零退出码。
 
@@ -20,6 +21,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 import yaml
@@ -30,6 +32,7 @@ from semantic import governance_validate, ossie_validate
 
 REPO = Path(__file__).resolve().parent.parent
 GOLD_SCHEMA = REPO / "eval" / "gold" / "schema.json"
+ANALYSIS_SCHEMA = REPO / "eval" / "analysis" / "schema.json"
 SEMANTIC_ROOT = REPO / "semantic"
 VALUES_DIR = SEMANTIC_ROOT / "values"
 # SNAPSHOT_DIR 从 data.identity 导入（ADR-0019 决策 ②：快照目录路径唯一权威）
@@ -89,6 +92,55 @@ def check_gold_schema() -> list[str]:
     return errors
 
 
+def check_analysis_schema(
+    analysis_dir: Path | None = None,
+    schema_path: Path | None = None,
+) -> list[str]:
+    """分析评测样本结构校验（ADR-0026 T01）：eval/analysis/**/*.json。
+
+    规则：
+    1. 除 schema.json 本身外的所有 *.json 都必须通过 eval/analysis/schema.json
+       （schema.json 是校验器，不当样本扫描）；
+    2. 样本 id 必须与文件名（去扩展名）一致；
+    3. schema 文件缺失 → lint 错误条目（不抛 traceback，与其他检查的报告方式一致）。
+
+    目录不存在 → 不报错（分析样本未启用）。analysis_dir/schema_path 参数化供测试
+    指向 TemporaryDirectory（与 check_value_profiles 同一模式）。
+    """
+    base = analysis_dir or (REPO / "eval" / "analysis")
+    schema_file = schema_path or ANALYSIS_SCHEMA
+    if not base.exists():
+        return []
+    if not schema_file.exists():
+        rel = (
+            os.path.relpath(schema_file, REPO)
+            if schema_file.is_relative_to(REPO)
+            else str(schema_file)
+        )
+        return [f"analysis schema 缺失：{rel}（eval/analysis 样本结构校验无法执行）"]
+    schema = json.loads(schema_file.read_text(encoding="utf-8"))
+    errors: list[str] = []
+    for p in sorted(base.rglob("*.json")):
+        if p.name == "schema.json":
+            continue
+        rel = os.path.relpath(p, REPO) if p.is_relative_to(REPO) else str(p)
+        try:
+            sample = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            errors.append(f"{rel}: JSON 解析失败（{exc}）")
+            continue
+        sample_id = sample.get("id") if isinstance(sample, dict) else None
+        if sample_id != p.stem:
+            errors.append(f"{rel}: 样本 id {sample_id!r} 与文件名（{p.stem}）不一致")
+        try:
+            jsonschema.validate(sample, schema)
+        except jsonschema.ValidationError as exc:
+            errors.append(f"{rel}: 未通过 analysis schema：{exc.message}")
+        except jsonschema.SchemaError as exc:
+            errors.append(f"{rel}: analysis schema 本身非法：{exc.message}")
+    return errors
+
+
 def _ossie_dimension_fields() -> dict[str, set[str]]:
     """ossie 模型名 → dim_* 数据集的非时间字段名（值域文件允许的归属域）。
 
@@ -112,11 +164,10 @@ def _ossie_dimension_fields() -> dict[str, set[str]]:
     return index
 
 
-def _latest_snapshot_meta(snapshot_dir: Path = SNAPSHOT_DIR) -> dict | None:
+def _latest_snapshot_meta(snapshot_dir: Path = SNAPSHOT_DIR) -> dict[str, Any] | None:
     """最新锁定快照 meta（按 created_at）——值域 snapshot_sha 的比对基准。"""
-    metas = [
-        json.loads(p.read_text(encoding="utf-8"))
-        for p in sorted(snapshot_dir.glob("*.meta.json"))
+    metas: list[dict[str, Any]] = [
+        json.loads(p.read_text(encoding="utf-8")) for p in sorted(snapshot_dir.glob("*.meta.json"))
     ]
     if not metas:
         return None
@@ -186,12 +237,15 @@ def check_value_profiles(
                 f"{path.name}：snapshot_sha {profile.snapshot_sha!r} ≠ 最新锁定快照 "
                 f"{meta['sha']!r}（请重跑 make profile-values 同步）"
             )
-        if profile.status == "registered" and profile.source_table is not None:
-            if profile.source_table not in allowed_tables:
-                errors.append(
-                    f"{path.name}：source_table {profile.source_table!r} 不在锁定快照 "
-                    "的表白名单内（快照可能已变，请重跑 make profile-values）"
-                )
+        if (
+            profile.status == "registered"
+            and profile.source_table is not None
+            and profile.source_table not in allowed_tables
+        ):
+            errors.append(
+                f"{path.name}：source_table {profile.source_table!r} 不在锁定快照 "
+                "的表白名单内（快照可能已变，请重跑 make profile-values）"
+            )
     return errors
 
 
@@ -263,6 +317,18 @@ def main() -> int:
         print(f"✅ [values] 值域快照绑定校验通过：{n_values} 个文件")
     else:
         print("✅ [values] 值域快照绑定校验通过（目录为空，完整性检查在 tests/）")
+
+    # 6) 分析样本结构校验（ADR-0026 T01：eval/analysis/**/*.json）
+    errors = check_analysis_schema()
+    for err in errors:
+        print(f"  ❌ [analysis] {err}")
+    if errors:
+        print(f"\n[analysis] 校验失败：{len(errors)} 个问题")
+        return 1
+    n_analysis = len(
+        [p for p in sorted((REPO / "eval" / "analysis").rglob("*.json")) if p.name != "schema.json"]
+    )
+    print(f"✅ [analysis] 分析样本 schema 校验通过：{n_analysis} 条样本")
 
     print("\nlint 全部通过")
     return 0

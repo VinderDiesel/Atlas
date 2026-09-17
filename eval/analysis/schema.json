@@ -1,0 +1,375 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "atlas:eval/analysis/schema.json",
+  "title": "Atlas 多步分析评测样本契约（ADR-0026 T01）",
+  "description": "eval/analysis/**/*.json 的结构契约。判别字段 expected_kind ∈ {answer, clarify, blocked, error, unavailable}；draft 允许 <待填写> 占位（快照/语义 sha、参考 SQL/结果），ready 必须人工核对后补全。expected_plan/expected_sub_plans 是 agent.analysis.AnalysisPlan 的 JSON 投影（canonical Plan 投影 7 键），枚举与 agent.analysis 闭集常量同步（tests/test_analysis_contract.py 守护）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "maturity",
+    "question",
+    "expected_kind",
+    "expected_sql_calls",
+    "snapshot_sha",
+    "semantic_sha256"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "样本标识，必须与文件名（去 .json 后缀）一致"
+    },
+    "maturity": {
+      "enum": ["draft", "ready"],
+      "description": "draft=结构先行允许占位；ready=人工核对完成，参考结果与 sha 必须实值"
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "description": "触发本样本的完整自然语言问句（显式、可复现）"
+    },
+    "expected_kind": {
+      "enum": ["answer", "clarify", "blocked", "error", "unavailable"],
+      "description": "期望终态判别字段：answer/unavailable 综合出结果，clarify 零 SQL，blocked/error 为 turn 终态"
+    },
+    "expected_sql_calls": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "期望执行的 SQL 总次数（固定四步模板为 4；clarify 必须为 0）"
+    },
+    "snapshot_sha": {
+      "type": ["string", "null"],
+      "description": "期望绑定的数据快照 sha；draft 允许 <待填写> 占位"
+    },
+    "semantic_sha256": {
+      "type": ["string", "null"],
+      "description": "期望绑定的语义层版本 sha256；draft 允许 <待填写> 占位"
+    },
+    "expected_reason_code": {
+      "enum": [
+        "zero_total_delta",
+        "direction_mismatch",
+        "possible_truncation",
+        "empty_result",
+        "multi_row_total",
+        "column_mismatch",
+        "non_finite_value",
+        "null_metric_value",
+        "duplicate_dimension_key",
+        "reconciliation_mismatch",
+        "missing_eligibility",
+        "snapshot_mismatch",
+        "guard_blocked",
+        "execution_error",
+        null
+      ],
+      "description": "期望原因码（= agent.analysis.ANALYSIS_REASON_CODES + null）；answer 不得声明"
+    },
+    "expected_plan": {
+      "$ref": "#/definitions/analysisPlan",
+      "description": "期望的 AnalysisPlan 投影（clarify 未解析，不得声明）"
+    },
+    "expected_sub_plans": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": [
+        { "$ref": "#/definitions/planBaselineTotal" },
+        { "$ref": "#/definitions/planCurrentTotal" },
+        { "$ref": "#/definitions/planCurrentByDimension" },
+        { "$ref": "#/definitions/planBaselineByDimension" }
+      ],
+      "additionalItems": false,
+      "description": "固定四步模板（ADR-0026 决策①）：位置即角色，角色常量与顺序不可换"
+    },
+    "expected_clarification": {
+      "$ref": "#/definitions/clarification",
+      "description": "期望澄清载荷（仅 clarify）"
+    },
+    "reference": {
+      "$ref": "#/definitions/reference",
+      "description": "人工核对的参考 SQL/结果（answer/unavailable 必须声明；clarify/blocked/error 禁止；draft 允许 null 占位）"
+    },
+    "tags": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "样本标签（如 analysis / attribution / draft）"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "expected_kind": { "const": "clarify" } }, "required": ["expected_kind"] },
+      "then": {
+        "required": ["expected_clarification"],
+        "properties": { "expected_sql_calls": { "const": 0 } },
+        "not": {
+          "anyOf": [
+            { "required": ["expected_plan"] },
+            { "required": ["expected_sub_plans"] },
+            { "required": ["expected_reason_code"] },
+            { "required": ["reference"] }
+          ]
+        }
+      }
+    },
+    {
+      "if": { "properties": { "expected_kind": { "const": "answer" } }, "required": ["expected_kind"] },
+      "then": {
+        "required": ["expected_plan", "expected_sub_plans", "reference"],
+        "not": {
+          "anyOf": [
+            { "required": ["expected_reason_code"] },
+            { "required": ["expected_clarification"] }
+          ]
+        }
+      }
+    },
+    {
+      "if": { "properties": { "expected_kind": { "const": "unavailable" } }, "required": ["expected_kind"] },
+      "then": {
+        "required": ["expected_plan", "expected_sub_plans", "reference", "expected_reason_code"],
+        "properties": {
+          "expected_reason_code": {
+            "enum": [
+              "zero_total_delta",
+              "direction_mismatch",
+              "possible_truncation",
+              "empty_result",
+              "multi_row_total",
+              "column_mismatch",
+              "non_finite_value",
+              "null_metric_value",
+              "duplicate_dimension_key",
+              "reconciliation_mismatch",
+              "missing_eligibility",
+              "snapshot_mismatch"
+            ]
+          }
+        },
+        "not": { "required": ["expected_clarification"] }
+      }
+    },
+    {
+      "if": { "properties": { "expected_kind": { "const": "blocked" } }, "required": ["expected_kind"] },
+      "then": {
+        "required": ["expected_reason_code"],
+        "properties": { "expected_reason_code": { "const": "guard_blocked" } },
+        "not": {
+          "anyOf": [
+            { "required": ["expected_clarification"] },
+            { "required": ["reference"] }
+          ]
+        }
+      }
+    },
+    {
+      "if": { "properties": { "expected_kind": { "const": "error" } }, "required": ["expected_kind"] },
+      "then": {
+        "required": ["expected_reason_code"],
+        "properties": { "expected_reason_code": { "const": "execution_error" } },
+        "not": {
+          "anyOf": [
+            { "required": ["expected_clarification"] },
+            { "required": ["reference"] }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          { "properties": { "maturity": { "const": "ready" } }, "required": ["maturity"] },
+          {
+            "properties": { "expected_kind": { "enum": ["answer", "unavailable"] } },
+            "required": ["expected_kind"]
+          }
+        ]
+      },
+      "then": {
+        "required": ["reference"],
+        "properties": {
+          "reference": {
+            "type": "object",
+            "required": ["sql", "results", "reviewed_by", "reviewed_at"],
+            "properties": {
+              "sql": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+              "results": { "type": "array", "minItems": 1 },
+              "reviewed_by": { "type": "string", "minLength": 1 },
+              "reviewed_at": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "maturity": { "const": "ready" } }, "required": ["maturity"] },
+      "then": {
+        "properties": {
+          "snapshot_sha": {
+            "type": "string",
+            "minLength": 1,
+            "not": { "const": "<待填写>" }
+          },
+          "semantic_sha256": {
+            "type": "string",
+            "minLength": 1,
+            "not": { "const": "<待填写>" }
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "timeSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["granularity", "value"],
+      "properties": {
+        "granularity": { "enum": ["year", "quarter", "month", "date"] },
+        "value": { "type": ["string", "integer"] }
+      }
+    },
+    "filterSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["column", "op", "value"],
+      "properties": {
+        "column": { "type": "string", "minLength": 1 },
+        "op": { "enum": ["=", "!=", "<", "<=", ">", ">="] },
+        "value": {}
+      }
+    },
+    "orderSpecAsc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["column", "desc"],
+      "properties": {
+        "column": { "type": "string", "minLength": 1 },
+        "desc": { "type": "boolean", "const": false }
+      }
+    },
+    "analysisPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent", "metric", "dimension", "baseline", "current", "direction", "filters"],
+      "properties": {
+        "intent": { "type": "string", "minLength": 1 },
+        "metric": { "type": "string", "minLength": 1 },
+        "dimension": { "type": ["string", "null"] },
+        "baseline": { "$ref": "#/definitions/timeSpec" },
+        "current": { "$ref": "#/definitions/timeSpec" },
+        "direction": { "enum": ["change", "decrease", "increase"] },
+        "filters": { "type": "array", "items": { "$ref": "#/definitions/filterSpec" } },
+        "synthesizer": { "const": "additive_delta_v1" },
+        "recipe_version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "planBaselineTotal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "metric", "dimensions", "time", "filters", "order_by", "limit", "comparison"],
+      "properties": {
+        "role": { "const": "baseline_total" },
+        "metric": { "type": "string", "minLength": 1 },
+        "dimensions": { "type": "array", "items": { "type": "string" }, "maxItems": 0 },
+        "time": { "$ref": "#/definitions/timeSpec" },
+        "filters": { "type": "array", "items": { "$ref": "#/definitions/filterSpec" } },
+        "order_by": { "type": "array", "maxItems": 0 },
+        "limit": { "const": 1 },
+        "comparison": { "type": "null" }
+      }
+    },
+    "planCurrentTotal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "metric", "dimensions", "time", "filters", "order_by", "limit", "comparison"],
+      "properties": {
+        "role": { "const": "current_total" },
+        "metric": { "type": "string", "minLength": 1 },
+        "dimensions": { "type": "array", "items": { "type": "string" }, "maxItems": 0 },
+        "time": { "$ref": "#/definitions/timeSpec" },
+        "filters": { "type": "array", "items": { "$ref": "#/definitions/filterSpec" } },
+        "order_by": { "type": "array", "maxItems": 0 },
+        "limit": { "const": 1 },
+        "comparison": { "type": "null" }
+      }
+    },
+    "planCurrentByDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "metric", "dimensions", "time", "filters", "order_by", "limit", "comparison"],
+      "properties": {
+        "role": { "const": "current_by_dimension" },
+        "metric": { "type": "string", "minLength": 1 },
+        "dimensions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "time": { "$ref": "#/definitions/timeSpec" },
+        "filters": { "type": "array", "items": { "$ref": "#/definitions/filterSpec" } },
+        "order_by": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": { "$ref": "#/definitions/orderSpecAsc" }
+        },
+        "limit": { "type": "integer", "minimum": 1 },
+        "comparison": { "type": "null" }
+      }
+    },
+    "planBaselineByDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "metric", "dimensions", "time", "filters", "order_by", "limit", "comparison"],
+      "properties": {
+        "role": { "const": "baseline_by_dimension" },
+        "metric": { "type": "string", "minLength": 1 },
+        "dimensions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "time": { "$ref": "#/definitions/timeSpec" },
+        "filters": { "type": "array", "items": { "$ref": "#/definitions/filterSpec" } },
+        "order_by": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": { "$ref": "#/definitions/orderSpecAsc" }
+        },
+        "limit": { "type": "integer", "minimum": 1 },
+        "comparison": { "type": "null" }
+      }
+    },
+    "clarification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reasons", "kind"],
+      "properties": {
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "kind": { "enum": ["ambiguous", "relative_time", "unmatched"] },
+        "candidates": { "type": "array" }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sql": { "type": ["array", "null"], "items": { "type": "string" } },
+        "results": { "type": ["array", "null"] },
+        "reviewed_by": { "type": ["string", "null"] },
+        "reviewed_at": { "type": ["string", "null"] },
+        "note": { "type": "string" }
+      }
+    }
+  }
+}

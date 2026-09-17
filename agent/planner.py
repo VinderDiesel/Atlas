@@ -47,7 +47,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -194,9 +194,7 @@ _EN_MONTH_NUM = _EN_PATTERNS["months"]
 # 时间形态：`time.patterns` 是**有序** (kind, 已编译正则) 列表，解析按声明顺序逐个
 # 尝试（原实现的 if-chain 顺序：ISO date → quarter 两向 → ISO quarter → 月份名 →
 # 介词年 → 裸年兜底）。
-_EN_TIME_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = _EN_PATTERNS["time"][
-    "patterns"
-]
+_EN_TIME_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = _EN_PATTERNS["time"]["patterns"]
 
 
 def _tp_en_iso_date(question: str, m: re.Match[str]) -> TimeSpec | None:
@@ -324,19 +322,108 @@ class ValueNotice:
     kind: Literal["alias", "case"]
 
 
+@dataclass(frozen=True)
+class TimeSpan:
+    """问句中一个绝对期间命中的位置与解析结果（ADR-0026 T03 期间扫描载体）。
+
+    start/end 为 question 内的字符区间（半开），供分析侧做"连接词必须落在
+    两期之间"的间隙检查与按位置排序；kind/spec 与 `time.patterns` 的
+    kind 及对应分发表语义一致。
+    """
+
+    start: int
+    end: int
+    kind: str
+    spec: TimeSpec
+
+
+def _scan_time_spans(question: str, locale: str) -> tuple[TimeSpan, ...] | ClarificationRequest:
+    """扫描问句中**全部**绝对期间（ADR-0026 T03 两期拆分的共用底座）。
+
+    - 相对时间词命中 → 直接返回 relative_time 澄清（与 `_parse_time` 既有
+      行为同一检查、同一文案）；
+    - 按 `time.patterns` 声明顺序逐形态 `finditer`（顺序即语义），同形态与
+      跨形态的命中做**位置重叠消除**（长形态覆盖的区间不再被短形态重复计数，
+      例："2013年第四季度" 的季度命中使 "2013年" 的年份形态让位）；
+    - en 的 `year_bare` handler 返回 None（阈值词封锁）时跳过该命中——
+      handler 的 gate 以整句为条件，"首个 None 后同形态后续命中"不存在分歧。
+
+    与 `_parse_time` 的等价性：声明顺序遍历保证"首个收集到的 span"就是旧
+    `regex.search` 的首个命中，故 `_parse_time` 取 spans[0].spec 逐字等价。
+    locale 必须已解析为 "zh"/"en"（调用方负责）。
+    """
+    if locale == "en":
+        lowered = question.lower()
+        if any(t in lowered for t in _EN_RELATIVE_TIME):
+            return ClarificationRequest(
+                question,
+                (
+                    "Relative time is not supported (it drifts under frozen-snapshot "
+                    "evaluation); please use an absolute date",
+                ),
+                kind="relative_time",
+            )
+        patterns: tuple[tuple[str, re.Pattern[str]], ...] = _EN_TIME_PATTERNS
+        # Mapping（值型协变）：zh 分发表 dict[str, Callable[[re.Match], TimeSpec]]
+        # 可赋给 Mapping[str, Callable[..., TimeSpec | None]]（dict 本身不变型）
+        dispatch: Mapping[str, Callable[..., TimeSpec | None]] = _EN_TIME_DISPATCH
+        takes_question = True
+    else:
+        if any(t in question for t in _RELATIVE_TIME):
+            return ClarificationRequest(
+                question,
+                ("不支持相对时间（固定快照评测下会漂移，请使用绝对日期）",),
+                kind="relative_time",
+            )
+        patterns = _TIME_PATTERNS
+        # 类型已由 en 分支的注解声明（Callable[..., TimeSpec | None] 对 zh 分发表
+        # 逐字兼容：参数 ... 兼容 (re.Match)，返回 TimeSpec ⊆ TimeSpec | None）
+        dispatch = _TIME_DISPATCH
+        takes_question = False
+    spans: list[TimeSpan] = []
+    for kind, regex in patterns:
+        for m in regex.finditer(question):
+            start, end = m.span()
+            # 重叠消除：与已收集 span 相交（含包含/被包含）→ 让位长形态
+            if any(
+                start < s_end and s_start < end
+                for s_start, s_end in ((sp.start, sp.end) for sp in spans)
+            ):
+                continue
+            spec = dispatch[kind](question, m) if takes_question else dispatch[kind](m)
+            if spec is None:
+                continue
+            spans.append(TimeSpan(start, end, kind, spec))
+    return tuple(spans)
+
+
+# ---------------------------------------------------------------------------
+# 公开别名（ADR-0026 T03 修复轮 1）：形态层原语供 agent.analysis 跨模块复用同一
+# 实现——经公开名引用，不再跨模块引用下划线私有名。别名与原名是**同一对象**
+# （纯绑定，无包装），既有单期间 Planner 行为零变化。
+# ---------------------------------------------------------------------------
+EQ_FILTER_RE = _EQ_FILTER_RE
+EXC_FILTER_RE = _EXC_FILTER_RE
+THRESHOLD_GT_RE = _THRESHOLD_GT_RE
+THRESHOLD_LT_RE = _THRESHOLD_LT_RE
+TOP_N_RE = _TOP_N_RE
+EN_ONLY_RE = _EN_ONLY_RE
+EN_EXCL_RE = _EN_EXCL_RE
+EN_THRESHOLD_GT_RE = _EN_THRESHOLD_GT_RE
+EN_THRESHOLD_LT_RE = _EN_THRESHOLD_LT_RE
+EN_TOP_N_RE = _EN_TOP_N_RE
+scan_time_spans = _scan_time_spans
+
+
 class Planner:
     """问句 → Plan 的确定性解析器。"""
 
-    def __init__(
-        self, model: SemanticModel, values_dir: Path | None = None
-    ) -> None:
+    def __init__(self, model: SemanticModel, values_dir: Path | None = None) -> None:
         """values_dir：值域注册表目录，缺省 = `semantic/values/`（仅测试注入 tmp 目录）。"""
         self.model = model
         self.values_dir = values_dir or value_domain.VALUES_DIR
 
-    def plan(
-        self, question: str, locale: str | None = None
-    ) -> Plan | ClarificationRequest:
+    def plan(self, question: str, locale: str | None = None) -> Plan | ClarificationRequest:
         """解析问句。返回 Plan；无法唯一确定时返回 ClarificationRequest。
 
         需要同时拿到值域归一记录（ADR-0016）时调 `plan_with_notices()`；本入口
@@ -376,21 +463,9 @@ class Planner:
         # 子串包含消歧：派生指标同义词含基础指标词（"平均每笔成交金额" ⊃
         # "成交金额"）时，长命中是更具体口径（派生），短命中是冗余命中——
         # 丢弃被其他命中词真包含的命中词；互不为子串的多命中仍保留（真歧义）。
-        synsets = self._metric_synsets(locale)
-        metric_hits = sorted(
-            {
-                name
-                for name, syns in synsets.items()
-                for syn in syns
-                if syn in question
-                and not any(
-                    syn in other and syn != other
-                    for other_name, other_syns in synsets.items()
-                    for other in other_syns
-                    if other in question
-                )
-            }
-        )
+        # （ADR-0026 T03：表达式原样搬运到 _match_metric，供 AnalysisPlanner
+        # 复用同一指标匹配——不复制同义词表；此处行为逐字不变。）
+        metric_hits = self._match_metric(question, locale)
         if not metric_hits:
             return ClarificationRequest(
                 question,
@@ -456,9 +531,7 @@ class Planner:
             return self._followup_zh(question, prev)
         return self._followup_en(question, prev)
 
-    def _followup_zh(
-        self, question: str, prev: Plan
-    ) -> Plan | ClarificationRequest | None:
+    def _followup_zh(self, question: str, prev: Plan) -> Plan | ClarificationRequest | None:
         """中文指代追问（原实现，2026-09-04 前逐字一致）。"""
         text = question.strip().strip("？?。!！，, ")
         # 链接词开头或"呢"结尾才算口语残句（否则维持原 unmatched 流程）
@@ -477,15 +550,19 @@ class Planner:
             if new_dims and prev.filters:
                 return ClarificationRequest(
                     question,
-                    (f"追问「{text}」要更换分组维度，但上轮口径带维度值过滤"
-                     "（过滤作用域无法确定），请完整重述问句",),
+                    (
+                        f"追问「{text}」要更换分组维度，但上轮口径带维度值过滤"
+                        "（过滤作用域无法确定），请完整重述问句",
+                    ),
                 )
         # 无任何可替换片段（自由代词）→ 反问不猜
         if time is None and not new_dims:
             return ClarificationRequest(
                 question,
-                (f"追问「{text}」没有识别到可替换的时间/维度片段"
-                 "（自由代词指代不支持），请完整重述问句",),
+                (
+                    f"追问「{text}」没有识别到可替换的时间/维度片段"
+                    "（自由代词指代不支持），请完整重述问句",
+                ),
             )
         return Plan(
             metric=prev.metric,
@@ -496,9 +573,7 @@ class Planner:
             limit=prev.limit,
         )
 
-    def _followup_en(
-        self, question: str, prev: Plan
-    ) -> Plan | ClarificationRequest | None:
+    def _followup_en(self, question: str, prev: Plan) -> Plan | ClarificationRequest | None:
         """英文指代追问：what about X / how about X / by X instead（与中文同构）。"""
         text = question.strip().strip("？?。!！，, ")
         m = _EN_FOLLOWUP_WHAT_RE.search(text)
@@ -521,16 +596,20 @@ class Planner:
             if new_dims and prev.filters:
                 return ClarificationRequest(
                     question,
-                    (f"Follow-up 「{text}」 changes the grouping dimension but the "
-                     "previous question had a dimension-value filter (filter scope "
-                     "ambiguous); please restate the full question",),
+                    (
+                        f"Follow-up 「{text}」 changes the grouping dimension but the "
+                        "previous question had a dimension-value filter (filter scope "
+                        "ambiguous); please restate the full question",
+                    ),
                 )
         # 无任何可替换片段（自由代词）→ 反问不猜
         if time is None and not new_dims:
             return ClarificationRequest(
                 question,
-                (f"Follow-up 「{text}」 has no replaceable time/dimension fragment "
-                 "(free pronouns are not supported); please restate the full question",),
+                (
+                    f"Follow-up 「{text}」 has no replaceable time/dimension fragment "
+                    "(free pronouns are not supported); please restate the full question",
+                ),
             )
         return Plan(
             metric=prev.metric,
@@ -550,11 +629,7 @@ class Planner:
             if locale not in ("zh", "en"):
                 raise ValueError(f"locale 必须是 'zh' 或 'en'：{locale!r}")
             return locale
-        return (
-            "en"
-            if not any("\u4e00" <= ch <= "\u9fff" for ch in question)
-            else "zh"
-        )
+        return "en" if not any("\u4e00" <= ch <= "\u9fff" for ch in question) else "zh"
 
     def _metric_synsets(self, locale: str) -> dict[str, tuple[str, ...]]:
         """指标同义词集：zh=模型中文注记；en=模型 ∪ 英文同义词表（en_us.yml）。
@@ -566,8 +641,7 @@ class Planner:
             return dict(self.model.metric_synonyms)
         extra = _locale_synonyms(locale, "metric_synonyms")
         return {
-            name: syns + extra.get(name, ())
-            for name, syns in self.model.metric_synonyms.items()
+            name: syns + extra.get(name, ()) for name, syns in self.model.metric_synonyms.items()
         }
 
     def _dim_synsets(self, locale: str) -> dict[str, tuple[str, ...]]:
@@ -576,9 +650,31 @@ class Planner:
             return dict(self.model.dimension_synonyms)
         extra = _locale_synonyms(locale, "dimension_synonyms")
         return {
-            name: syns + extra.get(name, ())
-            for name, syns in self.model.dimension_synonyms.items()
+            name: syns + extra.get(name, ()) for name, syns in self.model.dimension_synonyms.items()
         }
+
+    def _match_metric(self, question: str, locale: str) -> list[str]:
+        """指标同义词命中（最长命中消歧）；返回命中指标名列表（0/1/多个原样给出）。
+
+        从 `_plan_impl` 第 1 阶段原地**纯搬运**（ADR-0026 T03）：AnalysisPlanner
+        复用同一指标匹配而不复制同义词表；表达式与排序逐字一致，
+        既有单期间解析行为零变化。
+        """
+        synsets = self._metric_synsets(locale)
+        return sorted(
+            {
+                name
+                for name, syns in synsets.items()
+                for syn in syns
+                if syn in question
+                and not any(
+                    syn in other and syn != other
+                    for other_name, other_syns in synsets.items()
+                    for other in other_syns
+                    if other in question
+                )
+            }
+        )
 
     def _detect_comparison(
         self, question: str, time: TimeSpec | None, locale: str
@@ -600,68 +696,48 @@ class Planner:
                         if locale == "en":
                             return ClarificationRequest(
                                 question,
-                                (f"'{w}' requires an absolute time anchor "
-                                 "(drifts under frozen-snapshot evaluation); "
-                                 "please specify a year",),
+                                (
+                                    f"'{w}' requires an absolute time anchor "
+                                    "(drifts under frozen-snapshot evaluation); "
+                                    "please specify a year",
+                                ),
                                 kind="relative_time",
                             )
                         return ClarificationRequest(
                             question,
-                            (f"「{w}」需要绝对时间锚点（固定快照评测下会漂移，"
-                             "请指定具体年份）",),
+                            (f"「{w}」需要绝对时间锚点（固定快照评测下会漂移，请指定具体年份）",),
                             kind="relative_time",
                         )
                     return ComparisonSpec(kind=kind)
         return None
 
-    def _parse_time(
-        self, question: str, locale: str
-    ) -> TimeSpec | None | ClarificationRequest:
+    def _parse_time(self, question: str, locale: str) -> TimeSpec | None | ClarificationRequest:
         """绝对时间解析（zh/en 分片）；相对时间返回 ClarificationRequest。
 
-        zh 侧按词典声明顺序逐个尝试形态（顺序即语义，见 `_TIME_PATTERNS` 注记），
-        命中后按 kind 分发到对应构造函数——与原「逐正则 if-m」链逐字等价。
+        zh 侧按词典声明顺序取首个命中形态（顺序即语义，见 `_TIME_PATTERNS`
+        注记），命中后按 kind 分发到对应构造函数。ADR-0026 T03 起委托
+        `_scan_time_spans`（全部期间扫描 + 重叠消除），本函数取其首个命中——
+        声明顺序遍历保证 spans[0] 与旧 `regex.search` 首命中逐字等价。
         """
         if locale == "en":
             return self._parse_time_en(question)
-        if any(t in question for t in _RELATIVE_TIME):
-            return ClarificationRequest(
-                question,
-                ("不支持相对时间（固定快照评测下会漂移，请使用绝对日期）",),
-                kind="relative_time",
-            )
-        for kind, regex in _TIME_PATTERNS:
-            m = regex.search(question)
-            if m:
-                return _TIME_DISPATCH[kind](m)
-        return None
+        scanned = _scan_time_spans(question, "zh")
+        if isinstance(scanned, ClarificationRequest):
+            return scanned
+        return scanned[0].spec if scanned else None
 
-    def _parse_time_en(
-        self, question: str
-    ) -> TimeSpec | None | ClarificationRequest:
+    def _parse_time_en(self, question: str) -> TimeSpec | None | ClarificationRequest:
         """英文绝对时间解析（形态顺序见 patterns_en_us.yml 的 time.patterns）。
 
-        与中文同构：按声明顺序逐个尝试，命中后按 kind 分发——与原函数体的
-        if-chain（ISO date → quarter 两向 → ISO quarter → 月份名 → 介词年 → 裸年
-        兜底）逐字等价；只有 `year_bare` 的 handler 会返回 None（词面命中但
-        句含阈值词 → 本形态不启用），且它是表内末项，因此行为与原 gate 一致。
+        与中文同构：按声明顺序逐个尝试，命中后按 kind 分发——只有 `year_bare`
+        的 handler 会返回 None（词面命中但句含阈值词 → 本形态不启用），委托
+        `_scan_time_spans` 后取首个命中（首个收集 span = 旧 if-chain 首个
+        非 None 返回，逐字等价）。
         """
-        lowered = question.lower()
-        if any(t in lowered for t in _EN_RELATIVE_TIME):
-            return ClarificationRequest(
-                question,
-                ("Relative time is not supported (it drifts under frozen-snapshot "
-                 "evaluation); please use an absolute date",),
-                kind="relative_time",
-            )
-        for kind, regex in _EN_TIME_PATTERNS:
-            m = regex.search(question)
-            if not m:
-                continue
-            spec = _EN_TIME_DISPATCH[kind](question, m)
-            if spec is not None:
-                return spec
-        return None
+        scanned = _scan_time_spans(question, "en")
+        if isinstance(scanned, ClarificationRequest):
+            return scanned
+        return scanned[0].spec if scanned else None
 
     def _parse_dimensions(self, question: str, locale: str) -> tuple[str, ...]:
         """显式分组结构内的维度表字段匹配（zh：按X统计/分组；en：by/grouped by）。"""
@@ -741,8 +817,7 @@ class Planner:
             if has_prefix:
                 return ClarificationRequest(
                     question,
-                    (f"「{m.group(1)}」的取值无法唯一确定"
-                     "（维度词前带修饰，请给出精确值）",),
+                    (f"「{m.group(1)}」的取值无法唯一确定（维度词前带修饰，请给出精确值）",),
                 )
             if raw_value == "":
                 return ClarificationRequest(
@@ -751,15 +826,15 @@ class Planner:
             if any("\u4e00" <= ch <= "\u9fff" for ch in raw_value):
                 return ClarificationRequest(
                     question,
-                    (f"「{raw_value}」无法对应到 {field} 的已注册值/同义词"
-                     "（中文维度值暂不支持，请给出精确值）",),
+                    (
+                        f"「{raw_value}」无法对应到 {field} 的已注册值/同义词"
+                        "（中文维度值暂不支持，请给出精确值）",
+                    ),
                 )
             value: str | int = raw_value
             if re.fullmatch(r"\d+", raw_value):
                 value = int(raw_value)
-            resolved = self._resolve_filter_value(
-                field, value, locale, question, notices
-            )
+            resolved = self._resolve_filter_value(field, value, locale, question, notices)
             if isinstance(resolved, ClarificationRequest):
                 return resolved
             filters.append(Filter(field, op, resolved))
@@ -780,9 +855,13 @@ class Planner:
         ):
             m = regex.search(question)
             if m:
-                value = float(m.group(1)) * (unit_map[m.group(2)] if m.group(2) else 1)
+                threshold_value = float(m.group(1)) * (unit_map[m.group(2)] if m.group(2) else 1)
                 filters.append(
-                    Filter(metric, op, int(value) if value.is_integer() else value)
+                    Filter(
+                        metric,
+                        op,
+                        int(threshold_value) if threshold_value.is_integer() else threshold_value,
+                    )
                 )
         for prefix_re, op in ((_EN_ONLY_RE, "="), (_EN_EXCL_RE, "!=")):
             m = prefix_re.search(question)
@@ -795,28 +874,29 @@ class Planner:
             if has_prefix:
                 return ClarificationRequest(
                     question,
-                    (f"The value of 「{m.group(1)}」 cannot be uniquely determined "
-                     "(the dimension word has a qualifier; please give the exact value)",),
+                    (
+                        f"The value of 「{m.group(1)}」 cannot be uniquely determined "
+                        "(the dimension word has a qualifier; please give the exact value)",
+                    ),
                 )
             if raw_value == "":
                 return ClarificationRequest(
                     question,
-                    (f"Filter target has no value: {m.group(1)!r}; please give the "
-                     "exact value",),
+                    (f"Filter target has no value: {m.group(1)!r}; please give the exact value",),
                 )
             if any("\u4e00" <= ch <= "\u9fff" for ch in raw_value):
                 return ClarificationRequest(
                     question,
-                    (f"「{raw_value}」 does not map to a registered value/synonym of "
-                     f"{field} (Chinese dimension values are not supported; please "
-                     "give the exact value)",),
+                    (
+                        f"「{raw_value}」 does not map to a registered value/synonym of "
+                        f"{field} (Chinese dimension values are not supported; please "
+                        "give the exact value)",
+                    ),
                 )
             value: str | int = raw_value
             if re.fullmatch(r"\d+", raw_value):
                 value = int(raw_value)
-            resolved = self._resolve_filter_value(
-                field, value, "en", question, notices
-            )
+            resolved = self._resolve_filter_value(field, value, "en", question, notices)
             if isinstance(resolved, ClarificationRequest):
                 return resolved
             filters.append(Filter(field, op, resolved))
@@ -835,15 +915,11 @@ class Planner:
         未注册/skipped 列（无 profile 或超基数阈值）→ 原值透传，不产生反问；
         unknown → 反问并附按频次排序的候选值样例（用户可直接改成其中一个重问）。
         """
-        res = value_domain.resolve(
-            self.model.name, field, value, self.values_dir
-        )
+        res = value_domain.resolve(self.model.name, field, value, self.values_dir)
         if res.kind in ("unregistered", "exact"):
             return res.value
         if res.kind in ("alias", "case"):
-            notices.append(
-                ValueNotice(field=field, raw=str(value), value=res.value, kind=res.kind)
-            )
+            notices.append(ValueNotice(field=field, raw=str(value), value=res.value, kind=res.kind))
             return res.value
         profile = res.profile
         path = value_domain.display_path(self.model.name, field, self.values_dir)
@@ -851,22 +927,24 @@ class Planner:
         if locale == "en":
             return ClarificationRequest(
                 question,
-                (f"'{value}' is neither a registered value nor a known alias of "
-                 f"{field} ({listed} registered values in the locked snapshot: "
-                 f"{', '.join(res.candidates)}). See {path}",),
+                (
+                    f"'{value}' is neither a registered value nor a known alias of "
+                    f"{field} ({listed} registered values in the locked snapshot: "
+                    f"{', '.join(res.candidates)}). See {path}",
+                ),
                 candidates=tuple(res.candidates),
             )
         return ClarificationRequest(
             question,
-            (f"「{value}」不是 {field} 的已注册取值，也不是已登记别名"
-             f"（当前快照共 {listed} 个取值，候选：{', '.join(res.candidates)}；"
-             f"完整值域见 {path}）",),
+            (
+                f"「{value}」不是 {field} 的已注册取值，也不是已登记别名"
+                f"（当前快照共 {listed} 个取值，候选：{', '.join(res.candidates)}；"
+                f"完整值域见 {path}）",
+            ),
             candidates=tuple(res.candidates),
         )
 
-    def _match_dim_value(
-        self, phrase: str, locale: str
-    ) -> tuple[str, str, bool] | None:
+    def _match_dim_value(self, phrase: str, locale: str) -> tuple[str, str, bool] | None:
         """过滤短语 → (维度字段名, 取值原文, 维度词前是否有修饰)。
 
         返回 None = 短语不含任何维度词（"只看/仅"可能是强调语，不产生 filter）；
@@ -888,7 +966,7 @@ class Planner:
 
     @staticmethod
     def _cn_number(num: str, unit: str | None) -> int | float:
-        """"1000 万" → 10000000；有小数保留 float（1.5 亿 → 150000000.0 规约 int）。"""
+        """ "1000 万" → 10000000；有小数保留 float（1.5 亿 → 150000000.0 规约 int）。"""
         value = float(num) * (_CN_UNIT[unit] if unit else 1)
         return int(value) if value.is_integer() else value
 
@@ -904,3 +982,10 @@ class Planner:
         if not m:
             return (), 100
         return (OrderSpec(metric, desc=True),), int(m.group(1))
+
+    # 公开方法别名（ADR-0026 T03 修复轮 1）：供 analysis.py 复用同一实现，不经
+    # 下划线私有名跨模块引用；与原名同一函数对象，行为零变化。
+    resolve_locale = _resolve_locale
+    match_metric = _match_metric
+    parse_filters = _parse_filters
+    dim_hits = _dim_hits

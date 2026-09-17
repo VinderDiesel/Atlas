@@ -35,6 +35,12 @@
     A9 Plan直执  ：/plan/execute 真链——/plan 产物原样回填执行，kind=answer、
                      行集 hash 与 gold-102 锚定一致（EX 与快照一致），缺省
                      session_id 回显为一次性随机键（ADR-0022 决策 ③/代价 ⑥）
+    A10 多步分析 ：ADR-0026 四步贡献分析真链（独立 client 绑 7c966e9 meta +
+                     显式资格证据）——a) hq_admin /analyze → answer：四步全 SQL
+                     （LIMIT+2013+1 = 1）、totals 三键齐、父轮不冒充行集；
+                     b) branch_manager /analyze → blocked（guard_blocked）+ 零 SQL
+                     达执行器 + 同会话 /ask 仍可用；c) 同会话流 /analyze → /ask
+                     turns=2；d) 同 sid 换 bm token → 422 会话身份冲突
 
 注入口径：与 e2e_acceptance.py 同构——真执行器（eval/runner.execute_sql）+ 锁定
 快照（2026-09-05 P7 后统一 29 表全量数据版本，最新入库锁定指纹 b933e20；A1-A4 历史
@@ -64,6 +70,7 @@ from fastapi.testclient import TestClient
 
 from agent.compiler import SemanticModel
 from agent.graph import DataAgent
+from eval.analysis_eligibility import load_eligibility
 from eval.runner import DOMAIN_MODELS, build_budget, execute_sql, git_short_sha
 from serving.api import create_app
 from serving.audit import AuditLog
@@ -79,6 +86,9 @@ from serving.rls_verify import (  # 零售载体与分支取值单源（rls-veri
 REPO = Path(__file__).resolve().parent.parent
 GOLD_DIR = REPO / "eval" / "gold"
 SNAPSHOT_META = REPO / "data/snapshots" / "b933e20.meta.json"
+# A10 分析场景专用快照（R10-4）：b933e20 / 7d48dcb 均未登记资格证据，分析面必须绑
+# 7c966e9（有 data/snapshots/7c966e9.analysis.json）；A1~A9 的 b933e20 锚定不动。
+ANALYSIS_SNAPSHOT_META = REPO / "data/snapshots" / "7c966e9.meta.json"
 
 # 契约 v2 前缀（ADR-0022 决策 ①②）：业务面与治理面端点一律带前缀；`/health`
 # 双挂——A4 同时打根与前缀两个挂点并断言同 body（判据 2 的真链侧）。
@@ -89,6 +99,11 @@ GOLD102_Q_ID = "gold-102"  # 命中：按分支统计 2013 年佣金收入 Top5
 GOLD104_Q_ID = "gold-104"  # 歧义：最近交易情况怎么样（反问样本）
 GOLD146_Q_ID = "gold-146"  # RLS 载体：按分支和客户等级统计 2015 年交易额 Top5
 WRITE_KEYWORDS = ("INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE")
+
+# A10 载体问句（与 e2e_acceptance.py S8 / eval/analysis/finance/attribution-001.json 同源）
+ANALYSIS_Q = "分析 2013Q4 相对 2013Q3 的佣金收入按分支的变化贡献"
+# A10b/A10d 受限角色分支值（与 e2e_acceptance.py S9、A6 同源实测值，单源注释互证）
+BRANCH = "uHtbMrIxbLVfWHFhCIeAnTu"
 
 
 def load_gold(gold_id: str) -> dict[str, Any]:
@@ -132,7 +147,9 @@ def _live_client(domain: str = "finance") -> tuple[TestClient, CountingExecutor]
         agent = DataAgent(executor=executor, budget=build_budget(meta), snapshot_meta=meta)
     elif domain == "retail":
         model = SemanticModel(DOMAIN_MODELS["retail"])
-        agent = DataAgent(model=model, executor=executor, budget=build_budget(meta), snapshot_meta=meta)
+        agent = DataAgent(
+            model=model, executor=executor, budget=build_budget(meta), snapshot_meta=meta
+        )
     else:
         raise ValueError(f"未知域：{domain!r}")
     return (
@@ -143,6 +160,24 @@ def _live_client(domain: str = "finance") -> tuple[TestClient, CountingExecutor]
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _analysis_client() -> tuple[TestClient, CountingExecutor]:
+    """A10 分析场景专用注入面（R10-4）：7c966e9 meta + 显式挂资格证据。
+
+    A1~A9 维持 b933e20 锚定不动；分析快照必须已登记
+    data/snapshots/7c966e9.analysis.json（缺证据时前置门 missing_eligibility 先于
+    一切触发）。直构 DataAgent 无 analysis_eligibility（仅 agent/factory 附加），
+    分析场景 agent 必须显式 `load_eligibility(SemanticModel(), meta)` 挂上。
+    """
+    meta = json.loads(ANALYSIS_SNAPSHOT_META.read_text(encoding="utf-8"))
+    executor = CountingExecutor()
+    agent = DataAgent(executor=executor, budget=build_budget(meta), snapshot_meta=meta)
+    agent.analysis_eligibility = load_eligibility(SemanticModel(), meta)
+    return (
+        TestClient(create_app(agent_factory=lambda _model: agent, audit=AuditLog(enabled=False))),
+        executor,
+    )
 
 
 def _main() -> int:
@@ -175,12 +210,14 @@ def _main() -> int:
         assert comp_resp.status_code == 200, f"A1 /compile HTTP {comp_resp.status_code}"
         sql = comp_resp.json()["sql"]
         upper = sql.upper()
-        assert not any(
-            re.search(rf"\b{kw}\b", upper) for kw in WRITE_KEYWORDS
-        ), f"A1 出口 SQL 含写语句：{sql}"
+        assert not any(re.search(rf"\b{kw}\b", upper) for kw in WRITE_KEYWORDS), (
+            f"A1 出口 SQL 含写语句：{sql}"
+        )
         assert "LIMIT" in upper, "A1 出口 SQL 缺 LIMIT（Guard 强制上限形态）"
 
-        ask_resp = client.post(f"{API}/ask", json={"question": gold102["question"]}, headers=_auth(token))
+        ask_resp = client.post(
+            f"{API}/ask", json={"question": gold102["question"]}, headers=_auth(token)
+        )
         assert ask_resp.status_code == 200, f"A1 /ask HTTP {ask_resp.status_code}"
         body = ask_resp.json()
         assert body["kind"] == "answer", f"A1 期望 answer，实际 {body['kind']}"
@@ -213,7 +250,9 @@ def _main() -> int:
     # ---- A2：歧义 /ask → 200 + kind=clarify（反问不执行 SQL）----
     client, executor = _live_client()
     try:
-        resp = client.post(f"{API}/ask", json={"question": gold104["question"]}, headers=_auth(token))
+        resp = client.post(
+            f"{API}/ask", json={"question": gold104["question"]}, headers=_auth(token)
+        )
         assert resp.status_code == 200, f"A2 /ask HTTP {resp.status_code}"
         body = resp.json()
         assert body["kind"] == "clarify", f"A2 期望 clarify，实际 {body['kind']}"
@@ -287,7 +326,9 @@ def _main() -> int:
     try:
         gold146 = load_gold(GOLD146_Q_ID)
         r_hq = client.post(
-            f"{API}/ask", json={"question": gold146["question"]}, headers=_auth(sign_token("hq_admin", {}))
+            f"{API}/ask",
+            json={"question": gold146["question"]},
+            headers=_auth(sign_token("hq_admin", {})),
         )
         assert r_hq.status_code == 200, f"A5 hq_admin /ask HTTP {r_hq.status_code}"
         hq = r_hq.json()
@@ -308,7 +349,7 @@ def _main() -> int:
         assert bm["kind"] == "answer", f"A5 branch_manager 期望 answer，实际 {bm['kind']}"
         bm_rows = list(bm["rows"])
         idx = columns.index("Branch")
-        assert {r[idx] for r in bm_rows} == {branch}, f"A5 行级过滤失效：branch_manager 见多分支"
+        assert {r[idx] for r in bm_rows} == {branch}, "A5 行级过滤失效：branch_manager 见多分支"
         hq_branch_rows = [r for r in hq_rows if r[idx] == branch]
         assert hq_branch_rows, "A5 载体数据异常：hq Top 结果无该分支行"
         assert all(r in bm_rows for r in hq_branch_rows), "A5 本分支 Top 行未全部可见（漏行）"
@@ -322,7 +363,9 @@ def _main() -> int:
             {
                 "id": "A5",
                 "title": "三角色行级差异（gold-146 载体）",
-                "goal": "hq_admin 全量 vs branch_manager 本分支：过滤生效 + 策略名可见且条件值不外泄",
+                "goal": (
+                    "hq_admin 全量 vs branch_manager 本分支：过滤生效 + 策略名可见且条件值不外泄"
+                ),
                 "question": gold146["question"],
                 "branch": branch,
                 "hq": {
@@ -460,16 +503,13 @@ def _main() -> int:
         assert cross["kind"] == "error", f"A7b 期望 error，实际 {cross['kind']}"
         reason = str(cross["error"] or "")
         assert "域不匹配" in reason, f"A7b 拒绝原因缺域不匹配证据：{reason}"
-        assert executor.calls == [], (
-            f"A7b Guard 之前即拒：零 SQL 应达执行器，实际 {executor.calls}"
-        )
+        assert executor.calls == [], f"A7b Guard 之前即拒：零 SQL 应达执行器，实际 {executor.calls}"
         scenarios.append(
             {
                 "id": "A7b",
                 "title": "跨域身份拒绝（region_manager × finance）",
                 "goal": (
-                    "身份策略解析失败：域不匹配 → kind=error 且零 SQL 达执行器"
-                    "（Guard 之前即拒）"
+                    "身份策略解析失败：域不匹配 → kind=error 且零 SQL 达执行器（Guard 之前即拒）"
                 ),
                 "question": gold146_q,
                 "claims": {"region": RETAIL_REGION},
@@ -576,9 +616,203 @@ def _main() -> int:
     finally:
         client.close()
 
+    # ---- A10a：hq_admin /analyze 成功路径（analyze → 四步 Guard/RLS → 贡献响应）----
+    # 独立 client：7c966e9 meta + 显式资格证据（R10-4）；A1~A9 的 b933e20 锚定不动
+    client, executor = _analysis_client()
+    try:
+        r_hq = client.post(
+            f"{API}/analyze",
+            json={"question": ANALYSIS_Q},
+            headers=_auth(sign_token("hq_admin", {})),
+        )
+        assert r_hq.status_code == 200, f"A10a /analyze HTTP {r_hq.status_code}"
+        body = r_hq.json()
+        assert body["kind"] == "answer", f"A10a 期望 answer，实际 {body['kind']}"
+        analysis = body["analysis"]
+        assert analysis is not None, "A10a 分析响应缺 analysis 投影"
+        assert analysis["status"] == "ok", f"A10a 期望分析 ok，实际 {analysis['status']}"
+        steps = analysis["steps"]
+        assert len(steps) == 4, f"A10a 期望恰 4 步，实际 {len(steps)}"
+        assert [s["role"] for s in steps] == [
+            "baseline_total",
+            "current_total",
+            "current_by_dimension",
+            "baseline_by_dimension",
+        ], f"A10a 步序 role 不符：{[s['role'] for s in steps]}"
+        assert all(s["sql"] for s in steps), "A10a 四步必须全带 SQL"
+        assert executor.calls, "A10a 必须有 SQL 到达真实执行器"
+        assert len(executor.calls) == 4, f"A10a 执行器调用数应恰 4：{len(executor.calls)}"
+        assert all("LIMIT" in sql.upper() for sql in executor.calls), "A10a 每条 SQL 缺 LIMIT"
+        assert all("2013" in sql for sql in executor.calls), "A10a 每条 SQL 缺 2013 时间约束"
+        assert all("1 = 1" in sql for sql in executor.calls), (
+            "A10a 每条 SQL 缺 hq_admin 谓词渲染（1 = 1）"
+        )
+        totals = analysis["totals"]
+        assert totals is not None, "A10a 成功路径必须有 totals"
+        assert all(totals[k] is not None for k in ("baseline", "current", "delta")), (
+            f"A10a totals 三键必须齐且非 null：{totals}"
+        )
+        # 父轮形态四件套（serving/api.py 决策⑥）：不冒充单 SQL 结果
+        assert body["sql"] is None, "A10a 父轮不得携带 sql"
+        assert body["explanation"] is None, "A10a 父轮不得携带 explanation"
+        assert body["columns"] == [] and body["rows"] == [], "A10a 父轮不得携带行集"
+        assert body["row_count"] == 0, f"A10a 父轮 row_count 应为 0：{body['row_count']}"
+        assert body["metric"] == analysis["metric"], "A10a 父轮 metric 应与计划一致"
+        scenarios.append(
+            {
+                "id": "A10a",
+                "title": "多步贡献分析（hq_admin /analyze）",
+                "goal": (
+                    "analyze → 四步 Guard/RLS → 贡献响应：四步全 SQL"
+                    "（LIMIT+2013+1 = 1）+ totals 三键齐 + 父轮不冒充行集"
+                ),
+                "question": ANALYSIS_Q,
+                "kind": body["kind"],
+                "analysis_status": analysis["status"],
+                "steps": len(steps),
+                "roles": [s["role"] for s in steps],
+                "totals_keys": sorted(totals),
+                "items_count": len(analysis["items"]),
+                "executor_calls": len(executor.calls),
+            }
+        )
+    finally:
+        client.close()
+
+    # ---- A10b：真实受限角色 /analyze（blocked 即四步 Guard/RLS 在受限角色的真实证据，
+    #      如实断言，不拿 hq_admin 冒充、不断言成功贡献）----
+    client, executor = _analysis_client()
+    try:
+        bm_token = sign_token("branch_manager", {"branch": BRANCH})
+        sid = "api-verify-a10b-bm"
+        r_bm = client.post(
+            f"{API}/analyze",
+            json={"question": ANALYSIS_Q, "session_id": sid},
+            headers=_auth(bm_token),
+        )
+        assert r_bm.status_code == 200, f"A10b /analyze HTTP {r_bm.status_code}"
+        body = r_bm.json()
+        assert body["kind"] == "blocked", f"A10b 期望 blocked，实际 {body['kind']}"
+        analysis = body["analysis"]
+        assert analysis is not None, "A10b 分析响应缺 analysis 投影"
+        assert analysis["reason_code"] == "guard_blocked", (
+            f"A10b 原因码不符：{analysis['reason_code']}"
+        )
+        block_reason = body["block_reason"] or ""
+        assert block_reason, "A10b blocked 轮必须给 block_reason"
+        assert "SELECT" not in block_reason.upper(), (
+            f"A10b block_reason 泄漏 SQL 文本：{block_reason}"
+        )
+        steps = analysis["steps"]
+        assert len(steps) == 1, f"A10b 被拒即裁剪：期望恰 1 步，实际 {len(steps)}"
+        assert steps[0]["role"] == "baseline_total" and steps[0]["kind"] == "blocked", (
+            f"A10b 首步形态不符：{steps[0]}"
+        )
+        assert steps[0]["sql"] is None, "A10b 被拒 SQL 不出网"
+        assert executor.calls == [], f"A10b 零 SQL 应达执行器，实际 {executor.calls}"
+        assert analysis["totals"] is None, "A10b 不得产出 totals"
+        assert body["turns_in_session"] == 1, f"A10b 轮数不多算：{body['turns_in_session']}"
+        # blocked 轮后同会话普通 /ask（同 bm 身份）：会话仍可用且轮数接续
+        r_follow = client.post(
+            f"{API}/ask",
+            json={"question": gold102["question"], "session_id": sid},
+            headers=_auth(bm_token),
+        )
+        assert r_follow.status_code == 200, f"A10b 后续 /ask HTTP {r_follow.status_code}"
+        follow = r_follow.json()
+        assert follow["kind"] == "answer", f"A10b 后续期望 answer，实际 {follow['kind']}"
+        assert follow["turns_in_session"] == 2, (
+            f"A10b 会话轮数应接续为 2：{follow['turns_in_session']}"
+        )
+        scenarios.append(
+            {
+                "id": "A10b",
+                "title": "真实受限角色（branch_manager /analyze）",
+                "goal": (
+                    "受限角色 /analyze → blocked（guard_blocked）+ 零 SQL 达执行器"
+                    " + 同会话 /ask 仍可用（轮数接续 2）"
+                ),
+                "question": ANALYSIS_Q,
+                "kind": body["kind"],
+                "reason_code": analysis["reason_code"],
+                "block_reason": block_reason,
+                "steps": len(steps),
+                "executor_calls": len(executor.calls),
+                "turns_in_session_blocked": body["turns_in_session"],
+                "followup_kind": follow["kind"],
+                "followup_turns_in_session": follow["turns_in_session"],
+            }
+        )
+    finally:
+        client.close()
+
+    # ---- A10c：同会话流（hq）：/analyze → 同 sid /ask ----
+    # ---- A10d：跨身份 422（A10c 的 sid 上换 bm token /ask）----
+    # 两者共用一个 client 会话：A10d 依赖 A10c 建立的会话身份（与 A7a/A7c 同模式）
+    client, _ = _analysis_client()
+    try:
+        hq_token = sign_token("hq_admin", {})
+        sid = "api-verify-a10c-hq"
+        r_an = client.post(
+            f"{API}/analyze",
+            json={"question": ANALYSIS_Q, "session_id": sid},
+            headers=_auth(hq_token),
+        )
+        assert r_an.status_code == 200, f"A10c /analyze HTTP {r_an.status_code}"
+        an = r_an.json()
+        assert an["kind"] == "answer", f"A10c 期望 answer，实际 {an['kind']}"
+        assert an["turns_in_session"] == 1, f"A10c 首轮应记 1：{an['turns_in_session']}"
+        r_ask = client.post(
+            f"{API}/ask",
+            json={"question": gold102["question"], "session_id": sid},
+            headers=_auth(hq_token),
+        )
+        assert r_ask.status_code == 200, f"A10c 同会话 /ask HTTP {r_ask.status_code}"
+        ask = r_ask.json()
+        assert ask["kind"] == "answer", f"A10c /ask 期望 answer，实际 {ask['kind']}"
+        assert ask["turns_in_session"] == 2, f"A10c 轮数不多算：{ask['turns_in_session']}"
+        scenarios.append(
+            {
+                "id": "A10c",
+                "title": "同会话流（analyze → 普通问数）",
+                "goal": "/analyze 后同 sid /ask → answer，turns_in_session 接续为 2",
+                "question": ANALYSIS_Q,
+                "session_id": sid,
+                "analyze_kind": an["kind"],
+                "ask_kind": ask["kind"],
+                "turns_in_session": ask["turns_in_session"],
+            }
+        )
+
+        r_x = client.post(
+            f"{API}/ask",
+            json={"question": gold102["question"], "session_id": sid},
+            headers=_auth(sign_token("branch_manager", {"branch": BRANCH})),
+        )
+        assert r_x.status_code == 422, f"A10d 期望 422，实际 {r_x.status_code}"
+        detail = r_x.json()["detail"]
+        assert "会话身份冲突" in detail, f"A10d 422 文案不符：{detail}"
+        scenarios.append(
+            {
+                "id": "A10d",
+                "title": "跨身份会话冲突（HTTP 422）",
+                "goal": "A10c 的 sid 上换 bm token /ask → 422 会话身份冲突（C2 真链侧）",
+                "session_id": sid,
+                "first_role": "hq_admin",
+                "second_role": "branch_manager",
+                "second_status": r_x.status_code,
+                "detail": detail,
+            }
+        )
+    finally:
+        client.close()
+
     report = {
         "schema_version": 1,
-        "purpose": "HTTP API 真实链路验收（ADR-0012 服务面 + ADR-0022 URL 契约 v2；与 e2e-acceptance 同数据口径）",
+        "purpose": (
+            "HTTP API 真实链路验收（ADR-0012 服务面 + ADR-0022 URL 契约 v2；"
+            "与 e2e-acceptance 同数据口径）"
+        ),
         "head_sha": sha,
         "snapshot_sha": json.loads(SNAPSHOT_META.read_text(encoding="utf-8"))["sha"],
         "created_at": ts,

@@ -1,0 +1,157 @@
+{
+  "checks": [
+    {
+      "name": "duplicate_target_key:dim_date",
+      "observed": 0,
+      "result": "pass",
+      "scope": {
+        "sharding": null,
+        "tables": [
+          "atlas.dwd.dim_date",
+          "atlas.dwd.fact_trades"
+        ],
+        "time_range": {
+          "max": "2017-07-07",
+          "min": "2012-07-07"
+        }
+      },
+      "sql": "SELECT COUNT(*) - COUNT(DISTINCT dim_date.SK_DateID) AS dup_cnt FROM atlas.dwd.dim_date AS dim_date WHERE dim_date.SK_DateID IN (SELECT fact_trades.SK_CreateDateID FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.DateValue BETWEEN CAST('2012-07-07' AS DATE) AND CAST('2017-07-07' AS DATE)) LIMIT 1"
+    },
+    {
+      "name": "orphan_reference:fact_trades->dim_date",
+      "observed": 0,
+      "result": "pass",
+      "scope": {
+        "sharding": null,
+        "tables": [
+          "atlas.dwd.dim_date",
+          "atlas.dwd.fact_trades"
+        ],
+        "time_range": {
+          "max": "2017-07-07",
+          "min": "2012-07-07"
+        }
+      },
+      "sql": "SELECT COUNT(*) AS orphan_cnt FROM atlas.dwd.fact_trades AS fact_trades LEFT JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID AND dim_date.DateValue BETWEEN CAST('2012-07-07' AS DATE) AND CAST('2017-07-07' AS DATE) WHERE dim_date.SK_DateID IS NULL LIMIT 1"
+    },
+    {
+      "name": "duplicate_target_key:dim_customer",
+      "observed": 0,
+      "result": "pass",
+      "scope": {
+        "sharding": null,
+        "tables": [
+          "atlas.dwd.dim_customer",
+          "atlas.dwd.dim_date",
+          "atlas.dwd.fact_trades"
+        ],
+        "time_range": {
+          "max": "2017-07-07",
+          "min": "2012-07-07"
+        }
+      },
+      "sql": "SELECT COUNT(*) - COUNT(DISTINCT dim_customer.SK_CustomerID) AS dup_cnt FROM atlas.dwd.dim_customer AS dim_customer WHERE dim_customer.SK_CustomerID IN (SELECT fact_trades.SK_CustomerID FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.DateValue BETWEEN CAST('2012-07-07' AS DATE) AND CAST('2017-07-07' AS DATE)) LIMIT 1"
+    },
+    {
+      "name": "orphan_reference:fact_trades->dim_customer",
+      "observed": 0,
+      "result": "pass",
+      "scope": {
+        "sharding": null,
+        "tables": [
+          "atlas.dwd.dim_customer",
+          "atlas.dwd.dim_date",
+          "atlas.dwd.fact_trades"
+        ],
+        "time_range": {
+          "max": "2017-07-07",
+          "min": "2012-07-07"
+        }
+      },
+      "sql": "SELECT COUNT(*) AS orphan_cnt FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID LEFT JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID WHERE dim_date.DateValue BETWEEN CAST('2012-07-07' AS DATE) AND CAST('2017-07-07' AS DATE) AND dim_customer.SK_CustomerID IS NULL LIMIT 1"
+    },
+    {
+      "name": "duplicate_target_key:dim_broker",
+      "observed": 0,
+      "result": "pass",
+      "scope": {
+        "sharding": null,
+        "tables": [
+          "atlas.dwd.dim_broker",
+          "atlas.dwd.dim_date",
+          "atlas.dwd.fact_trades"
+        ],
+        "time_range": {
+          "max": "2017-07-07",
+          "min": "2012-07-07"
+        }
+      },
+      "sql": "SELECT COUNT(*) - COUNT(DISTINCT dim_broker.SK_BrokerID) AS dup_cnt FROM atlas.dwd.dim_broker AS dim_broker WHERE dim_broker.SK_BrokerID IN (SELECT fact_trades.SK_BrokerID FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.DateValue BETWEEN CAST('2012-07-07' AS DATE) AND CAST('2017-07-07' AS DATE)) LIMIT 1"
+    },
+    {
+      "name": "orphan_reference:fact_trades->dim_broker",
+      "observed": 0,
+      "result": "pass",
+      "scope": {
+        "sharding": null,
+        "tables": [
+          "atlas.dwd.dim_broker",
+          "atlas.dwd.dim_date",
+          "atlas.dwd.fact_trades"
+        ],
+        "time_range": {
+          "max": "2017-07-07",
+          "min": "2012-07-07"
+        }
+      },
+      "sql": "SELECT COUNT(*) AS orphan_cnt FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID LEFT JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.DateValue BETWEEN CAST('2012-07-07' AS DATE) AND CAST('2017-07-07' AS DATE) AND dim_broker.SK_BrokerID IS NULL LIMIT 1"
+    },
+    {
+      "name": "row_invariant",
+      "observed": 0,
+      "result": "pass",
+      "scope": {
+        "sharding": null,
+        "tables": [
+          "atlas.dwd.dim_broker",
+          "atlas.dwd.dim_customer",
+          "atlas.dwd.dim_date",
+          "atlas.dwd.fact_trades"
+        ],
+        "time_range": {
+          "max": "2017-07-07",
+          "min": "2012-07-07"
+        }
+      },
+      "sql": "SELECT (SELECT COUNT(*) FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID WHERE dim_date.DateValue BETWEEN CAST('2012-07-07' AS DATE) AND CAST('2017-07-07' AS DATE)) - (SELECT COUNT(*) FROM atlas.dwd.fact_trades AS fact_trades INNER JOIN atlas.dwd.dim_date AS dim_date ON fact_trades.SK_CreateDateID = dim_date.SK_DateID INNER JOIN atlas.dwd.dim_customer AS dim_customer ON fact_trades.SK_CustomerID = dim_customer.SK_CustomerID INNER JOIN atlas.dwd.dim_broker AS dim_broker ON fact_trades.SK_BrokerID = dim_broker.SK_BrokerID WHERE dim_date.DateValue BETWEEN CAST('2012-07-07' AS DATE) AND CAST('2017-07-07' AS DATE)) AS row_delta LIMIT 1"
+    }
+  ],
+  "eligible": true,
+  "join_paths": [
+    "fact_trades → dim_date（trades_to_date）",
+    "fact_trades → dim_customer（trades_to_customer）",
+    "fact_trades → dim_broker（trades_to_broker）"
+  ],
+  "model": "atlas_finance_analytics",
+  "pairs": [
+    {
+      "dimension": "Branch",
+      "eligible": true,
+      "metric": "commission_revenue",
+      "reason": null
+    },
+    {
+      "dimension": "Branch",
+      "eligible": true,
+      "metric": "total_trade_value",
+      "reason": null
+    }
+  ],
+  "reasons": [],
+  "semantic_sha256": "a3ba5e2b708bcf578dc27b3587ca8050bef6ae0a4e2cc77290ffda586e345be4",
+  "snapshot_sha": "7c966e9",
+  "time_range": {
+    "max": "2017-07-07",
+    "min": "2012-07-07"
+  }
+}

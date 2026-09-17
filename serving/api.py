@@ -3,7 +3,7 @@
 契约口径（诚实声明）
 --------------------
 - 路由契约 v2（ADR-0022 决策 ①②）：业务端点一律挂 `/api/v1` 前缀
-  （/api/v1/plan /compile /ask /plan/execute），旧无前缀路径**硬切**（404，
+  （/api/v1/plan /compile /ask /plan/execute /analyze），旧无前缀路径**硬切**（404，
   无兼容期、不保留别名）；`/health` **双挂**（根 + 前缀，同一 handler）——根挂点
   是给 docker-compose healthcheck 与外部探针留的（ADR-0022 理由 2：探针字符串
   改了而无人验证过 compose，失败链没有自动兜底）。「契约 v2」指 URL 契约，
@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -76,6 +77,12 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from agent.analysis import (
+    ANALYSIS_ROLES,
+    AnalysisResult,
+    analysis_status,
+    effective_reason_code,
+)
 from agent.compiler import (
     FINANCE_MODEL,
     CompileError,
@@ -89,7 +96,7 @@ from agent.compiler import (
 from agent.factory import SnapshotUnavailable, create_live_agent
 from agent.graph import DataAgent, SessionIdentityConflict
 from agent.planner import ClarificationRequest, Planner
-from agent.state import TurnResult
+from agent.state import ANALYSIS_RECORD_VERSION, TurnResult
 from data.identity import (
     RuntimeSnapshot,
     git_short_sha_or_none,
@@ -276,7 +283,12 @@ def _plan_text(plan: Plan) -> str:
     return "，".join(parts)
 
 
-def _turn_payload(result: TurnResult, snapshot: RuntimeSnapshot | None = None) -> dict[str, Any]:
+def _turn_payload(
+    result: TurnResult,
+    snapshot: RuntimeSnapshot | None = None,
+    *,
+    analysis: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """TurnResult → 平铺 JSON：字段全集稳定输出（kind 无关字段为 null）。
 
     `snapshot` 是**该 agent 构造时解析出的绑定**（`DataAgent.snapshot`），由调用方
@@ -288,6 +300,11 @@ def _turn_payload(result: TurnResult, snapshot: RuntimeSnapshot | None = None) -
 
     两键与 `explanation` **并列**而不塞进去：快照绑定状态是回合级事实（与 `kind`
     / `row_count` 同层），不是归因解释的一部分（0019 决策 ⑥ 的语义归属裁定）。
+
+    `analysis` 是多步分析的 17 键投影（ADR-0026 决策 ⑥，`_analysis_payload` 产出），
+    同样与 explanation 并列：分析是父轮之上的独立产出，不是解释的附属。键**恒在**，
+    非分析请求（普通 ask / plan/execute / fallback / clarify）值恒为 null——
+    「键存在且为 null」与「键不存在」是两种契约，前端类型按 `| null` 建模。
     """
     payload = _jsonable(
         {
@@ -318,6 +335,121 @@ def _turn_payload(result: TurnResult, snapshot: RuntimeSnapshot | None = None) -
             "handoff_reason": result.handoff_reason,
             "snapshot_sha": snapshot.sha if snapshot is not None else None,
             "snapshot_bound_to_head": (snapshot.bound_to_head if snapshot is not None else None),
+            "analysis": analysis,
+        }
+    )
+    assert isinstance(payload, dict)  # 静态收窄：_jsonable 递归后必为 dict
+    return payload
+
+
+def _analysis_payload(result: AnalysisResult) -> dict[str, Any] | None:
+    """AnalysisResult → 决策⑥固定 17 键投影（键名逐字照抄 ADR-0026 L228-230）。
+
+    `plan is None`（无分析意图 fallback / clarify）→ 返回 None：分析未开始，
+    调用方把顶层 `analysis` 键置为该 None（键本身不消失，见 `_turn_payload`）。
+    plan 存在时返回 17 键投影，不适用字段用 null / 空数组——「字段全集恒定」
+    同 0022 判据 6 口径。
+
+    序列化规则：
+    - Decimal → str（`_jsonable` 保精度；totals/items 的数值一律字符串出网）；
+    - 步骤按 ANALYSIS_ROLES 角色序 zip（执行顺序即角色序，T05 契约）；成功步
+      携带 role/kind/sql/columns/rows/latency_ms，失败步（blocked/error）裁为
+      安全摘要——sql/columns/rows 置空，只留角色、终态、原因码与尝试耗时
+      （与 T07 checkpoint 证据同口径：被拒 SQL 与失败步已执行 SQL 都不出网，
+      底层异常文本不出网；机器可读原因在 analysis.reason_code）；
+    - reason_code 取 `effective_reason_code`（attribution 缺失时回落 result 码）。
+    """
+    plan = result.plan
+    if plan is None:
+        return None
+    attribution = result.attribution
+    steps: list[dict[str, Any]] = []
+    # 步骤数不得多于角色数（T05 不变量）；strict=False 容纳的是反向合法形态——
+    # unavailable 前置门失败时 plan 在而 steps=()（或部分执行后终止），缺位角色
+    # 不虚构（N1）。越界（steps > roles）属不变量破坏，必须响亮失败，不能被
+    # zip 静默丢尾掩盖（评审 Minor-3）
+    assert len(result.steps) <= len(ANALYSIS_ROLES)
+    for role, step in zip(ANALYSIS_ROLES, result.steps, strict=False):
+        if step.kind == "answer":
+            steps.append(
+                {
+                    "role": role,
+                    "kind": step.kind,
+                    "sql": step.sql,
+                    "columns": list(step.columns),
+                    "rows": _jsonable(list(step.rows)),
+                    "latency_ms": step.latency_ms,
+                }
+            )
+        else:
+            # 失败步安全摘要：不区分「被拒」与「执行后失败」，一律不带 SQL/数据
+            steps.append(
+                {
+                    "role": role,
+                    "kind": step.kind,
+                    "sql": None,
+                    "columns": [],
+                    "rows": [],
+                    "latency_ms": step.latency_ms,
+                    "reason_code": (
+                        "guard_blocked" if step.kind == "blocked" else "execution_error"
+                    ),
+                }
+            )
+    has_totals = (
+        attribution is not None
+        and attribution.baseline is not None
+        and attribution.current is not None
+        and attribution.delta is not None
+    )
+    payload = _jsonable(
+        {
+            "schema_version": ANALYSIS_RECORD_VERSION,
+            "intent": plan.intent,
+            "status": analysis_status(result),
+            "metric": plan.metric,
+            "dimension": plan.dimension,
+            "baseline": {
+                "granularity": plan.baseline.granularity,
+                "value": _jsonable(plan.baseline.value),
+            },
+            "current": {
+                "granularity": plan.current.granularity,
+                "value": _jsonable(plan.current.value),
+            },
+            "filters": [
+                {"column": f.column, "op": f.op, "value": _jsonable(f.value)} for f in plan.filters
+            ],
+            "snapshot_sha": result.snapshot_sha,
+            "semantic_sha256": result.semantic_sha256,
+            "recipe_version": plan.recipe_version,
+            "totals": (
+                {
+                    "baseline": attribution.baseline,
+                    "current": attribution.current,
+                    "delta": attribution.delta,
+                }
+                if has_totals
+                else None
+            ),
+            "items": (
+                [
+                    {
+                        "value": item.value,
+                        "baseline": item.baseline,
+                        "current": item.current,
+                        "delta": item.delta,
+                        "contribution_pct": item.contribution_pct,
+                    }
+                    for item in attribution.items
+                ]
+                if attribution is not None
+                else []
+            ),
+            "steps": steps,
+            "reason_code": effective_reason_code(result),
+            "text": attribution.text if attribution is not None else None,
+            "elapsed_ms": result.elapsed_ms,
         }
     )
     assert isinstance(payload, dict)  # 静态收窄：_jsonable 递归后必为 dict
@@ -429,8 +561,9 @@ def create_app(
         title="Atlas Serving API",
         version=_package_version(),
         description="Atlas 可信 AI 问数平台 HTTP 服务面（ADR-0012；URL 契约 v2 见 "
-        f"ADR-0022）：/health（根与 {API_PREFIX}/health 双挂同一实现）公开；"
-        f"{API_PREFIX}/{{plan,compile,ask,plan/execute}} 与 {API_PREFIX}/governance/*"
+        f"ADR-0022，多步分析见 ADR-0026）：/health（根与 {API_PREFIX}/health 双挂"
+        f"同一实现）公开；{API_PREFIX}/{{plan,compile,ask,plan/execute,analyze}} 与 "
+        f"{API_PREFIX}/governance/*"
         "（8 集合 + 2 钻取，只读文件）需 Bearer JWT（make token 签发）；"
         "请求体 model 字段选择语义模型域（finance|retail，缺省 finance）",
     )
@@ -693,6 +826,77 @@ def create_app(
             bucket="business",
         )
         return _turn_payload(result, agent.snapshot)
+
+    @router.post(
+        "/analyze",
+        summary="多步变化贡献分析（ADR-0026；AskBody/Bearer/模型选择/限流与 /ask 同源）",
+    )
+    def analyze(
+        body: AskBody,
+        _claims: BearerClaims,
+        _rl: None = Depends(_require_rate_limit),
+    ) -> dict[str, Any]:
+        """多期间变化贡献分析（决策③⑥）：请求面与 /ask 完全同构，产出面多一个 `analysis`。
+
+        复用项（ADR-0026 L220-233）：AskBody 逐字同 /ask（不新增身份字段，身份只来自
+        服务端 Bearer claims）、model 选域懒建同一 Agent 单例、同一业务限流桶、
+        SessionIdentityConflict → 422 冲突审计 + 「请换新 session_id」、快照缺失 503。
+        分析无意图时 agent.analyze 内部按决策③回落普通 ask（kind=answer 且携带
+        单 SQL 结果），无法解析时 kind=clarify——两种回落 `analysis` 值均为 null。
+
+        决策⑥响应形态：
+        - 父轮不冒充单 SQL 结果：sql/explanation null、columns/rows 空、row_count=0、
+          metric=目标指标、latency_ms=已执行子 SQL 耗时和；
+        - `analysis` 17 键投影（`_analysis_payload`）：键恒在，非分析为 null；
+        - 执行故障轮 error 字段**出网前净化**为稳定文案——仅分析轮（plan 在）：
+          node_execute 的 error 值含底层异常文本，如连接串信息（决策⑥：分析路径
+          不泄露；机器可读原因留在 analysis.reason_code）；无意图 fallback 轮
+          （plan=None）没有分析子步，与 /ask /plan/execute 维持 R1 现状同形
+          （原始 error 文本与 post-Guard SQL 照常出网），误标「分析子步骤失败」
+          属归因错误（评审 Minor-2）；
+        - 一次 HTTP 请求恰一条业务审计行（与 /ask 同款 answer/blocked/error 形态）。
+        """
+        model_name = _model_name(body.model)
+        agent = _agent(model_name)
+        sid = body.session_id
+        try:
+            result = agent.analyze(body.question, session_id=sid, identity=_claims)
+        except SessionIdentityConflict as exc:
+            audit_log.record(
+                endpoint=f"{API_PREFIX}/analyze",
+                claims=_claims,
+                session_id=sid,
+                kind="conflict",
+                status=422,
+                bucket="business",
+            )
+            raise HTTPException(status_code=422, detail="会话身份冲突，请换新 session_id") from exc
+        turn = result.turn
+        if result.plan is not None and turn.kind == "error" and turn.error is not None:
+            # 决策⑥净化（T08 裁定；评审 Minor-2 收窄）：**仅分析轮**（plan 在）——
+            # 底层异常文本（含连接信息）不出网。TurnResult 冻结，replace 出响应
+            # 专用拷贝——只改 HTTP 响应这一份，checkpoint / 审计口径不在此处理
+            # （审计行本就不含 SQL 与 error 文本；节点内部 error 保持可诊断）。
+            # 无意图 fallback 轮（plan=None）没有分析子步，不净化：与 /ask error
+            # 轮同形（R1——原始 error 文本与 post-Guard SQL 照常出网），否则
+            # 「分析子步骤执行失败」对一轮从未开始的分析是误归因。
+            turn = replace(turn, error="分析子步骤执行失败（execution_error）")
+        audit_log.record(
+            endpoint=f"{API_PREFIX}/analyze",
+            claims=_claims,
+            session_id=turn.session_id,
+            kind=turn.kind,
+            # 与 /ask 同款：row_count/latency_ms 只在 answer 轮有语义——分析父轮
+            # row_count 恒 0（不冒充单 SQL 结果），latency 为子 SQL 耗时和
+            row_count=turn.row_count if turn.kind == "answer" else None,
+            latency_ms=turn.latency_ms if turn.kind == "answer" else None,
+            bucket="business",
+        )
+        return _turn_payload(
+            turn,
+            agent.snapshot,
+            analysis=_analysis_payload(result),
+        )
 
     # 装配（决策 ①②④）：业务 router + 治理 router 同 app；治理面不经过 _agent，
     # 快照缺失时业务面 503 与治理面 200 并存（判据 5 的隔离断言）

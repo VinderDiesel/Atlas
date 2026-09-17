@@ -46,6 +46,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import SpanKind, Tracer
 
 if TYPE_CHECKING:
+    from agent.compiler import SemanticModel
     from agent.state import TurnResult
 
 # --------------------------------------------------------------------------
@@ -57,6 +58,7 @@ _METER_PROVIDER: MeterProvider | None = None
 _METER: Meter | None = None
 _LOCK = threading.Lock()
 _WARNED_TELEMETRY_FAILURE = False  # 埋点故障只告警一次，避免刷屏
+_WARNED_STEP_FAILURE = False  # 分析步骤埋点故障独立告警一次（不与回合埋点共用计数）
 _ATEXIT_FLUSH_REGISTERED = False  # 短进程（CLI 单回合）退出前 flush 一次即可
 
 # gen_ai.* 语义约定键 + atlas.* 自定义键（集中定义，防拼写漂移）
@@ -72,6 +74,9 @@ ATTR_LATENCY_MS = "atlas.turn.latency_ms"  # 执行耗时（同 TurnResult.laten
 ATTR_DATA_VERSION = "atlas.snapshot.data_version"  # 快照 sha（未绑定不写，不编造）
 ATTR_BLOCK_REASON = "atlas.block_reason"  # Guard 拒绝原因
 ATTR_ERROR = "atlas.error"  # 执行期故障摘要（截断防敏感泄漏）
+# ADR-0026 T07：分析四步子执行的步骤级 span 属性（父子观测）
+ATTR_ROLE = "atlas.analysis.role"  # ANALYSIS_ROLES 之一（步骤角色）
+ATTR_ANALYSIS_MODEL = "atlas.model"  # 语义模型名（分析步骤归属的 model）
 # gen_ai 语义约定（OpenTelemetry gen_ai semantic conventions 草案键）
 ATTR_GENAI_PROMPT_TOKENS = "gen_ai.usage.prompt_tokens"
 ATTR_GENAI_COMPLETION_TOKENS = "gen_ai.usage.completion_tokens"
@@ -355,9 +360,85 @@ def _record_turn_impl(result: TurnResult, snapshot_sha: str | None) -> None:
         blocked.add(1, {"atlas.reason": str(result.block_reason or "unspecified")})
 
 
+# --------------------------------------------------------------------------
+# 分析步骤打点（graph.DataAgent.analyze 每执行一步调用一次；ADR-0026 T07）
+# --------------------------------------------------------------------------
+def record_analysis_step(
+    turn: TurnResult,
+    *,
+    model: SemanticModel,
+    session_id: str,
+    turns: int,
+    role: str,
+) -> None:
+    """把一个分析子执行步记录为 ``atlas.analysis.step`` span（只写步骤 span）。
+
+    与 :func:`record_turn` 的区别：**不产生任何指标数据点、不写父回合 span**
+    ——父回合由调用方（analyze 编排）统一 record_turn 一次，步骤 span 只承载
+    步骤级证据（角色/SQL/行数/耗时），父 span 通过 question_id 同键关联。
+
+    参数
+    ----
+    turn      : 该步骤的无状态子执行 TurnResult（ok/blocked/error 皆可记录）。
+    model     : 分析归属的语义模型（写 ``atlas.model`` 属性）。
+    session_id: 父会话 id。
+    turns     : 父回合轮数（question_id 形如 ``{session_id}#t{turns}``）。
+    role      : 步骤角色（ANALYSIS_ROLES 之一）。
+
+    抛异常：本函数吞掉一切自身异常（观测故障不得中断分析编排），
+    仅首次失败告警一次 RuntimeWarning（独立于 record_turn 的告警计数）。
+    """
+
+    try:
+        _record_analysis_step_impl(turn, model=model, session_id=session_id, turns=turns, role=role)
+    except Exception as exc:  # noqa: BLE001 - 见 docstring：观测故障隔离
+        global _WARNED_STEP_FAILURE
+        if not _WARNED_STEP_FAILURE:
+            _WARNED_STEP_FAILURE = True
+            warnings.warn(
+                f"[otel] 分析步骤埋点失败（已隔离，不影响主链路）：{exc!r}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+
+def _record_analysis_step_impl(
+    turn: TurnResult,
+    *,
+    model: SemanticModel,
+    session_id: str,
+    turns: int,
+    role: str,
+) -> None:
+    attrs: dict[str, Any] = {
+        ATTR_SESSION_ID: session_id,
+        ATTR_QUESTION_ID: f"{session_id}#t{turns}",
+        ATTR_ROLE: role,
+        ATTR_KIND: turn.kind,
+        ATTR_ENGINE: turn.engine,
+        ATTR_ANALYSIS_MODEL: model.name,
+    }
+    if turn.metric is not None:
+        attrs[ATTR_METRIC_ID] = turn.metric
+    if turn.sql is not None:
+        attrs[ATTR_SQL] = turn.sql
+    if turn.row_count:
+        attrs[ATTR_ROWS] = turn.row_count
+    if turn.latency_ms:
+        attrs[ATTR_LATENCY_MS] = turn.latency_ms
+    if turn.kind == "blocked" and turn.block_reason:
+        attrs[ATTR_BLOCK_REASON] = turn.block_reason
+    if turn.kind == "error" and turn.error:
+        attrs[ATTR_ERROR] = turn.error[:_ERROR_ATTR_MAX]
+
+    span = _tracer().start_span("atlas.analysis.step", kind=SpanKind.INTERNAL, attributes=attrs)
+    span.end()
+
+
 __all__ = [
     "configure_otel",
     "record_turn",
+    "record_analysis_step",
     "ATTR_QUESTION_ID",
     "ATTR_SESSION_ID",
     "ATTR_KIND",
@@ -370,6 +451,8 @@ __all__ = [
     "ATTR_DATA_VERSION",
     "ATTR_BLOCK_REASON",
     "ATTR_ERROR",
+    "ATTR_ROLE",
+    "ATTR_ANALYSIS_MODEL",
     "ATTR_GENAI_PROMPT_TOKENS",
     "ATTR_GENAI_COMPLETION_TOKENS",
     "ATTR_GENAI_MODEL",

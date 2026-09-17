@@ -132,10 +132,19 @@ def create_live_agent(model_path: Path | None = None) -> DataAgent:
     # 传整个 snapshot（不是 snapshot.meta）：/ask 要回显 source 与 bound_to_head，
     # 而 meta 里没有这两项——若 API 层为拿到它们再解析一次，就成了「两次解析可能
     # 得到不同快照」的第二事实源（ADR-0019 决策 ②/⑥）
-    return DataAgent(
+    agent = DataAgent(
         model=model,
         executor=execute_sql,
         budget=budget,
         snapshot=snapshot,
         checkpointer=checkpoint_saver_from_env(),
     )
+    # ADR-0026 T02 checklist ④：读取匹配 (snapshot_sha, semantic_sha256) 的资格
+    # 产物挂到分析入口。缺失/过期/哈希漂移只产出 available=False 的事实，
+    # 绝不阻断普通 ask Agent 构造（load_eligibility 不抛异常）。
+    # analysis_eligibility 是 DataAgent 的动态附加属性（agent/graph.py 归其他
+    # 工作线，不在本任务可改文件清单），构造后注入而非构造参数。
+    from eval.analysis_eligibility import load_eligibility
+
+    agent.analysis_eligibility = load_eligibility(model, snapshot.meta)  # type: ignore[attr-defined]
+    return agent

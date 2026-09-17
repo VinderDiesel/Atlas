@@ -1,0 +1,381 @@
+{
+  "evaluator": "analysis_eval",
+  "created_at": "2026-09-17T06:41:51.614916+08:00",
+  "dry": false,
+  "run": "executed",
+  "code_sha": "b95a9e9",
+  "dirty": true,
+  "snapshot_sha": "7c966e9",
+  "semantic_sha256": "a3ba5e2b708bcf578dc27b3587ca8050bef6ae0a4e2cc77290ffda586e345be4",
+  "snapshot_verified": {
+    "before": true,
+    "after": true
+  },
+  "ok": true,
+  "summary": {
+    "samples": 2,
+    "ok_samples": 2,
+    "failed_samples": 0,
+    "checks_total": 42,
+    "checks_failed": 0,
+    "checks_not_run": 9
+  },
+  "checks": {
+    "sample_schema": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "id_matches_filename": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "maturity_ready": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "shas_declared": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "snapshot_match": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "semantic_match": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "plan_template": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 1,
+      "not_run": 0
+    },
+    "reference_complete": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 1,
+      "not_run": 0
+    },
+    "executed": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "contract": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "kind": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "sql_calls": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "plan": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 1,
+      "not_run": 0
+    },
+    "sub_plans": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 1,
+      "not_run": 0
+    },
+    "steps_columns": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 1,
+      "not_run": 0
+    },
+    "steps_rows": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 1,
+      "not_run": 0
+    },
+    "attribution_totals": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 1,
+      "not_run": 0
+    },
+    "attribution_items": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 1,
+      "not_run": 0
+    },
+    "reason_code": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    },
+    "clarification": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 1,
+      "not_run": 0
+    },
+    "bindings": {
+      "pass": 2,
+      "fail": 0,
+      "skip": 0,
+      "not_run": 0
+    }
+  },
+  "samples": [
+    {
+      "id": "attribution-001",
+      "file": "/Users/yangxinlong/gitee/Atlas/eval/analysis/finance/attribution-001.json",
+      "maturity": "ready",
+      "expected_kind": "answer",
+      "ok": true,
+      "checks": [
+        {
+          "name": "sample_schema",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "id_matches_filename",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "maturity_ready",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "shas_declared",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "snapshot_match",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "semantic_match",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "plan_template",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "reference_complete",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "executed",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "contract",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "kind",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "sql_calls",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "plan",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "sub_plans",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "steps_columns",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "steps_rows",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "attribution_totals",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "attribution_items",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "reason_code",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "clarification",
+          "status": "skip",
+          "detail": "终态 'answer' 不校验澄清载荷"
+        },
+        {
+          "name": "bindings",
+          "status": "pass",
+          "detail": null
+        }
+      ]
+    },
+    {
+      "id": "clarify-001",
+      "file": "/Users/yangxinlong/gitee/Atlas/eval/analysis/finance/clarify-001.json",
+      "maturity": "ready",
+      "expected_kind": "clarify",
+      "ok": true,
+      "checks": [
+        {
+          "name": "sample_schema",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "id_matches_filename",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "maturity_ready",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "shas_declared",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "snapshot_match",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "semantic_match",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "plan_template",
+          "status": "skip",
+          "detail": "终态 'clarify' 无计划期望"
+        },
+        {
+          "name": "reference_complete",
+          "status": "skip",
+          "detail": "终态 'clarify' 无参考结果"
+        },
+        {
+          "name": "executed",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "contract",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "kind",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "sql_calls",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "plan",
+          "status": "skip",
+          "detail": "样本未声明期望计划"
+        },
+        {
+          "name": "sub_plans",
+          "status": "skip",
+          "detail": "样本未声明期望子计划"
+        },
+        {
+          "name": "steps_columns",
+          "status": "skip",
+          "detail": "样本无参考结果"
+        },
+        {
+          "name": "steps_rows",
+          "status": "skip",
+          "detail": "样本无参考结果"
+        },
+        {
+          "name": "attribution_totals",
+          "status": "skip",
+          "detail": "终态 'clarify' 不校验综合总量"
+        },
+        {
+          "name": "attribution_items",
+          "status": "skip",
+          "detail": "终态 'clarify' 不校验贡献项"
+        },
+        {
+          "name": "reason_code",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "clarification",
+          "status": "pass",
+          "detail": null
+        },
+        {
+          "name": "bindings",
+          "status": "pass",
+          "detail": null
+        }
+      ]
+    }
+  ]
+}

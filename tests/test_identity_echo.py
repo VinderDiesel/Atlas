@@ -381,12 +381,12 @@ class TestAskEcho(EchoTestBase):
         self.assertNotIn("snapshot_sha", body["explanation"])
         self.assertNotIn("snapshot_bound_to_head", body["explanation"])
 
-    def test_payload_key_count_is_22(self) -> None:
-        """设计页 §5 / dev-plan 计数格：19 + 2 + 1 = 22（ADR-0025 判据 7 的 chart）。"""
+    def test_payload_key_count_is_23(self) -> None:
+        """设计页 §5 / dev-plan 计数格：19 + 2 + 1(chart) + 1(analysis, ADR-0026) = 23。"""
         body = self.client.post(
             f"{API}/ask", json={"question": FINANCE_Q}, headers=self._auth()
         ).json()
-        self.assertEqual(len(body), 22, f"_turn_payload 应 22 键，实测 {len(body)}：{sorted(body)}")
+        self.assertEqual(len(body), 23, f"_turn_payload 应 23 键，实测 {len(body)}：{sorted(body)}")
 
     def test_unbound_agent_echoes_null_keys_not_absent(self) -> None:
         """字段全集恒定：没绑定也要出现这两个键且为 null，不得静默消失。"""
@@ -397,7 +397,10 @@ class TestAskEcho(EchoTestBase):
         self.assertIn("snapshot_bound_to_head", body)
         self.assertIsNone(body["snapshot_sha"])
         self.assertIsNone(body["snapshot_bound_to_head"])
-        self.assertEqual(len(body), 22, "未绑定的键集仍须与正常路径相同（22 键）")
+        # analysis 键恒在（ADR-0026 决策 ⑥）：非分析请求值为 null，键不消失
+        self.assertIn("analysis", body)
+        self.assertIsNone(body["analysis"])
+        self.assertEqual(len(body), 23, "未绑定的键集仍须与正常路径相同（23 键）")
 
     def test_answer_carries_chart_spec(self) -> None:
         """ADR-0025 决策 ②：chart 挂独立键——answer 轮为 spec、由后端决定图型。"""

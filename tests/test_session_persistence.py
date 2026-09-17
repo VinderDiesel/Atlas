@@ -23,7 +23,10 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -45,8 +48,17 @@ from agent.factory import (
     create_live_agent,
 )
 from agent.graph import DataAgent, SessionIdentityConflict, build_graph
+from agent.planner import Planner
 from agent.security.sql_guard import Budget
-from agent.state import TurnResult
+from agent.state import (
+    ANALYSIS_RECORD_VERSION,
+    TurnResult,
+    decode_row_value,
+    decode_rows,
+    encode_row_value,
+    encode_rows,
+)
+from serving.auth import claims_fingerprint
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -68,6 +80,10 @@ FINANCE_Q = "按分支统计 2013 年佣金收入，列出前 5 名"
 FINANCE_FILTERED_Q = "2013 年按分支统计佣金收入超过 1000 万的分支，列出前 5 名"
 FINANCE_FOLLOWUP_Q = "那 2014 年呢"  # 同构追问：靠 last_plan 补全（ADR-0014 ②）
 RETAIL_Q = "2000 年总销售额是多少？"
+
+# ADR-0026 T06：分析父轮的问句（_begin_analysis 不解析问句，只作原问句记账）
+ANALYSIS_Q = "多期间分析：2013 与 2014 年佣金收入变化归因"
+ANALYSIS_Q2 = "多期间分析：2014 与 2015 年成交量变化归因"
 
 # 决策 ② 的白名单内容：TurnState 里出现的自研 dataclass（(module, class) 对）。
 # 六项而不是四项：`Filter` / `ComparisonSpec` 嵌在 `Plan` 内，**不会**随 `Plan`
@@ -158,6 +174,26 @@ def _values(agent: DataAgent, model: SemanticModel, sid: str) -> dict[str, Any]:
     """读 (model, sid) 对应 thread 的状态（thread_id 前缀是决策 ④ 的约定）。"""
     snapshot = agent._graph.get_state({"configurable": {"thread_id": f"{model.name}:{sid}"}})
     return dict(snapshot.values or {})
+
+
+def _config(model: SemanticModel, sid: str) -> dict[str, Any]:
+    """(model, sid) 对应 thread 的 config（get_state / get_state_history 共用）。"""
+    return {"configurable": {"thread_id": f"{model.name}:{sid}"}}
+
+
+def _record_history(agent: DataAgent, model: SemanticModel, sid: str) -> list[dict[str, Any]]:
+    """按**时间正序**返回各状态版本里的 analysis_record（仅含 dict 形态的版本）。
+
+    用途：断言「崩溃遗留的 running 在下次同身份进入时先被标 interrupted」确实
+    发生过——终态快照只能看到新 running，中间的 interrupted 版本只能从
+    `get_state_history` 里找（无自动续跑、无 exactly-once 的审计口径）。
+    """
+    recs = [
+        dict(snapshot.values["analysis_record"])
+        for snapshot in agent._graph.get_state_history(_config(model, sid))
+        if isinstance((snapshot.values or {}).get("analysis_record"), dict)
+    ]
+    return list(reversed(recs))
 
 
 # 决策 ⑥ 的两种身份（verify_token 输出形态：sub/role/iat/exp/user_context）。
@@ -736,3 +772,724 @@ class TestWorkers1RationaleNarrowed(unittest.TestCase):
             with self.subTest(rel):
                 for token in ("rate-limit", "audit", "single-writer"):
                     self.assertIn(token, text, f"{rel} lacks narrowed keyword: {token}")
+
+
+# ============================================================================
+# ADR-0026 T06：父会话状态、身份与中断恢复记账（决策 ④）
+# ============================================================================
+
+
+class TestAnalysisRowValueEncoding(unittest.TestCase):
+    """检查单 5：原始 rows 标量带类型编码往返——类型与值均保持，可供复算。
+
+    为什么必须带类型：checkpoint 只保证 JSON/msgpack 原生形态的保真，Decimal /
+    bool 直接塞进 msgpack 会分别丢精度（退化为 float/str）与丢类型（bool 是 int
+    子类，True 退化成 1 后「是/否」维度值全错）。编码产物必须是 JSON 原生形态，
+    T07/T09 才能在 checkpoint 与评测器两侧复用同一套工具。
+    """
+
+    def test_decimal_roundtrips_exactly(self) -> None:
+        """Decimal 经字符串精确保真（数据库金额不该在记账层丢精度）。"""
+        for raw in (Decimal("0.1"), Decimal("1234567890.123456789"), Decimal("-7"), Decimal(0)):
+            with self.subTest(raw=str(raw)):
+                decoded = decode_row_value(encode_row_value(raw))
+                self.assertIsInstance(decoded, Decimal)
+                self.assertEqual(decoded, raw)
+
+    def test_string_int_none_roundtrip(self) -> None:
+        """str / int / None 三类互可区分且各自保真（检查单 5 的四类标量）。"""
+        for raw in ("佣金收入", "", 42, -1, 0, None):
+            with self.subTest(raw=repr(raw)):
+                decoded = decode_row_value(encode_row_value(raw))
+                self.assertIs(type(decoded), type(raw))
+                self.assertEqual(decoded, raw)
+
+    def test_bool_stays_bool_and_differs_from_int(self) -> None:
+        """bool 必须与 int 可区分（bool 是 int 子类——判定顺序不能反）。
+
+        `encode(True) != encode(1)` 是形态面的硬断言：tagged dict 若把 bool 并进
+        int 分支，本条立刻红；行为面再补「往返后仍是 bool 且不是 1」。
+        """
+        self.assertNotEqual(encode_row_value(True), encode_row_value(1))
+        for raw in (True, False):
+            with self.subTest(raw=raw):
+                decoded = decode_row_value(encode_row_value(raw))
+                self.assertIsInstance(decoded, bool, f"{raw!r} 往返后丢了 bool 类型")
+                self.assertIs(decoded, raw)
+        one = decode_row_value(encode_row_value(1))
+        self.assertIsInstance(one, int)
+        self.assertNotIsInstance(one, bool)
+        self.assertEqual(one, 1)
+
+    def test_float_roundtrips_exactly(self) -> None:
+        """float 走 repr 精确保真（超出检查单最低要求的超集：执行器可能返回浮点）。"""
+        for raw in (3.5, -0.25):
+            with self.subTest(raw=raw):
+                decoded = decode_row_value(encode_row_value(raw))
+                self.assertIsInstance(decoded, float)
+                self.assertEqual(decoded, raw)
+
+    def test_unsupported_type_raises(self) -> None:
+        """容器/复数等不支持的类型显式 TypeError——静默丢类型会让复算出错值。"""
+        for raw in ({"a": 1}, [1], 1.5j, object()):
+            with (
+                self.subTest(raw=type(raw).__name__),
+                self.assertRaises(TypeError),
+            ):
+                encode_row_value(raw)
+
+    def test_decode_rejects_malformed_payload(self) -> None:
+        """未知标记 / 非 tagged 形态 ValueError——数据损坏不得被静默读成别的值。"""
+        with self.assertRaises(ValueError):
+            decode_row_value({"t": "nope", "v": 1})
+        with self.assertRaises(ValueError):
+            decode_row_value("not-a-tagged-dict")
+        with self.assertRaises(ValueError):
+            decode_row_value({"v": 1})
+
+    def test_encoded_form_is_json_native(self) -> None:
+        """编码产物是 JSON 原生形态（进 checkpoint / 跨进程复算的前提）。"""
+        encoded = encode_row_value(Decimal("12.5"))
+        self.assertEqual(json.loads(json.dumps(encoded)), encoded)
+
+    def test_rows_roundtrip_keeps_shape_and_types(self) -> None:
+        """行集合级往返：encode → JSON 原生嵌套 list；decode → tuple[tuple] 形态。"""
+        rows = (("east", Decimal("10.5"), True, None, 3), ("west", Decimal("9.5"), False, "x", 4))
+        encoded = encode_rows(rows)
+        self.assertIsInstance(encoded, list)
+        self.assertIsInstance(encoded[0], list)
+        decoded = decode_rows(encoded)
+        self.assertEqual(decoded, rows)
+        self.assertIsInstance(decoded[0], tuple)
+        self.assertIsInstance(decoded[0][1], Decimal)
+        self.assertIs(decoded[0][2], True)
+        self.assertIsNone(decoded[0][3])
+        self.assertEqual(decode_rows(encode_rows(())), ())
+
+
+class TestAnalysisParentTurnLifecycle(unittest.TestCase):
+    """检查单 1（MemorySaver / SQLite 双 saver）：开始+子步记录+结束只推进一个用户轮。
+
+    next 始终为空、无父 SQL；`_write_analysis_state` 拒绝 turns 键（子步与终态
+    写入都不得推进用户轮数——决策 ④ ③「子步只更新本轮证据不增 turns」）。
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="atlas-t06-lc-")
+        self.addCleanup(self._tmp.cleanup)
+        self.sqlite = sqlite_saver(Path(self._tmp.name) / "checkpoints.sqlite")
+        self.addCleanup(self.sqlite.conn.close)
+
+    def _cases(self):
+        """双 saver 参数化：memory（DataAgent 默认 MemorySaver）与注入的 SqliteSaver。"""
+        for label, saver in (("memory", None), ("sqlite", self.sqlite)):
+            executor = FakeExecutor()
+            agent = DataAgent(
+                model=FINANCE_MODEL, executor=executor, budget=BUDGET, checkpointer=saver
+            )
+            yield label, agent, executor
+
+    def test_begin_step_end_advances_one_user_turn_without_parent_sql(self) -> None:
+        """完整生命周期：turns 恰好 0→1，next 恒为空，父 SQL 为零。"""
+        for label, agent, executor in self._cases():
+            with self.subTest(saver=label):
+                sid = f"t06-lc-{label}"
+                record = agent._begin_analysis(sid, ANALYSIS_Q, None)
+                config = _config(FINANCE_MODEL, sid)
+                snapshot = agent._graph.get_state(config)
+                self.assertEqual(snapshot.next, (), "分析开始写入后图不得待继续")
+                self.assertEqual(
+                    record,
+                    {
+                        "schema_version": ANALYSIS_RECORD_VERSION,
+                        "status": "running",
+                        "question": ANALYSIS_Q,
+                        "identity_fingerprint": None,
+                        "steps": [],
+                    },
+                    "running 记录必须只有有界事实（版本/状态/问句/身份指纹/steps）",
+                )
+                values = _values(agent, FINANCE_MODEL, sid)
+                self.assertEqual(values.get("turns"), 1)
+                self.assertEqual(values.get("question"), ANALYSIS_Q)
+                self.assertTrue(values.get("analysis_followup_blocked"))
+                # 子步写入：不推进轮数，next 仍为空
+                agent._write_analysis_state(
+                    sid, {"analysis_record": {"steps": [{"index": 1, "status": "ok"}]}}
+                )
+                self.assertEqual(agent._graph.get_state(config).next, ())
+                values = _values(agent, FINANCE_MODEL, sid)
+                self.assertEqual(
+                    values.get("turns"), 1, "子步写入推进了轮数（决策 ④ ③：子步不增 turns）"
+                )
+                self.assertEqual(values["analysis_record"]["steps"], [{"index": 1, "status": "ok"}])
+                # 结束：明确终态，仍不推进轮数
+                agent._write_analysis_state(sid, {"analysis_record": {"status": "completed"}})
+                self.assertEqual(agent._graph.get_state(config).next, ())
+                values = _values(agent, FINANCE_MODEL, sid)
+                self.assertEqual(values["analysis_record"]["status"], "completed")
+                self.assertEqual(values.get("turns"), 1, "整个分析生命周期推进了不止一个用户轮")
+                self.assertEqual(executor.calls, [], "分析记账不得产生父 SQL")
+
+    def test_write_analysis_state_rejects_turns_key(self) -> None:
+        """`_write_analysis_state` 携带 turns 键 → ValueError，且轮数未被改写。"""
+        for label, agent, _ in self._cases():
+            with self.subTest(saver=label):
+                sid = f"t06-guard-{label}"
+                agent._begin_analysis(sid, ANALYSIS_Q, None)
+                with self.assertRaises(ValueError):
+                    agent._write_analysis_state(sid, {"turns": 99})
+                self.assertEqual(
+                    _values(agent, FINANCE_MODEL, sid).get("turns"),
+                    1,
+                    "被拒绝的写入仍改了 turns：先校验后写入的顺序被破坏",
+                )
+
+
+class TestAnalysisRecordBounds(unittest.TestCase):
+    """检查单 3 + 5 的记账边界：开始清理单轮残留、记录有界事实不写贡献率/叙事/claims；
+    last_plan 保留但挂 blocked；旧成功状态不渗透进后续普通轮；白名单不含分析 dataclass。
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="atlas-t06-bounds-")
+        self.addCleanup(self._tmp.cleanup)
+        self.sqlite = sqlite_saver(Path(self._tmp.name) / "checkpoints.sqlite")
+        self.addCleanup(self.sqlite.conn.close)
+
+    def test_begin_flushes_single_turn_residuals_but_keeps_last_plan(self) -> None:
+        """分析开始：plan/sql/rows 等单轮残留清零；last_plan 原样保留但追问被挂起。"""
+        executor = FakeExecutor()
+        agent = DataAgent(model=FINANCE_MODEL, executor=executor, budget=BUDGET)
+        sid = "t06-bounds-flush"
+        first = agent.ask(FINANCE_FILTERED_Q, session_id=sid)
+        self.assertEqual(first.kind, "answer", _why(first))
+        before = _values(agent, FINANCE_MODEL, sid)
+        self.assertIsInstance(before.get("last_plan"), Plan)
+        calls_after_ask = len(executor.calls)
+        agent._begin_analysis(sid, ANALYSIS_Q, None)
+        values = _values(agent, FINANCE_MODEL, sid)
+        self.assertEqual(values.get("turns"), 2)
+        self.assertEqual(
+            values.get("last_plan"),
+            before["last_plan"],
+            "分析开始污染了 last_plan（决策 ④ ⑥：子步骤不改父 last_plan）",
+        )
+        self.assertTrue(values.get("analysis_followup_blocked"))
+        for key in ("plan", "sql", "rows", "columns", "clarification", "candidates", "explanation"):
+            self.assertIsNone(values.get(key), f"分析开始未清理单轮残留 {key}（决策 ④ ③）")
+        self.assertEqual(values.get("row_count"), 0)
+        self.assertEqual(len(executor.calls), calls_after_ask, "分析开始不得执行 SQL")
+        record = values["analysis_record"]
+        self.assertEqual(
+            set(record),
+            {"schema_version", "status", "question", "identity_fingerprint", "steps"},
+            f"记录键集超出有界事实（贡献率/叙事/claims 都不得入 checkpoint）：{sorted(record)}",
+        )
+
+    def test_encoded_rows_survive_sqlite_checkpoint_for_replay(self) -> None:
+        """带类型编码的 rows 经 SqliteSaver 落盘往返后类型与值均保持（可供复算）。"""
+        agent = DataAgent(
+            model=FINANCE_MODEL, executor=FakeExecutor(), budget=BUDGET, checkpointer=self.sqlite
+        )
+        sid = "t06-bounds-rows"
+        agent._begin_analysis(sid, ANALYSIS_Q, dict(HQ_CLAIMS))
+        rows = (("east", Decimal("10.5"), True, None, 3),)
+        agent._write_analysis_state(
+            sid,
+            {
+                "analysis_record": {
+                    "steps": [
+                        {
+                            "index": 1,
+                            "status": "ok",
+                            "sql": "SELECT 1",
+                            "columns": ["branch", "amt", "flag", "note", "n"],
+                            "rows": encode_rows(rows),
+                            "latency_ms": 1.0,
+                        }
+                    ]
+                }
+            },
+        )
+        stored = _values(agent, FINANCE_MODEL, sid)["analysis_record"]["steps"][0]["rows"]
+        self.assertEqual(stored, encode_rows(rows), "编码形态在 checkpoint 往返后失真")
+        decoded = decode_rows(stored)
+        self.assertEqual(decoded, rows)
+        self.assertIsInstance(decoded[0][1], Decimal, "Decimal 往返丢类型")
+        self.assertIs(decoded[0][2], True, "bool 往返退化成 int")
+        self.assertIsNone(decoded[0][3])
+
+    def test_stale_success_state_does_not_leak_into_next_normal_turn(self) -> None:
+        """一轮分析（含 completed 成功状态）之后再普通问数：不携带旧 analysis_record。"""
+        agent = DataAgent(model=FINANCE_MODEL, executor=FakeExecutor(), budget=BUDGET)
+        sid = "t06-bounds-stale"
+        agent._begin_analysis(sid, ANALYSIS_Q, None)
+        agent._write_analysis_state(
+            sid, {"analysis_record": {"status": "completed", "totals": {"delta": 0.42}}}
+        )
+        result = agent.ask(FINANCE_Q, session_id=sid)
+        self.assertEqual(result.kind, "answer", _why(result))
+        values = _values(agent, FINANCE_MODEL, sid)
+        self.assertIsNone(
+            values.get("analysis_record"), "普通轮仍携带旧 analysis_record 的成功状态"
+        )
+        self.assertFalse(values.get("analysis_followup_blocked"))
+        self.assertEqual(result.turns_in_session, 2)
+        self.assertIsNotNone(result.sql, "普通轮没有产出本轮自己的 SQL（旧状态渗透）")
+
+    def test_checkpoint_allowlist_excludes_analysis_dataclasses(self) -> None:
+        """序列化白名单不得出现 AnalysisResult / Attribution（决策 ④ ⑦：不进 checkpoint）。"""
+        graph = build_graph(executor=FakeExecutor(), budget=BUDGET)
+        pairs = _allowlist(graph.checkpointer)
+        self.assertNotIn(("agent.analysis", "AnalysisResult"), pairs)
+        self.assertFalse(
+            any(class_name == "Attribution" for _, class_name in pairs),
+            f"Attribution 进了 msgpack 白名单：{sorted(pairs)}",
+        )
+
+
+class TestAnalysisIdentityTransfers(unittest.TestCase):
+    """检查单 2 的身份面（决策 ④ ②）：冲突在任何状态写入前发生（零写入零 SQL）。
+
+    与普通入口的对照（决策 ④ ②「普通入口不改变转移规则」）：ask 沿用 ADR-0020
+    决策 ⑥ 的宽松语义（匿名先行仍可绑定；已绑定会话的匿名 ask 放行），分析入口
+    才使用更严的按记录校验。
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="atlas-t06-id-")
+        self.addCleanup(self._tmp.cleanup)
+        self.sqlite = sqlite_saver(Path(self._tmp.name) / "checkpoints.sqlite")
+        self.addCleanup(self.sqlite.conn.close)
+
+    def _agent(self, executor: FakeExecutor) -> DataAgent:
+        return DataAgent(
+            model=FINANCE_MODEL, executor=executor, budget=BUDGET, checkpointer=self.sqlite
+        )
+
+    def test_bound_session_rejects_anonymous_analysis(self) -> None:
+        """已绑定会话收到匿名 analyze → 冲突，零写入零 SQL（决策 ④ ②）。"""
+        executor = FakeExecutor()
+        agent = self._agent(executor)
+        sid = "t06-id-anon"
+        result = agent.ask(FINANCE_Q, session_id=sid, identity=HQ_CLAIMS)
+        self.assertEqual(result.kind, "answer", _why(result))
+        before = _values(agent, FINANCE_MODEL, sid)
+        with self.assertRaises(SessionIdentityConflict):
+            agent._begin_analysis(sid, ANALYSIS_Q, None)
+        self.assertEqual(
+            _values(agent, FINANCE_MODEL, sid),
+            before,
+            "冲突进入改写了状态：校验必须先于一切写入",
+        )
+        self.assertEqual(len(executor.calls), 1, "冲突进入执行了 SQL")
+
+    def test_bound_session_rejects_foreign_identity_analysis(self) -> None:
+        """已绑定会话收到另一身份 analyze → 冲突，零写入。"""
+        executor = FakeExecutor()
+        agent = self._agent(executor)
+        sid = "t06-id-foreign"
+        agent.ask(FINANCE_Q, session_id=sid, identity=HQ_CLAIMS)
+        before = _values(agent, FINANCE_MODEL, sid)
+        with self.assertRaises(SessionIdentityConflict):
+            agent._begin_analysis(sid, ANALYSIS_Q, BRANCH_CLAIMS)
+        self.assertEqual(_values(agent, FINANCE_MODEL, sid), before)
+
+    def test_anonymous_session_accepts_identity_analysis_first_binding(self) -> None:
+        """匿名会话带身份 analyze → 沿用首次绑定语义（绑定指纹 + 记录身份指纹）。"""
+        agent = self._agent(FakeExecutor())
+        sid = "t06-id-bind"
+        record = agent._begin_analysis(sid, ANALYSIS_Q, dict(HQ_CLAIMS))
+        expected = claims_fingerprint(dict(HQ_CLAIMS))
+        self.assertEqual(record["identity_fingerprint"], expected)
+        values = _values(agent, FINANCE_MODEL, sid)
+        self.assertEqual(values.get("session_fingerprint"), expected)
+        self.assertEqual(values.get("turns"), 1)
+
+    def test_running_anonymous_record_rejects_identity_entry(self) -> None:
+        """匿名分析 running 中收到实名进入 → 拒绝（先前匿名仅可匿名接续），零写入。"""
+        executor = FakeExecutor()
+        agent = self._agent(executor)
+        sid = "t06-id-anon-run"
+        agent._begin_analysis(sid, ANALYSIS_Q, None)
+        before = _values(agent, FINANCE_MODEL, sid)
+        with self.assertRaises(SessionIdentityConflict):
+            agent._begin_analysis(sid, ANALYSIS_Q2, dict(HQ_CLAIMS))
+        self.assertEqual(
+            _values(agent, FINANCE_MODEL, sid),
+            before,
+            "running 恢复的身份拒绝未做到零写入",
+        )
+
+    def test_running_identified_record_rejects_anonymous_entry(self) -> None:
+        """实名分析 running 中收到匿名进入 → 拒绝（实名亦然），零写入。"""
+        executor = FakeExecutor()
+        agent = self._agent(executor)
+        sid = "t06-id-id-run"
+        agent._begin_analysis(sid, ANALYSIS_Q, dict(HQ_CLAIMS))
+        before = _values(agent, FINANCE_MODEL, sid)
+        with self.assertRaises(SessionIdentityConflict):
+            agent._begin_analysis(sid, ANALYSIS_Q2, None)
+        self.assertEqual(_values(agent, FINANCE_MODEL, sid), before)
+
+    def test_running_record_rejects_mismatched_fingerprint(self) -> None:
+        """running 恢复时指纹不符 → 拒绝（仅接受与记录一致的身份），零写入。"""
+        executor = FakeExecutor()
+        agent = self._agent(executor)
+        sid = "t06-id-mismatch"
+        agent._begin_analysis(sid, ANALYSIS_Q, dict(HQ_CLAIMS))
+        before = _values(agent, FINANCE_MODEL, sid)
+        with self.assertRaises(SessionIdentityConflict):
+            agent._begin_analysis(sid, ANALYSIS_Q2, dict(BRANCH_CLAIMS))
+        self.assertEqual(_values(agent, FINANCE_MODEL, sid), before)
+
+    def test_normal_paths_keep_the_lenient_identity_rules(self) -> None:
+        """ask 的既有身份语义不被分析规则误伤：匿名先行可绑定、已绑定匿名 ask 放行。"""
+        agent = self._agent(FakeExecutor())
+        sid = "t06-id-lenient"
+        r1 = agent.ask(FINANCE_Q, session_id=sid)
+        self.assertEqual(r1.kind, "answer", _why(r1))
+        r2 = agent.ask(FINANCE_FOLLOWUP_Q, session_id=sid, identity=dict(HQ_CLAIMS))
+        self.assertEqual(r2.kind, "answer", _why(r2))
+        self.assertEqual(r2.turns_in_session, 2)
+        r3 = agent.ask(FINANCE_Q, session_id=sid)
+        self.assertEqual(r3.kind, "answer", _why(r3))
+
+
+class TestAnalysisInterruption(unittest.TestCase):
+    """检查单 4：注入中断——旧 running 在下次同身份进入时标 interrupted（不增旧轮计数）；
+    重启不自动续跑不发 SQL；持久化失败不得返回伪成功；重启不污染 last_plan。
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="atlas-t06-int-")
+        self.addCleanup(self._tmp.cleanup)
+        self.sqlite = sqlite_saver(Path(self._tmp.name) / "checkpoints.sqlite")
+        self.addCleanup(self.sqlite.conn.close)
+
+    def _savers(self):
+        """memory 与 sqlite 双 saver 参数化（memory 用显式实例复刻「重启后同一存储」）。"""
+        yield "memory", MemorySaver()
+        yield "sqlite", self.sqlite
+
+    def test_restart_keeps_running_then_marks_interrupted_on_next_entry(self) -> None:
+        """开始后崩溃：重启仍 running；同身份再进入 → running→interrupted→running。"""
+        for label, saver in self._savers():
+            with self.subTest(saver=label):
+                sid = f"t06-int-{label}"
+                executor = FakeExecutor()
+                agent = DataAgent(
+                    model=FINANCE_MODEL, executor=executor, budget=BUDGET, checkpointer=saver
+                )
+                agent._begin_analysis(sid, ANALYSIS_Q, dict(HQ_CLAIMS))
+                # 注入中断：重新构造 Agent（同一存储 = 重启续接的复刻）
+                executor2 = FakeExecutor()
+                revived = DataAgent(
+                    model=FINANCE_MODEL, executor=executor2, budget=BUDGET, checkpointer=saver
+                )
+                values = _values(revived, FINANCE_MODEL, sid)
+                self.assertEqual(
+                    values["analysis_record"]["status"],
+                    "running",
+                    "重启即自动改写终态 = 无中生有的续跑语义（决策 ④ ⑤：崩溃保留 running）",
+                )
+                self.assertEqual(executor2.calls, [], "重启后不得自动发 SQL")
+                # 下次同身份进入：先标 interrupted（不增旧轮计数），再接纳新一轮
+                record = revived._begin_analysis(sid, ANALYSIS_Q2, dict(HQ_CLAIMS))
+                self.assertEqual((record["status"], record["question"]), ("running", ANALYSIS_Q2))
+                values = _values(revived, FINANCE_MODEL, sid)
+                self.assertEqual(
+                    values.get("turns"),
+                    2,
+                    "恢复进入应恰好 +1：中断标记不得另计一轮（不增旧轮计数）",
+                )
+                history = _record_history(revived, FINANCE_MODEL, sid)
+                self.assertEqual(
+                    [r["status"] for r in history],
+                    ["running", "interrupted", "running"],
+                    f"中断标记未发生或顺序不对：{[r['status'] for r in history]}",
+                )
+                self.assertEqual(
+                    history[1]["question"],
+                    ANALYSIS_Q,
+                    "interrupted 版本丢了旧轮问句（标记必须保留旧事实）",
+                )
+                self.assertEqual(executor2.calls, [], "恢复进入不得执行任何 SQL")
+
+    def test_interrupted_marking_after_a_partial_step_keeps_step_facts(self) -> None:
+        """任一步之后崩溃：interrupted 标记保留已写入的子步事实；新一轮 steps 重置。"""
+        sid = "t06-int-step"
+        saver = self.sqlite
+        agent = DataAgent(
+            model=FINANCE_MODEL, executor=FakeExecutor(), budget=BUDGET, checkpointer=saver
+        )
+        agent._begin_analysis(sid, ANALYSIS_Q, dict(HQ_CLAIMS))
+        agent._write_analysis_state(
+            sid, {"analysis_record": {"steps": [{"index": 1, "status": "ok"}]}}
+        )
+        revived = DataAgent(
+            model=FINANCE_MODEL, executor=FakeExecutor(), budget=BUDGET, checkpointer=saver
+        )
+        revived._begin_analysis(sid, ANALYSIS_Q2, dict(HQ_CLAIMS))
+        history = _record_history(revived, FINANCE_MODEL, sid)
+        # 每次状态写入都是独立历史版本：begin(running) → 子步写入(running+steps)
+        # → interrupted（同身份再进入）→ 新一轮 begin(running)
+        self.assertEqual(
+            [r["status"] for r in history],
+            ["running", "running", "interrupted", "running"],
+            f"中断标记未发生或顺序不对：{[r['status'] for r in history]}",
+        )
+        self.assertEqual(
+            history[1]["steps"],
+            [{"index": 1, "status": "ok"}],
+            "子步写入的版本丢了 steps",
+        )
+        self.assertEqual(
+            history[2]["steps"],
+            [{"index": 1, "status": "ok"}],
+            "中断标记抹掉了已写入的子步事实",
+        )
+        self.assertEqual(
+            _values(revived, FINANCE_MODEL, sid)["analysis_record"]["steps"],
+            [],
+            "新一轮 running 记录没有重置 steps（旧轮步骤渗入新轮）",
+        )
+
+    def test_persistence_failure_returns_no_fake_success(self) -> None:
+        """持久化失败：异常如实上抛、状态零写入——不得静默返回伪成功。"""
+
+        class FailingSaver(MemorySaver):
+            """put / put_writes 一律失败的 saver（注入磁盘故障）。"""
+
+            def put(self, *args: Any, **kwargs: Any) -> Any:
+                raise OSError("注入的持久化故障（T06 测试）")
+
+            def put_writes(self, *args: Any, **kwargs: Any) -> Any:
+                raise OSError("注入的持久化故障（T06 测试）")
+
+        saver = FailingSaver()
+        executor = FakeExecutor()
+        agent = DataAgent(model=FINANCE_MODEL, executor=executor, budget=BUDGET, checkpointer=saver)
+        sid = "t06-int-fail"
+        with self.assertRaises(OSError):
+            agent._begin_analysis(sid, ANALYSIS_Q, None)
+        values = _values(agent, FINANCE_MODEL, sid)
+        self.assertNotIn("analysis_record", values, "持久化失败仍写入了 running 记录（伪成功）")
+        self.assertNotIn("turns", values, "持久化失败仍推进了轮数")
+        self.assertEqual(executor.calls, [])
+
+    def test_restart_and_recovery_do_not_pollute_last_plan(self) -> None:
+        """完成门槛：失败与重启不污染 last_plan，也不静默承接旧指标（无 SQL）。"""
+        executor = FakeExecutor()
+        agent = DataAgent(
+            model=FINANCE_MODEL, executor=executor, budget=BUDGET, checkpointer=self.sqlite
+        )
+        sid = "t06-int-plan"
+        result = agent.ask(FINANCE_FILTERED_Q, session_id=sid)
+        self.assertEqual(result.kind, "answer", _why(result))
+        plan_before = _values(agent, FINANCE_MODEL, sid)["last_plan"]
+        agent._begin_analysis(sid, ANALYSIS_Q, None)
+        revived = DataAgent(
+            model=FINANCE_MODEL, executor=FakeExecutor(), budget=BUDGET, checkpointer=self.sqlite
+        )
+        revived._begin_analysis(sid, ANALYSIS_Q2, None)
+        values = _values(revived, FINANCE_MODEL, sid)
+        self.assertEqual(
+            values.get("last_plan"),
+            plan_before,
+            "中断恢复改写了 last_plan（完成门槛：重启不污染 last_plan）",
+        )
+
+
+class TestAnalysisFollowupBlocked(unittest.TestCase):
+    """检查单 3 尾：analysis_followup_blocked 阻止残句追问偷接旧 Plan（明确提示完整
+    重述）；只有一次明确的普通 Plan 执行成功才解除；被拦轮零 SQL、不改 last_plan。
+    """
+
+    def _blocked_agent(self) -> tuple[DataAgent, FakeExecutor, str, Plan]:
+        """问一轮 → 开始分析 → 写 completed 终态：得到挂 blocked 的会话。"""
+        executor = FakeExecutor()
+        agent = DataAgent(model=FINANCE_MODEL, executor=executor, budget=BUDGET)
+        sid = "t06-followup"
+        first = agent.ask(FINANCE_FILTERED_Q, session_id=sid)
+        self.assertEqual(first.kind, "answer", _why(first))
+        plan_before = _values(agent, FINANCE_MODEL, sid)["last_plan"]
+        agent._begin_analysis(sid, ANALYSIS_Q, None)
+        agent._write_analysis_state(sid, {"analysis_record": {"status": "completed"}})
+        return agent, executor, sid, plan_before
+
+    def test_residual_followup_gets_clarification_not_the_old_plan(self) -> None:
+        """blocked 下的残句追问 → 明确反问完整重述，不偷接旧 Plan、零 SQL。"""
+        agent, executor, sid, plan_before = self._blocked_agent()
+        calls_before = len(executor.calls)
+        blocked = agent.ask(FINANCE_FOLLOWUP_Q, session_id=sid)
+        self.assertEqual(blocked.kind, "clarify", f"残句追问偷接了旧 Plan 口径（{_why(blocked)}）")
+        self.assertIsNotNone(blocked.clarification)
+        joined = " ".join(blocked.clarification.reasons)
+        self.assertIn("完整重述", joined, f"反问未明确提示完整重述：{joined}")
+        self.assertEqual(len(executor.calls), calls_before, "被拦轮执行了 SQL")
+        # ask(1) → begin(2) → 被拦追问(3)：被拦轮同样是一轮（plan 节点 +1）
+        self.assertEqual(blocked.turns_in_session, 3)
+        values = _values(agent, FINANCE_MODEL, sid)
+        self.assertEqual(values.get("last_plan"), plan_before, "被拦轮改写了 last_plan")
+        self.assertTrue(values.get("analysis_followup_blocked"), "clarify 轮不得解除 blocked")
+
+    def test_explicit_plan_execution_success_unblocks(self) -> None:
+        """明确的普通 Plan（run_plan 直执）成功 → explain 回写解除 blocked。"""
+        agent, _, sid, plan_before = self._blocked_agent()
+        result = agent.run_plan(plan_before, session_id=sid, question="显式重述的普通计划")
+        self.assertEqual(result.kind, "answer", _why(result))
+        values = _values(agent, FINANCE_MODEL, sid)
+        self.assertFalse(
+            values.get("analysis_followup_blocked"),
+            "明确的普通 Plan 执行成功后仍处于 blocked（解除条件错了）",
+        )
+        self.assertIsNone(values.get("analysis_record"))
+
+
+class TestAnalysisWindowSerialization(unittest.TestCase):
+    """检查单 2 的并发面与覆盖面：分析四步与普通请求在同一实例 RLock 内串行
+    （屏障证明普通请求不能插入分析中间）；新会话从 1 计轮；跨模型同 sid 互不串话。
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="atlas-t06-win-")
+        self.addCleanup(self._tmp.cleanup)
+        self.sqlite = sqlite_saver(Path(self._tmp.name) / "checkpoints.sqlite")
+        self.addCleanup(self.sqlite.conn.close)
+
+    def test_normal_request_cannot_interleave_an_in_flight_analysis(self) -> None:
+        """屏障 + 事件：分析持锁停在同一子步中间时，普通请求必须等在锁外。"""
+        gate = threading.Event()
+        barrier = threading.Barrier(2)
+
+        class GatedExecutor(FakeExecutor):
+            """第一次执行即与主线程会合、随后等待放行（模拟长查询卡在子步中间）。
+
+            只会合第一次调用：后续普通轮的执行（gate 放行后发生）直接通过，
+            否则它会卡在已消费的屏障上超时，而不是被锁正确串行化的结果。
+            """
+
+            def __init__(self, bar: threading.Barrier, rel: threading.Event) -> None:
+                super().__init__()
+                self._barrier = bar
+                self._gate = rel
+                self._gated = False
+
+            def __call__(self, sql: str) -> tuple[list[tuple[Any, ...]], list[str]]:
+                self.calls.append(sql)
+                if not self._gated:
+                    self._gated = True
+                    self._barrier.wait(timeout=10)
+                    self._gate.wait(timeout=10)
+                return [tuple(r) for r in self.rows], list(self.columns)
+
+        executor = GatedExecutor(barrier, gate)
+        agent = DataAgent(model=FINANCE_MODEL, executor=executor, budget=BUDGET)
+        sid = "t06-barrier"
+        plan = Planner(FINANCE_MODEL).plan(FINANCE_Q)
+        assert isinstance(plan, Plan)  # 前提守卫：确定性命中才有子步可执行
+
+        errors: list[Exception] = []
+
+        def _analysis() -> None:
+            try:
+                with agent._lock:
+                    record = agent._begin_analysis(sid, ANALYSIS_Q, None)
+                    agent._run_analysis_step(plan, identity=None)
+                    agent._write_analysis_state(
+                        sid, {"analysis_record": {**record, "status": "completed"}}
+                    )
+            except Exception as exc:  # noqa: BLE001 - 线程内失败经 errors 透出
+                errors.append(exc)
+
+        results: list[TurnResult] = []
+
+        def _normal() -> None:
+            results.append(agent.ask(FINANCE_Q, session_id=sid))
+
+        worker = threading.Thread(target=_analysis)
+        worker.start()
+        barrier.wait(timeout=10)  # 与子步内的执行器会合：分析正持锁停在中间
+        waiter = threading.Thread(target=_normal)
+        waiter.start()
+        time.sleep(0.25)  # 给普通线程足够的窗口：若锁失效它此刻已完成
+        self.assertTrue(
+            waiter.is_alive(),
+            "普通请求在分析持锁期间就完成了——实例锁失效，普通请求插入了分析中间",
+        )
+        self.assertEqual(len(executor.calls), 1, "普通请求在分析中间执行了 SQL（锁失效）")
+        values = _values(agent, FINANCE_MODEL, sid)
+        self.assertEqual(values.get("turns"), 1, "普通请求在分析中间推进了轮数")
+        self.assertEqual(values["analysis_record"]["status"], "running", "普通请求打断了分析记账")
+        gate.set()
+        worker.join(timeout=10)
+        waiter.join(timeout=10)
+        self.assertEqual(errors, [], f"分析线程失败：{errors}")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].kind, "answer", _why(results[0]))
+        self.assertEqual(results[0].turns_in_session, 2)
+        final = _values(agent, FINANCE_MODEL, sid)
+        self.assertIsNone(final.get("analysis_record"))
+        self.assertFalse(final.get("analysis_followup_blocked"))
+        self.assertEqual(len(executor.calls), 2)
+
+    def test_analysis_on_fresh_session_counts_its_own_first_turn(self) -> None:
+        """分析新会话：没有任何普通轮的 thread 上，开始分析 → turns == 1。"""
+        agent = DataAgent(model=FINANCE_MODEL, executor=FakeExecutor(), budget=BUDGET)
+        sid = "t06-fresh"
+        agent._begin_analysis(sid, ANALYSIS_Q, None)
+        self.assertEqual(_values(agent, FINANCE_MODEL, sid).get("turns"), 1)
+
+    def test_same_sid_across_models_stays_isolated(self) -> None:
+        """跨模型同 sid（共享同一 SQLite 文件）：零售普通轮不得碰金融的分析记账。"""
+        fin_executor = FakeExecutor()
+        ret_executor = FakeExecutor()
+        fin = DataAgent(
+            model=FINANCE_MODEL, executor=fin_executor, budget=BUDGET, checkpointer=self.sqlite
+        )
+        ret = DataAgent(
+            model=RETAIL_MODEL, executor=ret_executor, budget=BUDGET, checkpointer=self.sqlite
+        )
+        sid = "t06-cross"
+        fin._begin_analysis(sid, ANALYSIS_Q, None)
+        result = ret.ask(RETAIL_Q, session_id=sid)
+        self.assertEqual(result.kind, "answer", _why(result))
+        fin_values = _values(fin, FINANCE_MODEL, sid)
+        self.assertEqual(fin_values.get("turns"), 1)
+        self.assertEqual(fin_values["analysis_record"]["question"], ANALYSIS_Q)
+        self.assertEqual(fin_executor.calls, [], "零售轮动了金融的 thread（跨模型串话）")
+        ret_values = _values(ret, RETAIL_MODEL, sid)
+        self.assertEqual(ret_values.get("turns"), 1)
+        self.assertIsNone(ret_values.get("analysis_record"))
+
+
+class TestAnalysisFollowupBlockedLegacyCheckpoint(unittest.TestCase):
+    """决策 ④ ⑥ 的兼容面：未含新字段的旧 checkpoint 仍按原追问逻辑读取。
+
+    旧 checkpoint（T06 之前落盘）里既没有 analysis_followup_blocked 也没有
+    analysis_record——`state.get` 返回 None（falsy），残句追问必须照旧走
+    last_plan 补全，不得被新守卫误拦。
+    """
+
+    def test_legacy_checkpoint_without_new_fields_keeps_followup(self) -> None:
+        agent = DataAgent(model=FINANCE_MODEL, executor=FakeExecutor(), budget=BUDGET)
+        # 先在临时 sid 上跑一轮真图，取一个真实的 Plan 作为旧 last_plan
+        scratch = agent.ask(FINANCE_FILTERED_Q, session_id="t06-legacy-scratch")
+        self.assertEqual(scratch.kind, "answer", _why(scratch))
+        plan = _values(agent, FINANCE_MODEL, "t06-legacy-scratch")["last_plan"]
+        # 手工构造「旧时代」thread：只有旧字段，绝无新字段
+        sid = "t06-legacy"
+        config = _config(FINANCE_MODEL, sid)
+        agent._graph.update_state(
+            config,
+            {"question": FINANCE_Q, "session_id": sid, "turns": 1, "last_plan": plan},
+            as_node="explain",
+        )
+        values = _values(agent, FINANCE_MODEL, sid)
+        self.assertNotIn("analysis_followup_blocked", values)
+        self.assertNotIn("analysis_record", values)
+        result = agent.ask(FINANCE_FOLLOWUP_Q, session_id=sid)
+        self.assertEqual(result.kind, "answer", _why(result))
+        self.assertIn("10000000", result.sql or "", "旧 checkpoint 的追问补全丢了谓词")

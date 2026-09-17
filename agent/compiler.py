@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -119,6 +120,7 @@ class Dataset:
     name: str
     source: str
     fields: dict[str, Field]
+    primary_key: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -142,16 +144,25 @@ class Relationship:
 class SemanticModel:
     """从 ossie.yaml 加载的语义模型（Compiler / Planner 的只读输入）。"""
 
-    def __init__(self, path: Path = FINANCE_MODEL, *, doc: dict | None = None) -> None:
+    def __init__(self, path: Path = FINANCE_MODEL, *, doc: dict[str, Any] | None = None) -> None:
         """doc：已 safe_load 的 ossie YAML（None = 从 path 读取，历史行为不变）。
 
         治理面（serving/governance.py）传入按 mtime 缓存的解析结果，避免每请求
         重复读取与解析（实测 23.4 ms/次，ADR-0022 决策 ④ 的缓存清单）；解析器
         本体（下方的转换逻辑）始终是本类，不因入口不同分成两份实现。
         """
+        loaded_from_doc = doc is not None
         if doc is None:
             doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         model = doc["semantic_model"][0]
+        # 语义身份哈希（ADR-0026 T02）：资格证据按模型源内容绑定——模型文件任何
+        # 字节变化都会使既有资格证据失效（load_eligibility 拒签 eligible=True）。
+        # doc= 内存构造时对规范化序列化取哈希，保证同一 doc 稳定可复算。
+        if loaded_from_doc:
+            raw = yaml.safe_dump(doc, sort_keys=True, allow_unicode=True).encode("utf-8")
+        else:
+            raw = path.read_bytes()
+        self.source_sha256 = hashlib.sha256(raw).hexdigest()
         # 模型名：值域注册表（semantic/values/<model>.<field>.json，ADR-0016）的
         # 绑定键。与 ossie 文件名解耦——文件名是部署约定，模型名是语义身份。
         self.name = str(model["name"])
@@ -161,6 +172,9 @@ class SemanticModel:
         self.metric_descriptions: dict[str, str] = {}
         self.metric_synonyms: dict[str, tuple[str, ...]] = {}
         self.metric_owners: dict[str, str] = {}
+        # ADR-0026 T02：指标 × 维度可加组合的封闭注册表（metric → 登记的归因维度）。
+        # 未登记的组合一律不可做变更归因分析（eval/analysis_eligibility 是唯一消费者）。
+        self.attribution_dimensions: dict[str, tuple[str, ...]] = {}
         self.dimension_synonyms: dict[str, tuple[str, ...]] = {}
         self.time_dimension: dict | None = None  # custom_extensions 声明（见下方解析）
         self.default_row_policy: str | None = None  # 域 → 策略事实源（ADR-0021 决策 ②）
@@ -178,7 +192,12 @@ class SemanticModel:
                 fields[f["name"]] = Field(
                     name=f["name"], physical=physical, is_time=is_time, synonyms=synonyms
                 )
-            self.datasets[ds["name"]] = Dataset(name=ds["name"], source=ds["source"], fields=fields)
+            self.datasets[ds["name"]] = Dataset(
+                name=ds["name"],
+                source=ds["source"],
+                fields=fields,
+                primary_key=tuple(ds.get("primary_key", [])),
+            )
             # 维度同义词索引：仅收集 dim_* 表（维度表约定）的非时间字段，
             # 避免事实表外键/度量字段（如 Commission、SK_AccountID）被误当作分组维度
             if ds["name"].startswith("dim_"):
@@ -209,15 +228,22 @@ class SemanticModel:
             if isinstance(desc, str):
                 self.metric_descriptions[m["name"]] = desc
             self.metric_synonyms[m["name"]] = tuple(m.get("ai_context", {}).get("synonyms", []))
-            # ATLAS 治理扩展 → owner（供检索 rerank 的 owner 优先级信号使用）
+            # ATLAS 治理扩展 → owner（供检索 rerank 的 owner 优先级信号使用）；
+            # analysis.attribution.dimensions → 可加组合注册表（ADR-0026 T02）
             owner = ""
             for ext in m.get("custom_extensions", []):
-                if ext.get("vendor_name") == "ATLAS":
-                    try:
-                        gov = json.loads(ext["data"]).get("governance", {})
-                    except (KeyError, json.JSONDecodeError):
-                        continue
-                    owner = str(gov.get("owner", ""))
+                if ext.get("vendor_name") != "ATLAS":
+                    continue
+                try:
+                    data = json.loads(ext["data"])
+                except (KeyError, json.JSONDecodeError):
+                    continue
+                owner = str(data.get("governance", {}).get("owner", ""))
+                analysis = data.get("analysis")
+                if isinstance(analysis, dict):
+                    dims = analysis.get("attribution", {}).get("dimensions", [])
+                    if isinstance(dims, list):
+                        self.attribution_dimensions[m["name"]] = tuple(str(d) for d in dims)
             self.metric_owners[m["name"]] = owner
 
         # time_dimension：模型级声明（compiler 时间谓词的时间表/列来源，不再硬编码

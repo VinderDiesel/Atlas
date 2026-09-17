@@ -468,3 +468,15 @@ Plan（含语义层里不存在的指标名）——此时 `Compiler` 抛 `Compi
 全部改为显式文件读取并重新实测；若判据 4 无法达成（两桶互相挤占），说明
 `RateLimiter` 的 key 空间设计有误，决策 ⑥ 回退为「单桶 + 抬高阈值」并在
 README KL 如实记录业务面保护被削弱。
+
+## 落地注记（2026-09-16，ADR-0026 新增 /analyze 端点）
+
+> 本节为落地注记，不重写上文历史正文。记录 ADR-0026 固定四步贡献分析落地后对本契约的增量。
+
+**新增端点**：`POST /api/v1/analyze`（ADR-0026）。请求体与 `/ask` 同构（`AskBody`：`question`、可选 `session_id`/`model`），Bearer 认证，走业务限流桶；无分析意图时按 ADR-0026 决策③回落普通 ask（`kind=answer`）或澄清，两种回落 `analysis=null`。
+
+**analysis 响应形态**：顶层新增 `analysis` 键——17 键投影（schema_version, intent, status, metric, dimension, baseline, current, filters, snapshot_sha, semantic_sha256, recipe_version, totals, items, steps, reason_code, text, elapsed_ms），键恒在；非分析轮整体为 `null`。数值（totals/items 的 value、delta、contribution_pct）一律 Decimal 字符串化或 `null`；`analysis.status ∈ ok/unavailable/blocked/error` 全终态并带 `reason_code`（clarify 轮整体为 null、不投影 status）；`steps[]` 成功步携带 role/kind/sql/columns/rows/latency_ms，失败步 `sql/columns/rows` 置空只留 role/kind/latency_ms/reason_code（被拒 SQL 不出服务边界）；分析轮父 turn 记账沿用本契约 `turns_in_session`（一个用户逻辑轮计一轮，子步不计）。
+
+**纠正「随机 ID ≠ 无存储」**：缺省 `session_id` 随机生成仍带 checkpointer 落 checkpoint——`agent/graph.py` `_invoke_turn` 对缺省 session_id 只是随机生成 ID，仍调用带 checkpointer 的图（ADR-0026 背景证据）；一次性随机 ID ≠ 不落盘。
+
+**422 会话身份冲突（C2）对 /analyze 同样生效**：跨身份复用 session_id 返回 422「会话身份冲突，请换新 session_id」，与 `/ask` 同规则（api-verify A10a~A10d 实测覆盖，含 A10d 跨身份 422）。快照缺失时 503 语义与既有端点一致。

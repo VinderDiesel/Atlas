@@ -44,6 +44,12 @@
 #   同义词「手续费」，同时给 commission_rate 补「手续费率」——两者必须成对注册：
 #   仅加裸「手续费」会让「手续费率」被最长命中误判为 commission_revenue（静默错口径）。
 #   既有样本零影响（最长命中：「手续费收入」/「佣金率」形态不变）。
+# 2026-09-16 修改（ADR-0026 T02，owner: finance@atlas.local）：total_trade_value /
+#   commission_revenue 在既有 ATLAS custom_extensions data JSON 登记 analysis.attribution.
+#   dimensions = ["Branch"]（可加组合封闭注册表，复用原指标表达式不另建指标）。
+#   两个组合均为事件型可加 SUM（含行内乘法），不是比率/DISTINCT/期末余额/窗口结果。
+#   模型文件内容变更 → semantic_sha256 变更 → 旧资格证据按哈希绑定自动失效，
+#   须由 eval/analysis_eligibility.py 重新复核后登记新证据。
 
 version: "0.2.0.dev0"
 
@@ -1205,6 +1211,11 @@ semantic_model:
                 "quality": {
                   "gold_test_cases": ["gold-101", "gold-116", "gold-123", "gold-124", "gold-141", "gold-146", "gold-152", "gold-163", "gold-164", "gold-165", "gold-172", "gold-173", "gold-174", "gold-175", "gold-176", "gold-177"],
                   "expected_value_snapshot_sha": "30b8344"
+                },
+                "analysis": {
+                  "attribution": {
+                    "dimensions": ["Branch"]
+                  }
                 }
               }
 
@@ -1238,6 +1249,11 @@ semantic_model:
                 "quality": {
                   "gold_test_cases": ["gold-102", "gold-119", "gold-127", "gold-140", "gold-149", "gold-151", "gold-153", "gold-154", "gold-168", "gold-169", "gold-170", "gold-171"],
                   "expected_value_snapshot_sha": "30b8344"
+                },
+                "analysis": {
+                  "attribution": {
+                    "dimensions": ["Branch"]
+                  }
                 }
               }
 

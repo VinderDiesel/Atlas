@@ -52,11 +52,12 @@ explain 回写）做指代预检——同构追问（"那 2014 年呢 / 换成 X
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 import sqlglot
@@ -68,6 +69,15 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RunnableConfig
 from sqlglot import exp
 
+from agent.analysis import (
+    ANALYSIS_ROLES,
+    AnalysisPlanner,
+    AnalysisReasonCode,
+    AnalysisResult,
+    Attribution,
+    plan_projection,
+    synthesize,
+)
 from agent.compiler import CompileError, Compiler, Plan, SemanticModel
 from agent.feedback import (
     DEFAULT_FEEDBACK_DIR,
@@ -84,12 +94,12 @@ from agent.security.sql_guard import (
     UnsafeQuery,
     enforce,
 )
-from agent.state import TurnResult, TurnState
+from agent.state import ANALYSIS_RECORD_VERSION, TurnResult, TurnState, encode_rows
 from agent.tools.chart import ChartError, render_chart
 from agent.tools.execution_validator import ExecutionValidator
 from agent.tools.schema_linker import SchemaLinker
 from data.identity import RuntimeSnapshot
-from observability.otel import record_turn
+from observability.otel import record_analysis_step, record_turn
 from serving.auth import AuthError, claims_fingerprint, resolve_claims
 
 # 执行器同构约定（与 eval/runner.execute_sql 一致）：只读执行 guarded SQL
@@ -171,6 +181,7 @@ def build_graph(
     compiler: Compiler | None = None,
     snapshot_meta: dict[str, Any] | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
+    persist: bool = True,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """组装并编译 LangGraph 状态机（checkpointer 可注入，默认 MemorySaver）。
 
@@ -193,6 +204,12 @@ def build_graph(
                       使用**——本函数不复制、不重包、不替调用方决定 serde（决策 ②：
                       白名单漏传会让 `Plan` 在严格模式下退化为 dict，而退化发生在
                       谁手里谁才修得动）。
+    persist         : 是否带会话轨迹存储编译（ADR-0026 决策 ③）。True（默认）=
+                      既有语义（见 checkpointer）；False = 编译真正无 checkpointer
+                      的同源图——多期分析的子执行通道用：节点/边定义与本函数
+                      persist=True 完全同一套，仅无独立 checkpoint、无身份指纹
+                      绑定（父级身份绑定是上层职责）。False 且同时传入
+                      checkpointer 是配置冲突，直接 ValueError，不允许静默二选一。
 
     返回
     ----
@@ -200,16 +217,23 @@ def build_graph(
     {"thread_id": "<model.name>:<session_id>"}})——thread_id 的模型前缀是约定
     （ADR-0020 决策 ④），由 DataAgent.ask 负责拼装；直接用本图者须自己带上，否则
     多域共享同一 checkpoint 文件时会互相覆写。最终状态字段见 agent/state.TurnState；
-    组装 TurnResult 请用 ask() / DataAgent。
+    组装 TurnResult 请用 ask() / DataAgent。persist=False 的图无 checkpoint，
+    invoke 不需要 thread_id。
 
     异常
     ----
-    ValueError：executor 或 budget 未提供（图不执行未过 Guard 的 SQL）。
+    ValueError：executor 或 budget 未提供（图不执行未过 Guard 的 SQL）；
+                persist=False 且 checkpointer 非 None（配置冲突，ADR-0026）。
     """
     if executor is None:
         raise ValueError("executor 必填：只读 SQL 执行器（测试可注入 fake）")
     if budget is None:
         raise ValueError("budget 必填：Guard 预算（表白名单 = 锁定快照）")
+    if not persist and checkpointer is not None:
+        raise ValueError(
+            "persist=False 与注入 checkpointer 冲突：无状态子执行通道（ADR-0026 决策 ③）"
+            "不得携带会话轨迹存储——要持久化用默认 persist=True，要无状态就别传 checkpointer"
+        )
     model = model or SemanticModel()
     planner = Planner(model)
     linker = linker or SchemaLinker(model)
@@ -250,6 +274,10 @@ def build_graph(
             "block_reason": None,
             "error": None,
             "handoff_reason": None,
+            # 多期间分析记账（ADR-0026 决策 ④）：新用户轮清旧分析记录——覆盖一个
+            # running 记录即该轮无终态（历史快照仍留证）；终态记录被正常清走。
+            # 分析子步（_run_analysis_step / _write_analysis_state）不经过本节点。
+            "analysis_record": None,
             # 轮数单一事实源（决策 ⑤）：与 last_plan 同构的跨轮状态——本节点是每轮
             # 逻辑起点，读 checkpoint 里的旧值 +1 写回。它属于「承接」而非「残留」，
             # 刻意不放进上面的冲刷集合；`or 0` 兜住首轮（键不存在）与 None
@@ -261,6 +289,19 @@ def build_graph(
         question = str(state["question"])
         result = planner.plan(question)
         if isinstance(result, ClarificationRequest) and result.kind == "unmatched":
+            # 残句追问挂起守卫（ADR-0026 决策 ⑥）：最近一轮是多期间分析时，
+            # 残句不许偷接分析前的旧计划口径——last_plan 保留（分析不回退它），
+            # 但分析期间 blocked=True，明确提示完整重述；一次明确的普通 Plan
+            # 执行成功（explain 回写 blocked=False）才解除。
+            if state.get("analysis_followup_blocked"):
+                out["clarification"] = ClarificationRequest(
+                    question,
+                    (  # 1-tuple：缺尾逗号会退化成裸 str（reasons 被逐字迭代）
+                        "最近一轮是多期间分析：残句追问不再承接分析前的旧计划口径，"
+                        "请完整重述要问的问题",
+                    ),
+                )
+                return out
             # 指代预检（ADR-0014 ②）：残句（无指标词）且同会话存在上轮成功 Plan →
             # 尝试结构补全；补全产物仍走既有校验链（编译预检），失败/歧义不猜
             prev_plan = state.get("last_plan")
@@ -414,7 +455,14 @@ def build_graph(
         try:
             rows, columns = executor(guarded)
         except Exception as exc:  # noqa: BLE001 - 执行故障记入回合，不中断会话
-            return {"error": f"{type(exc).__name__}: {exc}"}
+            # 执行后失败（ADR-0026 决策 ③）：与「未执行被拒」必须可区分——SQL 已过
+            # Guard 且已送达执行器，如实记下已执行证据与尝试耗时，上层据此做到
+            # 「耗时汇总只计实际执行的子 SQL」。编译/身份等失败仍走上方 sql=None 出口。
+            return {
+                "error": f"{type(exc).__name__}: {exc}",
+                "sql": guarded,
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+            }
         latency_ms = round((time.perf_counter() - started) * 1000, 1)
         rows_t = tuple(tuple(r) for r in rows)
         issues = validator.check(list(rows_t), list(columns), grouped=bool(plan.dimensions)).issues
@@ -463,8 +511,14 @@ def build_graph(
         if effect:
             explanation["policy_effect"] = effect
         # 回写 last_plan：本轮成功采纳的 Plan 成为下轮追问的指代基线（ADR-0014
-        # ②）；失败轮（blocked/error）不进 explain，last_plan 保持上轮成功值
-        return {"explanation": explanation, "last_plan": plan}
+        # ②）；失败轮（blocked/error）不进 explain，last_plan 保持上轮成功值。
+        # 同点解除分析追问挂起（ADR-0026 决策 ⑥）：一次明确的普通 Plan 执行
+        # 成功到达 explain = 残句挂起解除的唯一出口（分析子步不经过本节点）。
+        return {
+            "explanation": explanation,
+            "last_plan": plan,
+            "analysis_followup_blocked": False,
+        }
 
     # -- 节点：clarify（反问终端：unmatched/候选链放弃统一组装反问） --------
     def node_clarify(state: TurnState) -> dict[str, Any]:
@@ -555,6 +609,11 @@ def build_graph(
     builder.add_edge("clarify", END)
     builder.add_edge("handoff", END)
     builder.add_edge("explain", END)
+    if not persist:
+        # ADR-0026 决策 ③：无状态子执行图与上方默认分支共用**同一套**节点/边定义
+        # （execute 实现只有一份），只在编译点分叉——不带 checkpointer 才是真无状态
+        # （新建 MemorySaver 只是不落盘，仍会造成有会话轨迹可查的假象）
+        return builder.compile()
     # 默认分支保持逐字不变（决策 ①：注入是加法，不改历史行为）。用 `is None` 而不是
     # `or`：checkpointer 是第三方对象，其真值语义不由我们定义（空存储若实现
     # `__len__` 就会被 `or` 误判为「没传」，于是静默换回 MemorySaver——正是要防的形态）
@@ -589,7 +648,17 @@ def turn_from_state(state: dict[str, Any], session_id: str, turns: int = 1) -> T
     if state.get("block_reason"):
         return TurnResult(kind="blocked", block_reason=str(state["block_reason"]), **base)
     if state.get("error"):
-        return TurnResult(kind="error", error=str(state["error"]), **base)
+        # 失败终态也携带执行事实（ADR-0026 决策 ③）：node_execute 只在 SQL 真正
+        # 送达执行器后才写 sql/latency_ms（执行器异常轮），其余 error 来源
+        # （编译失败/身份解析失败/内部缺失）保持冲刷值 None/0.0——调用方据此
+        # 区分「执行后失败」与「未执行被拒」，不靠猜。
+        return TurnResult(
+            kind="error",
+            error=str(state["error"]),
+            sql=state.get("sql"),
+            latency_ms=state.get("latency_ms", 0.0),
+            **base,
+        )
     if state.get("handoff_reason"):
         return TurnResult(kind="handoff", handoff_reason=str(state["handoff_reason"]), **base)
     clarification = state.get("clarification")
@@ -678,18 +747,34 @@ class DataAgent:
         # 注入的 saver 由本实例长期持有（决策 ③ 的连接生命周期 = 进程）：
         # SqliteSaver 包着 sqlite3.Connection，若无引用持有则会被 GC 关掉连接
         self.checkpointer = checkpointer
-        self._graph = build_graph(
-            self.model,
-            engine=engine,
-            executor=executor,
-            budget=budget,
-            allow_candidate=allow_candidate,
-            generator=generator,
-            linker=linker,
-            compiler=compiler,
-            snapshot_meta=snapshot.meta if snapshot is not None else snapshot_meta,
-            checkpointer=checkpointer,
-        )
+        # 图依赖集（ADR-0026 决策 ③）：主图与无状态子执行图共用同一组构造参数，
+        # 只在 persist 上分叉——依赖注入（fake linker/compiler 等）两个图拿到的是
+        # **同一批实例**，保证两路行为逐字节同源
+        self._graph_kwargs: dict[str, Any] = {
+            "engine": engine,
+            "executor": executor,
+            "budget": budget,
+            "allow_candidate": allow_candidate,
+            "generator": generator,
+            "linker": linker,
+            "compiler": compiler,
+            "snapshot_meta": snapshot.meta if snapshot is not None else snapshot_meta,
+        }
+        self._graph = build_graph(self.model, checkpointer=checkpointer, **self._graph_kwargs)
+        # 实例级可重入锁（ADR-0026 决策 ④①）：ask / run_plan / analyze（T07）的
+        # 读取状态 → 身份比较 → 父轮开始 → 子步 → 父轮结束整段在同一把锁内完成，
+        # 保证分析四步不被并发的普通请求插入（决策 ④ 的串行化口径）。RLock：
+        # analyze（T07）持锁期间会再调本实例的 _run_analysis_step / _write_analysis_state，
+        # 重入不死锁。仅进程内单实例语义——不声称支持多进程 / 多实例部署。
+        self._lock = threading.RLock()
+        # 无状态子执行图（ADR-0026 决策 ③）：懒构建——SchemaLinker 等重依赖已在
+        # 上面为主图就绪，兄弟图只是第二次编译；不拖慢既有 27 处构造点的启动。
+        # None = 尚未构建（不是「构建失败」），首次子步时才补上。
+        self._analysis_graph: CompiledStateGraph[Any, Any, Any, Any] | None = None
+        # 多期分析父轮上下文（T07 的 analyze 在逐子步调用前写入、结束后清除；
+        # 本类只读）：子步 payload 的 question/session_id 取父轮值，缺省回落
+        # run_plan 同口径的随机会话与 plan:<metric> 问句。
+        self._analysis_context: dict[str, str] | None = None
         self.snapshot_meta = snapshot.meta if snapshot is not None else snapshot_meta
         # 完整绑定事实（决策 ①/⑥）：`snapshot_meta` 只有内容，没有「这份 meta 是怎么
         # 被选中的」（source）与「是否等于 HEAD」（bound_to_head）——而后者正是
@@ -771,7 +856,10 @@ class DataAgent:
         SessionIdentityConflict：同 `session_id` 换身份（含重签 token）。
         """
         sid = session_id or f"session-{uuid4().hex[:8]}"
-        return self._invoke_turn(sid, {"question": question, "session_id": sid}, identity)
+        # 实例级可重入锁（ADR-0026 决策 ④①）：与 run_plan / analyze（T07，须加入
+        # 同一把锁）串行化，保证分析四步不被并发的普通请求插入中间状态。
+        with self._lock:
+            return self._invoke_turn(sid, {"question": question, "session_id": sid}, identity)
 
     def run_plan(
         self,
@@ -815,7 +903,595 @@ class DataAgent:
             "session_id": sid,
             "plan_override": plan,
         }
-        return self._invoke_turn(sid, payload, identity)
+        # 实例级可重入锁（ADR-0026 决策 ④①）：与 ask / analyze（T07，须加入
+        # 同一把锁）串行化，保证分析四步不被并发的普通请求插入中间状态。
+        with self._lock:
+            return self._invoke_turn(sid, payload, identity)
+
+    def analyze(
+        self,
+        question: str,
+        *,
+        session_id: str | None = None,
+        identity: dict[str, object] | None = None,
+    ) -> AnalysisResult:
+        """多期间变化贡献分析编排（ADR-0026 决策③，T07）：解析 → 前置门 → 四步 → 综合。
+
+        编排次序（task-7-brief 检查单 + 控制器裁决）：
+
+        1. AnalysisPlanner 解析（T03，同源 `self.model`，group_limit =
+           min(10000, budget.max_rows)）：None → 恰好委托**一次** ask（普通问数，
+           分析字段全空，不写分析记账）；ClarificationRequest → 澄清父轮（计一
+           父轮、零 SQL、零 LLM、不开始分析记账）；AnalysisPlan → 完整四步编排。
+        2. T06 父轮开始（`_begin_analysis`）：严格身份准入（冲突在任何写入之前
+           抛出——轮数不变、零 SQL）→ turns+1 → analysis_record=running。
+           解析失败在前，不执行任何 SQL。
+        3. 资格前置门（T02 证据，factory 挂 `analysis_eligibility` 属性；测试
+           直接构造的 agent 无此属性 = 视同资格缺失，绝不静默放行）：不通过 →
+           answer 父轮 + unavailable（missing_eligibility / snapshot_mismatch
+           稳定安全码，映射见下）+ plan 必带 + steps=()（零步零 SQL；N1 不编造
+           数字），终态 failed 落账（无 failed_index——没有步骤失败）。
+        4. 通过 → 顺序执行 T05 四步（无状态兄弟图 `_run_analysis_step`，同一批
+           注入依赖；每步一条 `record_analysis_step` 步骤 span，失败步也有终态
+           span），每步已执行事实经 `encode_rows` 带类型入账；blocked/error 即
+           裁剪终止（部分结果与被拒 SQL 不落证据、失败后零调用、失败步角色
+           保留），四步全成才调 T04 `synthesize`。
+        5. 父轮 TurnResult（决策⑥：不冒充单 SQL 结果）+ `record_turn` 恰一次，
+           包装 AnalysisResult 返回（闭环契约：validate_analysis_result 零违规）。
+
+        身份准入的三种口径：委托 ask 走 `_invoke_turn` 宽松转移；四步编排走
+        `_begin_analysis` 严格准入（running 恢复 + 绑定会话拒绝匿名/异身份）；
+        澄清父轮按 ask 同款宽松校验（冲突在任何写入前抛出）。
+
+        统一性（brief 检查单 4）：整个编排持实例锁（与 ask / run_plan 同锁）；
+        model / snapshot / 身份 / 预算全部来自本实例构造参数——每步复用缓存的
+        persist=False 兄弟图，绝不逐步构建活图。`_analysis_context` 全程 finally
+        清除（异常中断不留陈旧上下文）。elapsed_ms 用 monotonic 钟覆盖整个编排；
+        latency_ms 仍只汇总实际执行的子 SQL 耗时。
+
+        参数
+        ----
+        question  : 分析问句（原样解析与留痕，不改写）。
+        session_id: 会话键（缺省随机会话；与 ask 同一 thread 空间）。
+        identity  : 已验证 claims（None = 匿名；四步编排按 `_begin_analysis`
+                    严格准入，running 恢复只接受与记录一致的身份）。
+
+        返回
+        ----
+        AnalysisResult：五终态（ok / unavailable / clarify / blocked / error）
+        的字段组合满足 T01 闭合矩阵。
+
+        抛出
+        ----
+        SessionIdentityConflict：身份冲突（在任何状态写入之前抛出，零 SQL）。
+        RuntimeError：子步出现意外终态（决策③边界，不静默）。
+        """
+        started = time.monotonic()
+        sid = session_id or f"session-{uuid4().hex[:8]}"
+        sha_raw = (self.snapshot_meta or {}).get("sha")
+        snapshot_sha = sha_raw if isinstance(sha_raw, str) else None
+        semantic_sha = self.model.source_sha256
+        budget = self._graph_kwargs["budget"]
+        group_limit = min(10_000, int(budget.max_rows))
+
+        def _elapsed() -> float:
+            return (time.monotonic() - started) * 1000
+
+        with self._lock:
+            parsed = AnalysisPlanner(self.model, group_limit=group_limit).plan(question)
+            if parsed is None:
+                # 无分析意图：恰好委托一次 ask（同一回合装配通道，无分析字段）。
+                turn = self._invoke_turn(sid, {"question": question, "session_id": sid}, identity)
+                return AnalysisResult(
+                    turn=turn,
+                    plan=None,
+                    steps=(),
+                    attribution=None,
+                    reason_code=None,
+                    elapsed_ms=_elapsed(),
+                    snapshot_sha=snapshot_sha,
+                    semantic_sha256=semantic_sha,
+                )
+            if isinstance(parsed, ClarificationRequest):
+                turn = self._clarify_turn(sid, question, parsed, identity)
+                return AnalysisResult(
+                    turn=turn,
+                    plan=None,
+                    steps=(),
+                    attribution=None,
+                    reason_code=None,
+                    elapsed_ms=_elapsed(),
+                    snapshot_sha=snapshot_sha,
+                    semantic_sha256=semantic_sha,
+                )
+            plan = parsed
+            # T06 父轮开始：严格身份准入（冲突在任何写入之前抛出）→ turns+1 →
+            # running 记录（版本/问句/身份指纹/空 steps）→ 单轮残留清理。
+            self._begin_analysis(sid, question, identity)
+            config: RunnableConfig = {"configurable": {"thread_id": f"{self.model.name}:{sid}"}}
+            parent_no = int(dict(self._graph.get_state(config).values or {}).get("turns") or 1)
+            steps: list[TurnResult] = []
+            evidence: list[dict[str, Any]] = []
+            terminal: Literal["blocked", "error"] | None = None
+            gate_code: AnalysisReasonCode | None = None
+            attribution: Attribution | None = None
+            result_code: AnalysisReasonCode | None = None
+            try:
+                # 资格前置门（T02 证据由 factory 挂 analysis_eligibility；缺失/
+                # 不可用一律拒绝，绝不静默放行）。原因码映射为稳定安全码：
+                # snapshot/semantic 版本不一致 → snapshot_mismatch，其余（含
+                # 证据缺失/畸形/未知）→ missing_eligibility。
+                eligibility = getattr(self, "analysis_eligibility", None)
+                if not (
+                    isinstance(eligibility, dict)
+                    and eligibility.get("available")
+                    and eligibility.get("eligible")
+                ):
+                    raw = eligibility.get("reason") if isinstance(eligibility, dict) else None
+                    gate_code = (
+                        "snapshot_mismatch"
+                        if raw in ("snapshot_mismatch", "semantic_hash_mismatch")
+                        else "missing_eligibility"
+                    )
+                if gate_code is not None:
+                    # 控制器裁决：前置门失败 = answer 父轮 + unavailable +
+                    # plan 必带 + steps=()（零步零 SQL）；N1：无实测不编造数字。
+                    attribution = Attribution(
+                        status="unavailable",
+                        baseline=None,
+                        current=None,
+                        delta=None,
+                        items=(),
+                        reason_code=gate_code,
+                        text="分析前置资格门未通过：当前快照下该指标/维度组合不可做变化贡献分解。",
+                    )
+                    result_code = gate_code
+                else:
+                    # 准入证据落账：计划投影 + 两期绑定 + 快照/语义层版本
+                    # （T08/T09 共用口径；只存有界事实，不存贡献率/叙事）。
+                    self._write_analysis_state(
+                        sid,
+                        {
+                            "analysis_record": {
+                                "plan_projections": [plan_projection(p) for p in plan.sub_plans],
+                                "baseline": {
+                                    "granularity": plan.baseline.granularity,
+                                    "value": plan.baseline.value,
+                                },
+                                "current": {
+                                    "granularity": plan.current.granularity,
+                                    "value": plan.current.value,
+                                },
+                                "snapshot_sha": snapshot_sha,
+                                "semantic_sha256": semantic_sha,
+                            }
+                        },
+                    )
+                    # 子步上下文（T05 契约）：session_id/question 逐子步在位，
+                    # 结束（成功/失败/异常）后 finally 清除，不留陈旧上下文。
+                    self._analysis_context = {"session_id": sid, "question": question}
+                    for i, role in enumerate(ANALYSIS_ROLES):
+                        step = self._run_analysis_step(plan.sub_plans[i], identity=identity)
+                        # 每个已执行步骤恰一条步骤 span（失败步也有终态 span）；
+                        # 埋点故障在 otel 层隔离，不反噬编排。
+                        record_analysis_step(
+                            step, model=self.model, session_id=sid, turns=parent_no, role=role
+                        )
+                        steps.append(step)
+                        if step.kind == "answer":
+                            evidence.append(
+                                {
+                                    "index": i + 1,
+                                    "role": role,
+                                    "status": "ok",
+                                    "sql": step.sql,
+                                    "columns": list(step.columns),
+                                    "rows": encode_rows(step.rows),
+                                    "latency_ms": step.latency_ms,
+                                }
+                            )
+                            self._write_analysis_state(
+                                sid, {"analysis_record": {"steps": list(evidence)}}
+                            )
+                            continue
+                        if step.kind in ("blocked", "error"):
+                            # 裁剪终止：部分结果与被拒 SQL 不落证据（只留
+                            # role/status/原因码），失败后零调用，角色保留。
+                            failed_code: AnalysisReasonCode = (
+                                "guard_blocked" if step.kind == "blocked" else "execution_error"
+                            )
+                            evidence.append(
+                                {
+                                    "index": i + 1,
+                                    "role": role,
+                                    "status": step.kind,
+                                    "reason_code": failed_code,
+                                }
+                            )
+                            self._write_analysis_state(
+                                sid, {"analysis_record": {"steps": list(evidence)}}
+                            )
+                            terminal = step.kind
+                            result_code = failed_code
+                            break
+                        raise RuntimeError(
+                            f"分析子步出现意外终态 {step.kind!r}（决策③：子步只允许 "
+                            "answer/blocked/error）"
+                        )
+                    if terminal is None:
+                        # 四步全成才调 T04 综合（纯函数，精确 Decimal）。
+                        attribution = synthesize(plan, tuple(steps))
+                        result_code = attribution.reason_code
+            finally:
+                # 异常中断不留陈旧上下文（brief 必办 2）：成功/失败/异常统一清除。
+                self._analysis_context = None
+
+            if gate_code is not None:
+                terminal_record: dict[str, Any] = {"status": "failed", "reason_code": gate_code}
+            elif terminal is None:
+                assert attribution is not None  # 不变量：无 terminal 必已综合
+                terminal_record = {
+                    "status": "completed",
+                    "attribution_status": attribution.status,
+                    "reason_code": attribution.reason_code,
+                }
+            else:
+                terminal_record = {
+                    "status": "failed",
+                    "failed_index": len(steps),
+                    "reason_code": result_code,
+                }
+            self._write_analysis_state(sid, {"analysis_record": terminal_record})
+
+            # 父轮 TurnResult（决策⑥：不冒充单 SQL 结果；latency 只汇总执行步）。
+            parent = TurnResult(
+                kind="answer" if terminal is None else terminal,
+                session_id=sid,
+                question=question,
+                turns_in_session=parent_no,
+                metric=plan.metric,
+                latency_ms=float(sum(s.latency_ms for s in steps)),
+            )
+            if terminal == "blocked" and steps:
+                parent = replace(parent, block_reason=steps[-1].block_reason)
+            elif terminal == "error" and steps:
+                parent = replace(parent, error=steps[-1].error)
+            # 父轮 atlas.turn 恰一次（子步只写步骤 span，不进用户轮指标）。
+            record_turn(parent, snapshot_sha=snapshot_sha)
+            return AnalysisResult(
+                turn=parent,
+                plan=plan,
+                steps=tuple(steps),
+                attribution=attribution,
+                reason_code=result_code,
+                elapsed_ms=_elapsed(),
+                snapshot_sha=snapshot_sha,
+                semantic_sha256=semantic_sha,
+            )
+
+    def _clarify_turn(
+        self,
+        sid: str,
+        question: str,
+        parsed: ClarificationRequest,
+        identity: dict[str, object] | None,
+    ) -> TurnResult:
+        """分析澄清父轮：计一父轮、零 SQL、零 LLM、冲刷残留分析记录。
+
+        与普通 clarify 轮同款状态语义（node_plan 冲刷集的同构落账，直接
+        `_apply_state` 写入——不 invoke 父查询图，杜绝候选链与 Planner 介入）：
+        turns+1、原问句、澄清对象入 clarification，单轮结果残留全清理；
+        analysis_record 同步冲刷为 None（澄清轮是**新的用户轮**——此前被
+        Guard 拒绝的分析终态会留下 status=failed 的残留记录，不冲刷会让
+        下轮读到陈旧分析态，与 node_plan 的新用户轮清旧记录同构）。
+        身份按 ask 宽松转移校验：已绑定会话收到异身份澄清在**任何写入之前**
+        抛 SessionIdentityConflict；带身份的新会话按首轮绑定语义写指纹
+        （0011：只落哈希不落 claims 本体）。
+        """
+        config: RunnableConfig = {"configurable": {"thread_id": f"{self.model.name}:{sid}"}}
+        values = dict(self._graph.get_state(config).values or {})
+        old_turns = int(values.get("turns") or 0)
+        payload: dict[str, Any] = {
+            "question": question,
+            "session_id": sid,
+            "turns": old_turns + 1,
+            "clarification": parsed,
+            "plan": None,
+            "plan_override": None,
+            "candidates": None,
+            "unmatched": False,
+            "reason": None,
+            "attempts": 0,
+            "validated": False,
+            "sql": None,
+            "rows": None,
+            "columns": None,
+            "time_column": None,
+            "row_count": 0,
+            "latency_ms": 0.0,
+            "validation_issues": None,
+            "path": None,
+            "engine": "deterministic",
+            "explanation": None,
+            "policy_effect": None,
+            "block_reason": None,
+            "error": None,
+            "handoff_reason": None,
+            # R2（ADR-0026 控制器裁定）：与 node_plan 冲刷集同构——澄清轮是新的
+            # 用户轮，冲掉上一分析终态（如 blocked 留下的 status=failed）的残留
+            "analysis_record": None,
+        }
+        if identity is not None:
+            fingerprint = claims_fingerprint(identity)
+            bound = values.get("session_fingerprint")
+            if bound is not None and bound != fingerprint:
+                raise SessionIdentityConflict(
+                    f"会话 {sid} 已绑定另一身份：换身份必须换新 session_id"
+                    "（ADR-0020 决策 ⑥；重签 token 也算换身份）"
+                )
+            payload["session_fingerprint"] = fingerprint
+        self._apply_state(sid, payload)
+        # 父轮澄清对象从 checkpoint 读回后再组装（与 _invoke_turn → turn_from_state
+        # 同构）：serde msgpack 往返会把 dataclass 的 tuple 字段退化为 list，父轮
+        # 返回值必须与 checkpoint 持有的形态一致，不得漏出未往返的原始对象。
+        stored = dict(self._graph.get_state(config).values or {})
+        roundtripped = stored.get("clarification")
+        turn = TurnResult(
+            kind="clarify",
+            session_id=sid,
+            question=question,
+            turns_in_session=int(stored.get("turns") or old_turns + 1),
+            clarification=roundtripped
+            if isinstance(roundtripped, ClarificationRequest)
+            else parsed,
+        )
+        record_turn(turn, snapshot_sha=(self.snapshot_meta or {}).get("sha"))
+        return turn
+
+    # -- 多期间分析父轮记账（ADR-0026 决策 ④⑤⑥；analyze 编排在 T07） -------
+    # 调用契约：_begin_analysis 与 _write_analysis_state 只能在持有 self._lock
+    # 的分析流程里调用（analyze（T07）必须在 ask / run_plan 的同一把锁内编排
+    # 开始 → 子步 → 结束四步，否则并发普通请求可插入父轮中间状态）。
+
+    def _begin_analysis(
+        self,
+        sid: str,
+        question: str,
+        identity: dict[str, object] | None,
+    ) -> dict[str, Any]:
+        """开始一轮多期间分析父轮：身份校验 → running 标记 → 父轮状态写入。
+
+        只认持久化状态（不新增进程内轮数副本）。动作次序（ADR-0026 决策 ④③⑤）：
+
+        1. 读父 thread 的 checkpoint values；
+        2. 身份转移判定（冲突在**任何状态写入之前**抛出——轮数不变、零写入）：
+           - 旧记录 running（中断恢复）：仅接受与记录一致的 identity——先前匿名
+             只可匿名接续，先前实名只可同指纹接续；不一致抛
+             SessionIdentityConflict。running→interrupted 的标记在本次进入时
+             发生（同身份），**不增旧轮计数**。
+           - 无 running 记录：已绑定 session_fingerprint 的会话收到匿名 analyze
+             按冲突拒绝；异身份同样拒绝；未绑定的匿名会话沿用首次绑定语义
+             （带身份调用则写入指纹）。普通 ask / run_plan 的宽松转移规则
+             （`_invoke_turn`）不受本套更严规则影响。
+        3. 写父轮状态：turns=旧值+1、原问句、analysis_record（status=running，
+           版本/问句/身份指纹/空 steps）、analysis_followup_blocked=True，并清理
+           plan/sql/rows 等全部单轮结果残留；**不 invoke 父查询图**——本方法不
+           执行任何 SQL（决策 ④③「不 invoke 父查询图」）；
+        4. 每次写入后断言图不再待继续（`next == ()`，见 `_apply_state`）。
+
+        参数
+        ----
+        sid      : 会话键（thread_id = `f"{model.name}:{sid}"`，与 ask 同空间）。
+        question : 分析原问句（原样入记录与状态，不改写）。
+        identity : 分析请求身份（None = 匿名）。指纹经 claims_fingerprint 计算，
+                   claims 本体不落 checkpoint。
+
+        返回
+        ----
+        本轮新 analysis_record 的浅拷贝（status=running，含 schema_version）。
+        T07 的 analyze 以它为基准逐子步补 evidence，结束后写终态。
+
+        抛出
+        ----
+        SessionIdentityConflict：身份冲突 / running 恢复身份不一致（零写入）。
+        RuntimeError：状态写入后图仍待继续（checkpointer 行为异常，不静默）。
+        """
+        with self._lock:
+            config: RunnableConfig = {"configurable": {"thread_id": f"{self.model.name}:{sid}"}}
+            values = dict(self._graph.get_state(config).values or {})
+            fingerprint = claims_fingerprint(identity) if identity is not None else None
+            old_record = values.get("analysis_record")
+            resuming = False
+            if isinstance(old_record, dict) and old_record.get("status") == "running":
+                resuming = True
+                # 中断恢复（决策 ④⑤）：running 记录只接受与记录一致的身份——
+                # 先前匿名仅可匿名接续，先前实名仅可同指纹接续。标记发生在
+                # 这里（下一次分析进入），不增旧轮计数。
+                prev_fingerprint = old_record.get("identity_fingerprint")
+                if prev_fingerprint != fingerprint:
+                    raise SessionIdentityConflict(
+                        f"会话 {sid} 存在 running 分析记录，仅接受与记录一致的身份"
+                        "接续（先前匿名仅可匿名接续；ADR-0026 决策 ④⑤）"
+                    )
+            else:
+                # 常规进入：已绑定会话收到匿名 / 异身份分析按冲突拒绝——
+                # 在任何状态写入之前抛出，轮数不变、零 SQL。
+                bound = values.get("session_fingerprint")
+                if bound is not None and (fingerprint is None or bound != fingerprint):
+                    raise SessionIdentityConflict(
+                        f"会话 {sid} 已绑定身份，不接受匿名或异身份的多期间分析"
+                        "（换身份必须换新 session_id；ADR-0026 决策 ④②）"
+                    )
+            if resuming:
+                # 同身份再进入：旧 running 先标 interrupted（只补一个键，steps
+                # 等其余证据原样保留），再接受新一轮——历史快照序列留证。
+                self._write_analysis_state(sid, {"analysis_record": {"status": "interrupted"}})
+            record: dict[str, Any] = {
+                "schema_version": ANALYSIS_RECORD_VERSION,
+                "status": "running",
+                "question": question,
+                "identity_fingerprint": fingerprint,
+                "steps": [],
+            }
+            old_turns = int(values.get("turns") or 0)
+            # 单轮结果残留全清理（决策 ④③）：last_plan 刻意**不在**清理集——
+            # 分析不回退它，靠 analysis_followup_blocked 挂起残句追问（决策 ⑥）。
+            payload: dict[str, Any] = {
+                "question": question,
+                "session_id": sid,
+                "turns": old_turns + 1,
+                "analysis_record": record,
+                "analysis_followup_blocked": True,
+                "plan": None,
+                "plan_override": None,
+                "clarification": None,
+                "candidates": None,
+                "unmatched": False,
+                "reason": None,
+                "attempts": 0,
+                "validated": False,
+                "sql": None,
+                "rows": None,
+                "columns": None,
+                "time_column": None,
+                "row_count": 0,
+                "latency_ms": 0.0,
+                "validation_issues": None,
+                "path": None,
+                "engine": "deterministic",
+                "explanation": None,
+                "policy_effect": None,
+                "block_reason": None,
+                "error": None,
+                "handoff_reason": None,
+            }
+            if fingerprint is not None:
+                payload["session_fingerprint"] = fingerprint
+            self._apply_state(sid, payload)
+            return dict(record)
+
+    def _write_analysis_state(self, sid: str, updates: dict[str, Any]) -> None:
+        """写分析父轮状态（子步证据 / 终态），**不推进用户轮数**。
+
+        只 update_state 父 thread（as_node="explain"，决策 ④④）；turns 是轮数
+        单一事实源（ADR-0020 决策 ⑤），只有 `_begin_analysis` 与普通图执行
+        （node_plan）可以写它——updates 里带 turns 直接拒绝。analysis_record
+        的写入语义：updates 里的 dict 与 checkpoint 里现存记录做 **键级合并**
+        （子步补 steps、终态补 status 不抹掉既有键）；`_begin_analysis` 开新
+        记录走自己的整体替换 payload，不经本方法合并。
+
+        参数
+        ----
+        sid     : 会话键（与 ask / _begin_analysis 同一 thread 空间）。
+        updates : 要写入的状态键值（analysis_record 传部分 dict 即可）。
+
+        抛出
+        ----
+        ValueError：updates 试图写 turns。
+        RuntimeError：写入后图仍待继续（checkpointer 行为异常，不静默）。
+        """
+        if "turns" in updates:
+            raise ValueError(
+                "_write_analysis_state 不推进用户轮数：turns 是轮数单一事实源"
+                "（ADR-0020 决策 ⑤），只有 _begin_analysis / 普通图执行可以写它"
+            )
+        with self._lock:
+            config: RunnableConfig = {"configurable": {"thread_id": f"{self.model.name}:{sid}"}}
+            values = self._graph.get_state(config).values or {}
+            payload = dict(updates)
+            incoming = updates.get("analysis_record")
+            if isinstance(incoming, dict):
+                current = values.get("analysis_record")
+                payload["analysis_record"] = (
+                    {**current, **incoming} if isinstance(current, dict) else dict(incoming)
+                )
+            self._apply_state(sid, payload)
+
+    def _apply_state(self, sid: str, payload: dict[str, Any]) -> None:
+        """把 payload 写进父 thread 并断言图不再待继续（决策 ④④）。
+
+        as_node="explain" 显式写入（不冒充节点执行、不触发路由）；写入后读回
+        `next`，非空说明 checkpointer 落了等待继续的状态——分析记账绝不能把
+        父图挂进待续队列，此时抛 RuntimeError（持久化层异常不返回伪成功）。
+
+        参数
+        ----
+        sid     : 会话键（thread_id = `f"{model.name}:{sid}"`）。
+        payload : 本次要落 checkpoint 的状态键值（键必须在 TurnState schema 内，
+                  不在 schema 的键会被 langgraph 过滤）。
+        """
+        config: RunnableConfig = {"configurable": {"thread_id": f"{self.model.name}:{sid}"}}
+        self._graph.update_state(config, payload, as_node="explain")
+        if self._graph.get_state(config).next != ():
+            raise RuntimeError(
+                f"会话 {sid} 的分析状态写入后图仍待继续（next != ()）："
+                "分析记账不允许把父图挂进待续队列（ADR-0026 决策 ④④）"
+            )
+
+    def _stateless_graph(self) -> CompiledStateGraph[Any, Any, Any, Any]:
+        """同源无状态子执行图（ADR-0026 决策 ③）：首次访问时构建并缓存。
+
+        与主图 `self._graph` 的关系：同一个 `build_graph`、同一套节点/边定义、
+        同一组构造参数（`self._graph_kwargs`，注入的依赖是**同一批实例**），
+        仅 persist=False——编译不带 checkpointer。因此子步无独立 checkpoint、
+        无身份指纹绑定（父级身份绑定是上层职责，本类只透传 identity），也
+        不经 `_invoke_turn`（无 thread_id 可言）。
+
+        返回
+        ----
+        编译后的无状态 LangGraph（`checkpointer is None`）；每 agent 只构建一次。
+        """
+        if self._analysis_graph is None:
+            self._analysis_graph = build_graph(self.model, persist=False, **self._graph_kwargs)
+        return self._analysis_graph
+
+    def _run_analysis_step(
+        self,
+        plan: Plan,
+        *,
+        identity: dict[str, object] | None,
+    ) -> TurnResult:
+        """执行多期分析的一个子步骤（ADR-0026 决策 ③）：无状态图 + plan_override 直执。
+
+        每步以**全新输入 state** 调 persist=False 兄弟图：`node_plan` 首行短路
+        （plan_override 用后即焚），不调 Planner、不进候选链；执行仍只经
+        `node_execute` 唯一通道（编译 → resolve_claims 渲染策略 → Guard enforce
+        → 执行器）。与 `_invoke_turn` 的差异是刻意的：无 checkpointer 故无指纹
+        绑定/get_state 校验（父级身份绑定是上层职责，本方法只透传 identity）；
+        不调 `record_turn`（子步不写用户轮指标，ADR-0026：无用户轮计数、无
+        atlas.turn.count 增量）。
+
+        失败步的执行事实由图状态如实带回：error/blocked 终态同样有 latency_ms
+        与已执行证据，并区分「未执行被拒」（Guard 拒绝/编译失败/身份解析失败 →
+        sql=None、latency=0）与「执行后失败」（执行器异常 → 记录已过 Guard 的
+        SQL + 尝试耗时）——上层的耗时汇总只计实际执行的子 SQL。
+
+        参数
+        ----
+        plan     : 本步骤的固定 Plan（AnalysisPlan.sub_plans 的成员）。非 Plan
+                   一律 TypeError：静默回落 Planner 解析会让子步重新生成子问句，
+                   违反「子步不猜」边界。
+        identity : 已验证 claims（与 ask/run_plan 同语义、同通道：
+                   `config["configurable"]["identity"]`）。None = 无行级策略。
+
+        返回
+        ----
+        TurnResult：kind ∈ answer / blocked / error——无自然语言解析面故
+        clarify 不可达；不进候选链故 handoff 不可达。turns_in_session 是子步
+        局部产物（每步从 1 起），不推进任何用户会话的轮数。
+        """
+        if not isinstance(plan, Plan):
+            raise TypeError(f"plan 必须是 Plan 实例，收到 {type(plan).__name__}")
+        ctx = self._analysis_context or {}
+        sid = str(ctx.get("session_id") or f"session-{uuid4().hex[:8]}")
+        question = str(ctx.get("question") or f"plan:{plan.metric}")
+        payload: dict[str, Any] = {"question": question, "session_id": sid, "plan_override": plan}
+        configurable: dict[str, Any] = {}
+        if identity is not None:
+            configurable["identity"] = identity
+        config: RunnableConfig = {"configurable": configurable}
+        final = self._stateless_graph().invoke(payload, config=config)
+        return turn_from_state(dict(final), sid)
 
     def submit_feedback(
         self,

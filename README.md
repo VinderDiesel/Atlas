@@ -54,6 +54,11 @@ Atlas 是一个**以真实可落地为目标构建的金融语义数据系统**�
 
 **LLM 不是 SQL 的作者，是候选生成器。** 编译器和校验器才是权威。
 
+多步分析走同一条确定性纪律（ADR-0026，已落地）：`POST /api/v1/analyze` 把
+"分析 2013Q4 相对 2013Q3 的佣金收入按分支的变化贡献"这类问句（绝对双期间 +
+明确维度）编译为**固定四步贡献模板**（两期总计 + 两期按维度分解），
+Plan → 模板 → Compiler → Guard → 执行 → 精确算术综合，LLM 零参与。
+
 ---
 
 ## 2. 架构
@@ -530,6 +535,7 @@ LLM 引擎服务化属 Phase 2。
 | `POST /compile` | `/api/v1` | Bearer | 业务 | Plan JSON（`metric/dimensions/time/filters/order_by/limit`，含 `model?`） | `{sql}`（Doris 只读方言）；结构非法/编译失败 422 |
 | `POST /ask` | `/api/v1` | Bearer | 业务 | `{question, session_id?, model?}` | TurnResult 全集（kind ∈ answer/clarify/blocked/error；rows 的 Decimal→str 保精度、datetime→ISO8601）+ `snapshot_sha` / `snapshot_bound_to_head` 两键回显本轮绑定；快照绑定失败 503（消息带出原始原因） |
 | `POST /plan/execute` | `/api/v1` | Bearer | 业务 | Plan JSON（`/compile` 请求体同构）+ `session_id?` + `question?`（审计与归因展示用，缺省取 Plan 规范化文本，不参与解析） | 与 `/ask` 同构（kind ∈ answer/blocked/error——不经 Planner 故永无 clarify；**非法 Plan → 200 + `kind="error"`**，不是 422 不是 500，统一响应形态）。`session_id` 缺省 = 一次性 thread、不产生会话态；给定则与 `/ask` 同一会话空间（身份指纹 422 约束同），且本轮 Plan 成为该会话下轮残句追问的补全基线（ADR-0022 代价 ⑥） |
+| `POST /analyze` | `/api/v1` | Bearer | 业务 | `{question, session_id?, model?}`（AskBody 与 `/ask` 同构，身份只来自 Bearer claims，无分析意图时按 ADR-0026 决策③回落普通 ask） | 与 `/ask` 同形字段全集外加顶层 `analysis` 键（ADR-0026 决策⑥）：**17 键投影**（schema_version / intent / status / metric / dimension / baseline / current / filters / snapshot_sha / semantic_sha256 / recipe_version / totals / items / steps / reason_code / text / elapsed_ms），键恒在、非分析轮（无意图回落或 clarify）整体为 `null`。`analysis.status` ∈ ok/unavailable/blocked/error（全终态；clarify 轮整体为 null、不投影 status），机器可读原因在 `reason_code`；`analysis.steps[]` 按固定角色序（baseline_total → current_total → current_by_dimension → baseline_by_dimension）携带 role/kind/sql——成功步另有 columns/rows/latency_ms，失败步 sql/columns/rows 置空只留 role/kind/latency_ms/reason_code（被拒 SQL 不出网）；totals（baseline/current/delta）与 items 数值一律 **Decimal 字符串**或 null，综合不可用时 totals=null、items=[]。父轮不冒充单 SQL 结果（sql/explanation 为 null、rows 空、row_count=0）。**分析为固定四步模板编译，不经 LLM 生成**；422 会话身份冲突与 `/ask` 同规则，快照绑定失败 503 同源 |
 | `GET /governance/models` | `/api/v1` | Bearer | 治理 | — | `{kind: "governance.models", count, sources, items}`——语义模型清单（权威 YAML 路径 + 版本） |
 | `GET /governance/metrics` | `/api/v1` | Bearer | 治理 | `?model?`（finance 缺省） | `{kind: "governance.metrics", …}`——指标清单（含治理扩展与 FIBO 对齐） |
 | `GET /governance/dimensions` | `/api/v1` | Bearer | 治理 | `?model?`（finance 缺省） | `{kind: "governance.dimensions", …}`——维度清单（物理列 + 值域注册状态） |
@@ -539,9 +545,10 @@ LLM 引擎服务化属 Phase 2。
 | `GET /governance/reports` | `/api/v1` | Bearer | 治理 | — | `{kind: "governance.reports", …}`——评测报告索引（主报告结构化，非主报告模式标签）；钻取 `GET /governance/reports/{name}`（主报告结构化 / 非主报告 raw 降级） |
 | `GET /governance/snapshots` | `/api/v1` | Bearer | 治理 | — | `{kind: "governance.snapshots", …}`——数据快照清单（created_at 降序 + 最新标志） |
 
-> 上表 13 行的合并口径：`/health` 双挂 2 条并 1 行、`values` 与 `reports` 的集合+
-> 钻取各并 1 行——展开后即 openapi 的 **16 条路径**，由
-> `tests/test_api_contract_v2.py` 的 `EXPECTED_PATHS`（16 条字面量）逐条锁定。
+> 上表 14 行的合并口径：`/health` 双挂 2 条并 1 行、`values` 与 `reports` 的集合+
+> 钻取各并 1 行——展开后即 openapi 的 **17 条路径**（0026 起新增
+> `POST /api/v1/analyze`），由
+> `tests/test_api_contract_v2.py` 的 `EXPECTED_PATHS`（17 条字面量，0026 起）逐条锁定。
 > 治理集合信封统一为 `{kind, count, sources, items}`（count 条目数、sources 为
 > Git 文件路径），全部 **GET 只读**、不触发 DB 与 Agent 构造。
 
@@ -565,6 +572,11 @@ LLM 引擎服务化属 Phase 2。
 make token                          # ROLE=hq_admin
 curl -H "Authorization: Bearer $(make token)" \
   http://127.0.0.1:8000/api/v1/plan -d '{"question":"2013 年第二季度总交易额是多少？"}'
+
+# 多步分析（ADR-0026）：绝对双期间 + 明确维度
+curl -H "Authorization: Bearer $(make token)" \
+  http://127.0.0.1:8000/api/v1/analyze \
+  -d '{"question":"分析 2013Q4 相对 2013Q3 的佣金收入按分支的变化贡献"}'
 ```
 
 > 本地 `make serve` 监听 127.0.0.1:8000；容器部署宿主端口映射为 **8010**
@@ -581,7 +593,7 @@ curl -H "Authorization: Bearer $(make token)" \
 - 会话 × 身份：session_id 绑定首个请求的身份指纹（全 claims）；同一会话换
   身份 → **422「会话身份冲突，请换新 session_id」**（换身份必须换会话）；
 - 限流：per-token **两桶互不挤占**（ADR-0022 决策 ⑥）——业务桶（`/api/v1` 下
-  plan / compile / ask / plan/execute 同桶计数）与治理桶（`/api/v1/governance/*`）
+  plan / compile / ask / plan/execute / analyze 同桶计数）与治理桶（`/api/v1/governance/*`）
   各自独立计数；超限 → **429 + Retry-After 头**（下一窗口起点秒数，detail 标明
   「业务面/治理面」）；/health 公开、401 路径不计。
 
@@ -946,6 +958,25 @@ snapshot_sha=b933e20）。剩余边界如实（契约 v2 批次后更新，ADR-0
     超限降级表格并注记，非本批新增）。**与 #21 的分工**：#21 记录渲染语义
     （spec 级确定性、无像素），本条记录**接入状态与能力边界**（ADR-0025 裁定于
     2026-09-14，接入落地于 P3 2026-09-16），两条不得合并阅读。
+36. **多步分析的不可加组合直接拒绝，不做近似（ADR-0026，2026-09-16）**：未登记
+    可加资格的指标/维度组合不做近似、不引入 LLM 猜测——前置资格门在执行任何
+    SQL 之前直接置 `analysis.status=unavailable`（reason_code=`missing_eligibility`，
+    资格证据随快照登记于 `data/snapshots/<sha>.analysis.json`），零 SQL 达执行器；
+    初始登记组合的验收场景 = attribution-001（佣金收入按分支 2013Q4 vs 2013Q3）。
+37. **综合截断不产出可能不完整的数字（ADR-0026 决策⑤）**：Budget 行数/组数上限
+    触发 `possible_truncation` 时，综合直接置 `unavailable`（totals=null、items=[]、
+    固定措辞文本），绝不给出可能不完整的贡献数字——「不可用即拒答」是设计行为
+    而非缺陷。
+38. **多步分析只对固定快照验证（可变数据边界）**：能力只在锁定快照上验证（分析
+    评测与资格证据绑定快照 sha；本批实测锚定 `7c966e9`）；数据变更需重新锚定 sha
+    并重建资格证据（`*.analysis.json`），跨快照数字不可比——与 #30 值域快照态
+    同源纪律。
+39. **无任务级硬超时**：Budget 只有行数/表/组数上限，无任务级 deadline/取消机制
+    ——分析轮的耗时上界不由系统保证（`elapsed_ms`/`latency_ms` 只如实记录已执行
+    子 SQL 耗时，不构成时延承诺）。
+40. **无分析专用 UI**：多步分析经 HTTP API（`POST /api/v1/analyze`）交付，前端
+    无分析界面（不与 P2/P3 治理面板混淆——治理面只读 Git 文件与评测产物，不是
+    分析入口）。
 
 **如果有真实企业数据，我会优先补做**：数据契约、IAM 集成、审计留痕、容灾、并发压测、模型红队测试、变更管理流程。
 
@@ -964,6 +995,7 @@ snapshot_sha=b933e20）。剩余边界如实（契约 v2 批次后更新，ADR-0
 | 声明式语义层、指标版本血缘 | **需新建** | 基于 Apache Ossie 规范实现编译器、治理扩展与测试 |
 | Data Agent 状态机与工具链（LangGraph 编排 / MCP 暴露 / 防幻觉图表 / 反馈与 handoff） | 已有工程经验 | 以确定性优先落地 agent/ 状态机（8 节点）+ tools 四件套 + MCP 工具服务器 + chart + feedback；7 场景 e2e 实测（含多轮追问 S7）见 docs/e2e-acceptance.md（数字全部出自 eval/reports/e2e-acceptance.json，不另立声明） |
 | 图表 spec 级确定性渲染与接入（无像素；前端零图表类型决策） | 已有工程经验 | 以 ADR-0025 接入 `/ask` 响应链：时间轴列由 `Compiler.emitted_time_column` 声明携带、兜底命中 note 显式标注、`yoy`/`pop` 只画当期、恒 ≤ 200 点；`tests/test_chart.py` 16 既有用例逐字未改 + 6 新增全绿；浏览器走查实测（截图 `docs/screenshots/p3-walkthrough-1-ask-chart.png`） |
+| 多步任务规划与归因分析（ADR-0026，固定四步贡献模板） | **已实现（单一模板 + 初始组合）** | 支持范围：单一模板——两期总计 + 两期按维度分解的四步贡献分析；绝对双时间（如 2013Q4 相对 2013Q3）；初始组合 = attribution-001 同构场景（佣金收入按分支 2013Q4 vs 2013Q3，可加资格随快照登记，未登记组合直接拒绝不做近似）。确定性措辞：Plan → 模板 → Compiler → Guard → 执行 → 精确算术综合，LLM 零参与。API/SDK 入口：`POST /api/v1/analyze`（CLI `python -m eval.e2e_acceptance` 为验收入口而非用户产品）；验收证据：analysis-eval + e2e S8~S12 + api-verify A10a~A10d（报告见 `eval/reports/`） |
 | Ossie / Polaris / Iceberg / Doris | **需新建** | 单机部署、基准测试、维护 ADR（0002/0004/0005） |
 | Agent 安全执行与自动洞察 | **需新建** | 先做安全工具，再扩展规划与归因 |
 | HTTP API / 认证中间件 | 已有工程经验 | 以 FastAPI 落地 serving/api.py + serving/governance.py（ADR-0012 + ADR-0022 契约 v2：`/api/v1` 前缀 + 治理面 8 集合/2 钻取 + 限流两桶 + `/plan/execute` + JWT），/api 契约测试 96 例（身份注入/会话冲突 422/限流两桶 429/契约 v2 防漂移 16 路径/审计字段集）+ 真链验收 api-verify A1-A9 在档 |
