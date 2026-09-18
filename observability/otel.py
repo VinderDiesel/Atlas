@@ -59,6 +59,7 @@ _METER: Meter | None = None
 _LOCK = threading.Lock()
 _WARNED_TELEMETRY_FAILURE = False  # 埋点故障只告警一次，避免刷屏
 _WARNED_STEP_FAILURE = False  # 分析步骤埋点故障独立告警一次（不与回合埋点共用计数）
+_WARNED_LLM_FAILURE = False  # LLM 意图埋点故障独立告警一次（ADR-0029 ⑦）
 _ATEXIT_FLUSH_REGISTERED = False  # 短进程（CLI 单回合）退出前 flush 一次即可
 
 # gen_ai.* 语义约定键 + atlas.* 自定义键（集中定义，防拼写漂移）
@@ -82,11 +83,21 @@ ATTR_GENAI_PROMPT_TOKENS = "gen_ai.usage.prompt_tokens"
 ATTR_GENAI_COMPLETION_TOKENS = "gen_ai.usage.completion_tokens"
 ATTR_GENAI_MODEL = "gen_ai.request.model"
 ATTR_PROMPT_VERSION = "gen_ai.prompt.version"
+# ADR-0029 ⑦：LLM 意图（候选路由 / 接地叙述）回合级 span 属性——只记分级与 token 计数，
+# **绝不**落 prompt 文本 / 叙述文本 / 结果数值 / 密钥（N9；敏感内容只以计数呈现）。
+ATTR_LLM_INTENT = "atlas.llm.intent"  # candidate-fallback | narrative
+ATTR_LLM_DATA_CLASS = "atlas.llm.data_class"  # schema-only | result-bearing | none
+ATTR_LLM_TIER = "atlas.llm.tier"  # cloud | self_hosted | none
+ATTR_LLM_ACTION = "atlas.llm.action"  # use_backend | fallback_template | deny | disabled
+ATTR_LLM_GROUNDED = "atlas.llm.grounded"  # 仅 LLM 文本全数字可追溯时为真
+ATTR_LLM_FALLBACK = "atlas.llm.fallback"  # 发的是确定性模板
+ATTR_LLM_REASON = "atlas.llm.reason_code"  # 拒因 / 回落因（role_denied / ungrounded / …）
 
 _METRIC_COST = "gen_ai.token_cost"
 _METRIC_TURNS = "atlas.turn.count"
 _METRIC_LATENCY = "atlas.turn.latency"
 _METRIC_BLOCKED = "atlas.turn.blocked"
+_METRIC_LLM_NARRATIVE = "atlas.llm.narrative.count"
 
 _PROMPTS_VERSION_RE = re.compile(r"^version:\s*(\S+)", re.MULTILINE)
 _PROMPTS_YAML = Path(__file__).resolve().parent.parent / "agent" / "prompts" / "generator_plan.yaml"
@@ -138,7 +149,8 @@ def configure_otel(
     数据——CLI 短进程（单回合即退出）不丢埋点。
     """
     global _TRACER_PROVIDER, _TRACER, _METER_PROVIDER, _METER
-    global _COST, _TURNS, _LATENCY, _BLOCKED  # instrument 绑定旧 meter，必须一起重置
+    # instrument 绑定旧 meter，必须一起重置
+    global _COST, _TURNS, _LATENCY, _BLOCKED, _LLM_NARRATIVE
 
     otlp_endpoint = endpoint or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
     with _LOCK:
@@ -180,7 +192,7 @@ def configure_otel(
                 )
         _METER_PROVIDER = mp
         _METER = mp.get_meter("atlas.agent")
-        _COST = _TURNS = _LATENCY = _BLOCKED = None
+        _COST = _TURNS = _LATENCY = _BLOCKED = _LLM_NARRATIVE = None
         _register_atexit_flush()
 
 
@@ -234,6 +246,7 @@ _COST: Counter | None = None
 _TURNS: Counter | None = None
 _LATENCY: Histogram | None = None
 _BLOCKED: Counter | None = None
+_LLM_NARRATIVE: Counter | None = None  # ADR-0029 ⑦：LLM 意图结局计数
 
 
 def _instruments() -> tuple[Counter, Counter, Histogram, Counter]:
@@ -435,10 +448,126 @@ def _record_analysis_step_impl(
     span.end()
 
 
+# --------------------------------------------------------------------------
+# LLM 意图打点（serving._apply_narrative 每次非 off 处理调用一次；ADR-0029 ⑦）
+# --------------------------------------------------------------------------
+def _llm_narrative_instrument() -> Counter:
+    global _LLM_NARRATIVE
+    if _LLM_NARRATIVE is None:
+        _LLM_NARRATIVE = _meter().create_counter(
+            _METRIC_LLM_NARRATIVE,
+            description="LLM 意图回合计数（候选路由/接地叙述）；属性 intent/tier/grounded/fallback",
+        )
+    return _LLM_NARRATIVE
+
+
+def record_llm_narrative(
+    *,
+    intent: str,
+    data_class: str,
+    tier: str,
+    action: str,
+    grounded: bool,
+    fallback: bool,
+    reason_code: str | None,
+    model: str | None = None,
+    usage: dict[str, int] | None = None,
+) -> None:
+    """把一次 LLM 意图（候选路由 / 接地叙述）记为 ``atlas.llm.narrative`` span + 指标。
+
+    诚实与 N9 边界（ADR-0029 ⑦，改前必读）
+    - **只记分级与计数**：intent/data_class/tier/action/grounded/fallback/reason_code
+      与 token 计数。调用方负责**不传入 prompt/叙述文本/结果数值/密钥**（N9）；
+      本函数签名不含这些参数，密钥无入口。
+    - **成本与 Guard Budget 分离**：token 计入 ``gen_ai.token_cost``（单位 token），
+      与 ``sql_guard.Budget``（扫描广度/行数）量纲不同、互不喂入。
+    - **0 token 不虚构**：未真调（缺自托管回落 / deny）usage 空 → 不产出 token 数据点，
+      与回合埋点同口径（诚实，不虚报模型调用）。
+
+    抛异常：本函数吞掉一切自身异常（观测故障不得中断问数），仅首次失败告警一次。
+    """
+
+    try:
+        _record_llm_narrative_impl(
+            intent=intent,
+            data_class=data_class,
+            tier=tier,
+            action=action,
+            grounded=grounded,
+            fallback=fallback,
+            reason_code=reason_code,
+            model=model,
+            usage=usage,
+        )
+    except Exception as exc:  # noqa: BLE001 - 见 docstring：观测故障隔离
+        global _WARNED_LLM_FAILURE
+        if not _WARNED_LLM_FAILURE:
+            _WARNED_LLM_FAILURE = True
+            warnings.warn(
+                f"[otel] LLM 意图埋点失败（已隔离，不影响主链路）：{exc!r}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+
+def _record_llm_narrative_impl(
+    *,
+    intent: str,
+    data_class: str,
+    tier: str,
+    action: str,
+    grounded: bool,
+    fallback: bool,
+    reason_code: str | None,
+    model: str | None,
+    usage: dict[str, int] | None,
+) -> None:
+    # 属性均为低基数枚举/布尔/计数——不含任何原文（N9）。
+    attrs: dict[str, Any] = {
+        ATTR_LLM_INTENT: intent,
+        ATTR_LLM_DATA_CLASS: data_class,
+        ATTR_LLM_TIER: tier,
+        ATTR_LLM_ACTION: action,
+        ATTR_LLM_GROUNDED: grounded,
+        ATTR_LLM_FALLBACK: fallback,
+    }
+    if reason_code is not None:
+        attrs[ATTR_LLM_REASON] = reason_code
+    u = usage or {}
+    prompt_tokens = int(u.get("prompt_tokens", 0))
+    completion_tokens = int(u.get("completion_tokens", 0))
+    used_llm = prompt_tokens > 0 or completion_tokens > 0
+    if used_llm:
+        attrs[ATTR_GENAI_PROMPT_TOKENS] = prompt_tokens
+        attrs[ATTR_GENAI_COMPLETION_TOKENS] = completion_tokens
+        if model:
+            attrs[ATTR_GENAI_MODEL] = str(model)
+
+    span = _tracer().start_span("atlas.llm.narrative", kind=SpanKind.INTERNAL, attributes=attrs)
+    span.end()
+
+    _llm_narrative_instrument().add(
+        1,
+        {
+            "atlas.llm.intent": intent,
+            "atlas.llm.tier": tier,
+            "atlas.llm.grounded": grounded,
+            "atlas.llm.fallback": fallback,
+        },
+    )
+    if used_llm:
+        # LLM 成本→ gen_ai.token_cost（与 Guard Budget 无关，⑦）。
+        cost, _turns, _latency, _blocked = _instruments()
+        cost.add(
+            prompt_tokens + completion_tokens, {"atlas.llm.tier": tier, "atlas.llm.intent": intent}
+        )
+
+
 __all__ = [
     "configure_otel",
     "record_turn",
     "record_analysis_step",
+    "record_llm_narrative",
     "ATTR_QUESTION_ID",
     "ATTR_SESSION_ID",
     "ATTR_KIND",
@@ -457,4 +586,11 @@ __all__ = [
     "ATTR_GENAI_COMPLETION_TOKENS",
     "ATTR_GENAI_MODEL",
     "ATTR_PROMPT_VERSION",
+    "ATTR_LLM_INTENT",
+    "ATTR_LLM_DATA_CLASS",
+    "ATTR_LLM_TIER",
+    "ATTR_LLM_ACTION",
+    "ATTR_LLM_GROUNDED",
+    "ATTR_LLM_FALLBACK",
+    "ATTR_LLM_REASON",
 ]

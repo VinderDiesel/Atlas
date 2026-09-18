@@ -1,7 +1,7 @@
 # ADR-0026：多步任务规划（Text-to-Insight 阶段二入口——有界 Plan 序列与确定性变化贡献）
 
 - 日期：2026-09-16
-- 状态：proposed（决策待用户确认；本文完成的是分析与开发任务拆解，**不是功能实现回执**）
+- 状态：**delivered**（决策 ①~⑥ 经用户确认 2026-09-17；后端与评测证据见下文「实现回执」，前端消费见「前端消费落地注记」）
 - 范围：一个 Metric、一个 Dimension、两个绝对期间的确定性贡献分解；复用单轮查询链，不推断业务因果。
 - 相关：ADR-0003（Guard）、0009（无环图）、0010（评测）、0014（过滤/追问/绝对时间）、
   0015（形态词典）、0016（值域）、0017（时间智能）、0019（快照）、0020（会话）、
@@ -248,7 +248,7 @@ contribution_pct_i = 100 * delta_i / delta_total
 4. 资格证明、原始证据 checkpoint、独立评测不是可删的收尾；缺任一项会出现“数学正确但业务错误”。
    多步有额外 DB 往返和保存成本，无实测不写具体性能指标，也不写“时延=单轮×步数”。
 5. `docs/text2insight.md` 的相对时间与因果百分比示例必须标为愿景，并补绝对时间、单维贡献的本批边界。
-   不能把“分析完成”或本文 proposed 状态改成“功能已交付”。
+   不能把“分析完成”或本文 proposed 状态改成“功能已交付”。（约束适用期：草拟→确认前；2026-09-17 用户已确认决策 ①~⑥且具备评测/e2e/api 与前端消费证据，故顶部状态行翻 `delivered`，非草拟期越权）
 6. 无新增第三方依赖；复用 Python 标准库、LangGraph、sqlglot、JSON Schema 及现有测试工具。
    若实现需要新增依赖、放宽 Guard 或改变权限，先重新裁定，不在任务内顺手引入。
 
@@ -568,7 +568,7 @@ DataAgent 私有 `_begin_analysis(sid, question, identity) -> dict`、
 
 ## 实现回执（2026-09-16）
 
-> 本节为实现回执，不改变上文任务清单的复选框状态（交付审计属控制器职权）；状态行仍为 `proposed`，待用户决策确认后再定 accepted。本节全部数字引自控制器 2026-09-16 实测（T11 brief「可引用实测事实」节），均有 `eval/reports/` 下报告产物背书。
+> 本节为实现回执，不改变上文任务清单的复选框状态（交付审计属控制器职权）；状态行当时留 `proposed` 待用户决策确认（**2026-09-17 用户确认决策 ①~⑥，已翻 `delivered`**）。本节全部数字引自控制器 2026-09-16 实测（T11 brief「可引用实测事实」节），均有 `eval/reports/` 下报告产物背书。
 
 **代码版本**：`b95a9e9`；工作树脏——当前全部改动未提交（用户约束：仅明确要求时才 commit）。
 
@@ -588,3 +588,12 @@ DataAgent 私有 `_begin_analysis(sid, question, identity) -> dict`、
 - 过程如实记录（R11-6/R11-7）：analysis-eval 在 HEAD 锁快照后裸跑曾失败（`missing_eligibility`——live agent 经 resolve_runtime_snapshot 绑 HEAD b95a9e9 而资格证据只登记在 7c966e9，前置门按设计诚实拒答，非缺陷）；经 `ATLAS_SNAPSHOT_SHA=7c966e9` 显式覆盖（ADR-0019 决策①③文档化补救）跑绿，再删除本会话自建的 `data/snapshots/b95a9e9.meta.json` 后裸跑复核 exit 0（最终报告即裸跑产物）。
 
 **报告路径清单**：`eval/reports/b95a9e9.json`（make eval）、`eval/reports/analysis-b95a9e9.json`（make analysis-eval）、`eval/reports/e2e-acceptance-b95a9e9.json`（make e2e）、`eval/reports/api-acceptance-b95a9e9.json`（make api-verify）。
+
+### 前端消费落地注记（2026-09-17，追加；不改状态行）
+
+> 依上文「追加落地注记、不重写历史正文」补充。**状态仍为 `proposed`**（按本 ADR 决策确认规则：须用户确认决策后才改 accepted/delivered）。
+
+- **消费面**：`/api/v1/analyze` 已接入问数工作台（`AskWorkbench` 查询/分析模式切换 + `AnalysisBlock` 归因视图），**request/response、非流式、无图表**（图表因 `chart.py` 只吃执行 SQL 产物、归因量属派生值而未做，见 dev-plan-analyze-frontend-consumption §3）。
+- **提交**：`c26451a`（计划+注记）、`5183998`（fixture+渲染测试）、`502650f`（AnalysisBlock+模式切换）。
+- **证据**：`make ui-check` 全绿（13 文件 99 测试，含 `no-persist`/`honesty`/`app`/治理回归）；归因数字全部只读自本 ADR 决策⑥ 的 17 键投影，前端零重算（`reduce`/`sum`/`toFixed` 0 命中）。
+- **边界**：不改本 ADR 决策、不新增端点（`EXPECTED_PATHS` 仍 17）、不触碰 `chart.py`；流式另见 ADR-0028 ④a（仍 gated G-S4）。

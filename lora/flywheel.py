@@ -102,7 +102,14 @@ def export_approved(dry: bool = False) -> dict[str, int]:
         payload: dict[str, Any] = json.loads(payload_path.read_text(encoding="utf-8"))
         if payload.get("status") != "approved":
             continue
-        sample = payload.get("sample", {})
+        sample = payload.get("sample") or {}
+        # 向后兼容旧格式 user_feedback（schema_version ≤ 1：question/answer_plan
+        # 在顶层，无 sample 包裹）。新格式统一从 sample 读取（ADR-0027 决策 ④）。
+        if not sample and "question" in payload:
+            sample = {k: v for k, v in payload.items() if k not in (
+                "schema_version", "status", "origin", "category", "sha",
+                "source", "collected_at", "reviewed_by",
+            )}
         q = str(sample.get("question", "")).strip()
         plan_obj = sample.get("answer_plan")
         if not isinstance(plan_obj, dict):

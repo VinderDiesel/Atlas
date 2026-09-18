@@ -60,3 +60,34 @@ export function recordTurns(
     entry.id === sessionId && turns > entry.turnsSeen ? { ...entry, turnsSeen: turns } : entry,
   );
 }
+
+/** 会话分组：同一 role 的会话归入一组（B2a 分组布局的数据源）。 */
+export interface SessionGroup {
+  /** 该组激活时的角色名；未认证启动为 null（如实显示「未认证」，不猜测）。 */
+  role: string | null;
+  /** 该角色下的所有会话（按原始顺序）。 */
+  sessions: SessionLogEntry[];
+}
+
+/**
+ * 按角色分组会话记录（B2a 分组布局；设计页 §2 面板 3 的演进）。
+ *
+ * 保持原始顺序（先见先分组）；null role 作为独立分组（不合并、不丢弃）。
+ * 纯函数，不修改入参数组。
+ */
+export function groupSessionsByRole(log: readonly SessionLogEntry[]): SessionGroup[] {
+  const groups: SessionGroup[] = [];
+  const roleToGroup = new Map<string | null, SessionGroup>();
+
+  for (const entry of log) {
+    let group = roleToGroup.get(entry.role);
+    if (group === undefined) {
+      group = { role: entry.role, sessions: [] };
+      roleToGroup.set(entry.role, group);
+      groups.push(group);
+    }
+    group.sessions.push(entry);
+  }
+
+  return groups;
+}

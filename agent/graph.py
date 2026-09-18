@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -71,9 +71,11 @@ from sqlglot import exp
 
 from agent.analysis import (
     ANALYSIS_ROLES,
+    AnalysisPlan,
     AnalysisPlanner,
     AnalysisReasonCode,
     AnalysisResult,
+    AnalysisStepEvent,
     Attribution,
     plan_projection,
     synthesize,
@@ -1011,7 +1013,6 @@ class DataAgent:
             config: RunnableConfig = {"configurable": {"thread_id": f"{self.model.name}:{sid}"}}
             parent_no = int(dict(self._graph.get_state(config).values or {}).get("turns") or 1)
             steps: list[TurnResult] = []
-            evidence: list[dict[str, Any]] = []
             terminal: Literal["blocked", "error"] | None = None
             gate_code: AnalysisReasonCode | None = None
             attribution: Attribution | None = None
@@ -1070,54 +1071,20 @@ class DataAgent:
                     # 子步上下文（T05 契约）：session_id/question 逐子步在位，
                     # 结束（成功/失败/异常）后 finally 清除，不留陈旧上下文。
                     self._analysis_context = {"session_id": sid, "question": question}
-                    for i, role in enumerate(ANALYSIS_ROLES):
-                        step = self._run_analysis_step(plan.sub_plans[i], identity=identity)
-                        # 每个已执行步骤恰一条步骤 span（失败步也有终态 span）；
-                        # 埋点故障在 otel 层隔离，不反噬编排。
-                        record_analysis_step(
-                            step, model=self.model, session_id=sid, turns=parent_no, role=role
+                    # 四步循环抽进私有生成器（ADR-0028 GATE-④ 技术前置：稳定
+                    # 分步接缝），此处**急切驱动到耗尽**——锁不外泄、副作用与
+                    # 旧内联逐字等价（决策③）。
+                    events = list(
+                        self._iter_analysis_step_events(
+                            plan, identity=identity, session_id=sid, parent_no=parent_no
                         )
-                        steps.append(step)
-                        if step.kind == "answer":
-                            evidence.append(
-                                {
-                                    "index": i + 1,
-                                    "role": role,
-                                    "status": "ok",
-                                    "sql": step.sql,
-                                    "columns": list(step.columns),
-                                    "rows": encode_rows(step.rows),
-                                    "latency_ms": step.latency_ms,
-                                }
-                            )
-                            self._write_analysis_state(
-                                sid, {"analysis_record": {"steps": list(evidence)}}
-                            )
-                            continue
-                        if step.kind in ("blocked", "error"):
-                            # 裁剪终止：部分结果与被拒 SQL 不落证据（只留
-                            # role/status/原因码），失败后零调用，角色保留。
-                            failed_code: AnalysisReasonCode = (
-                                "guard_blocked" if step.kind == "blocked" else "execution_error"
-                            )
-                            evidence.append(
-                                {
-                                    "index": i + 1,
-                                    "role": role,
-                                    "status": step.kind,
-                                    "reason_code": failed_code,
-                                }
-                            )
-                            self._write_analysis_state(
-                                sid, {"analysis_record": {"steps": list(evidence)}}
-                            )
-                            terminal = step.kind
-                            result_code = failed_code
-                            break
-                        raise RuntimeError(
-                            f"分析子步出现意外终态 {step.kind!r}（决策③：子步只允许 "
-                            "answer/blocked/error）"
-                        )
+                    )  # noqa: E501
+                    steps = [ev.step for ev in events]
+                    if events and events[-1].step.kind in ("blocked", "error"):
+                        terminal_step = events[-1].step
+                        terminal = terminal_step.kind  # type: ignore[assignment]
+                        assert terminal is not None  # 收窄为 Literal[blocked|error]
+                        result_code = events[-1].reason_code
                     if terminal is None:
                         # 四步全成才调 T04 综合（纯函数，精确 Decimal）。
                         attribution = synthesize(plan, tuple(steps))
@@ -1167,6 +1134,92 @@ class DataAgent:
                 elapsed_ms=_elapsed(),
                 snapshot_sha=snapshot_sha,
                 semantic_sha256=semantic_sha,
+            )
+
+    def _iter_analysis_step_events(
+        self,
+        plan: AnalysisPlan,
+        *,
+        identity: dict[str, object] | None,
+        session_id: str,
+        parent_no: int,
+    ) -> Iterator[AnalysisStepEvent]:
+        """四步分析循环的分步接缝（ADR-0028 GATE-④ 技术前置）：每执行一步产出一个事件。
+
+        把 `analyze()` 内部 T05 四步循环抽成生成器：按 `ANALYSIS_ROLES` 顺序逐步
+        执行、每步埋一条步骤 span、落一份证据，并 `yield` 一个 `AnalysisStepEvent`；
+        遇 blocked/error 落裁剪证据后 `break`（被拒 SQL 不外泄，N3），意外终态抛
+        `RuntimeError`（决策③边界，不静默）。行为与被抽出的旧内联循环**逐字等价**。
+
+        刻意**不是**公开流：`analyze()` 在同一把锁内急切驱动本生成器到耗尽，锁的
+        生命周期不外泄给消费者（否则消费者停在 yield = 持锁 / finally 推迟清上下文）。
+        将来若 GATE-④ 时间前置满足、SSE 解禁，是另写消费者急切驱动本接缝——接缝
+        存在且被契约测试锁定，但不因此新增任何执行面或对外端点（裁定 C / N2 / N3）。
+
+        前置调用契约（由 `analyze()` 负责、本生成器不重复）：已通过资格前置门、
+        已落准入证据记录（`_begin_analysis` + 计划投影 `analysis_record`）、已置
+        `self._analysis_context`——子步 `_run_analysis_step` 依赖该上下文。
+
+        参数
+        ----
+        plan      : 解析出的四步 AnalysisPlan（sub_plans 顺序即 ANALYSIS_ROLES）。
+        identity  : 已验证 claims（透传子步，None = 无行级策略）。
+        session_id: 会话键（供步骤 span 记账，与 analyze 父轮同 thread）。
+        parent_no : 父轮序号（步骤 span 的 turns 标签）。
+
+        产出
+        ----
+        AnalysisStepEvent：每执行一步一个；成功步 reason_code=None，终态步携带
+        稳定安全码且其 step.sql 为 None（被拒 SQL 不入事件）。
+        """
+        evidence: list[dict[str, Any]] = []
+        for i, role in enumerate(ANALYSIS_ROLES):
+            step = self._run_analysis_step(plan.sub_plans[i], identity=identity)
+            # 每个已执行步骤恰一条步骤 span（失败步也有终态 span）；
+            # 埋点故障在 otel 层隔离，不反噬编排。
+            record_analysis_step(
+                step, model=self.model, session_id=session_id, turns=parent_no, role=role
+            )
+            if step.kind == "answer":
+                entry: dict[str, Any] = {
+                    "index": i + 1,
+                    "role": role,
+                    "status": "ok",
+                    "sql": step.sql,
+                    "columns": list(step.columns),
+                    "rows": encode_rows(step.rows),
+                    "latency_ms": step.latency_ms,
+                }
+                evidence.append(entry)
+                self._write_analysis_state(
+                    session_id, {"analysis_record": {"steps": list(evidence)}}
+                )
+                yield AnalysisStepEvent(
+                    role=role, step=step, evidence_entry=entry, reason_code=None
+                )
+                continue
+            if step.kind in ("blocked", "error"):
+                # 裁剪终止：部分结果与被拒 SQL 不落证据（只留 role/status/原因码），
+                # 失败后零调用，角色保留。
+                failed_code: AnalysisReasonCode = (
+                    "guard_blocked" if step.kind == "blocked" else "execution_error"
+                )
+                entry = {
+                    "index": i + 1,
+                    "role": role,
+                    "status": step.kind,
+                    "reason_code": failed_code,
+                }
+                evidence.append(entry)
+                self._write_analysis_state(
+                    session_id, {"analysis_record": {"steps": list(evidence)}}
+                )
+                yield AnalysisStepEvent(
+                    role=role, step=step, evidence_entry=entry, reason_code=failed_code
+                )
+                break
+            raise RuntimeError(
+                f"分析子步出现意外终态 {step.kind!r}（决策③：子步只允许 answer/blocked/error）"
             )
 
     def _clarify_turn(

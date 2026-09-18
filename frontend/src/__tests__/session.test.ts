@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { newSessionId, recordTurns, rotateSession, startSessionLog } from "../state/session";
+import { newSessionId, recordTurns, rotateSession, startSessionLog, groupSessionsByRole } from "../state/session";
 
 describe("state/session.ts", () => {
   it("会话 id 为 UUID v4 形态且不超过契约上限 64 字符", () => {
@@ -42,5 +42,45 @@ describe("state/session.ts", () => {
     const advanced = recordTurns(unchanged, second.id, 5);
     expect(advanced[1].turnsSeen).toBe(5);
     expect(advanced[0]).toBe(first); // 未命中的条目保持引用（不无谓重建）
+  });
+
+  describe("groupSessionsByRole（B2a 分组布局的数据源）", () => {
+    it("空 log → 空分组", () => {
+      expect(groupSessionsByRole([])).toEqual([]);
+    });
+
+    it("单角色 → 单分组", () => {
+      const log = [startSessionLog("hq_admin", 1000), startSessionLog("hq_admin", 2000)];
+      const groups = groupSessionsByRole(log);
+      expect(groups).toHaveLength(1);
+      expect(groups[0].role).toBe("hq_admin");
+      expect(groups[0].sessions).toHaveLength(2);
+    });
+
+    it("多角色 → 多分组，null role 归入「未认证」", () => {
+      const log = [
+        startSessionLog(null, 1000),
+        startSessionLog("hq_admin", 2000),
+        startSessionLog("branch_manager", 3000),
+        startSessionLog("hq_admin", 4000),
+      ];
+      const groups = groupSessionsByRole(log);
+      expect(groups).toHaveLength(3);
+      const unauth = groups.find((g) => g.role === null);
+      expect(unauth).toBeDefined();
+      expect(unauth!.sessions).toHaveLength(1);
+      const hq = groups.find((g) => g.role === "hq_admin");
+      expect(hq).toBeDefined();
+      expect(hq!.sessions).toHaveLength(2);
+    });
+
+    it("保持原始顺序（先见先分组）", () => {
+      const log = [
+        startSessionLog("b_role", 1000),
+        startSessionLog("a_role", 2000),
+      ];
+      const groups = groupSessionsByRole(log);
+      expect(groups.map((g) => g.role)).toEqual(["b_role", "a_role"]);
+    });
   });
 });

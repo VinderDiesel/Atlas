@@ -31,6 +31,7 @@ import os
 import re
 import time
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ import yaml
 from dotenv import load_dotenv
 
 from agent.compiler import OrderSpec, Plan, SemanticModel, TimeSpec
+from agent.llm_policy import BackendEndpoint
 from agent.planner import ClarificationRequest, Planner
 from agent.tools.schema_linker import SchemaLinker
 
@@ -46,6 +48,9 @@ load_dotenv()  # AGENTS.md 第 13 节：密钥只走环境变量/.env
 
 PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "generator_plan.yaml"
 _DEFAULT_MODEL = "gpt-4o-mini"
+
+# 注入式补全函数：(system, user, model) -> (content, usage)。测试用 fake、生产用 `self._chat`。
+ChatFn = Callable[[str, str, str], tuple[str, dict[str, int]]]
 
 # 时间格式正则（与 planner.py 口径一致：year/quarter YYYYQn/month YYYYMM/date ISO）
 _Q_RE = re.compile(r"^\d{4}Q[1-4]$")
@@ -164,12 +169,29 @@ class Generator:
         model: SemanticModel,
         engine: str = "openai",
         model_name: str | None = None,
+        *,
+        endpoint: BackendEndpoint | None = None,
+        chat: ChatFn | None = None,
     ) -> None:
+        """构造生成器（ADR-0029 ①：候选路由按能力注入后端）。
+
+        `endpoint` / `chat` 均为可选注入，缺省时保持既有行为（读 `.env` 的 OPENAI_*），
+        向后兼容。`endpoint` 由 `resolve_llm_backend` 解析得出（B1），使候选路由跟随
+        服务端分级；`chat` 为测试注入的假补全函数（零网络）。模型名优先级：
+        显式 `model_name` > `endpoint.model_name` > env `OPENAI_MODEL_NAME` > 默认。
+        """
         if engine not in ("openai", "stub"):
             raise ValueError(f"未知引擎：{engine}（支持 openai / stub）")
         self.model = model
         self.engine = engine
-        self.model_name = model_name or os.environ.get("OPENAI_MODEL_NAME") or _DEFAULT_MODEL
+        self._endpoint = endpoint
+        self._chat_fn = chat
+        self.model_name = (
+            model_name
+            or (endpoint.model_name if endpoint else None)
+            or os.environ.get("OPENAI_MODEL_NAME")
+            or _DEFAULT_MODEL
+        )
         self._planner = Planner(model)  # stub 引擎与确定性校验复用
         self._linker = SchemaLinker(model)  # RAG 上下文检索（确定性）
         self._prompt = self._load_prompt()
@@ -258,11 +280,22 @@ class Generator:
         return self._parse_response(raw, question, usage)
 
     def _chat(self, system: str, user: str) -> tuple[str, dict[str, int]]:
-        """OpenAI 兼容 chat/completions；返回 (content, usage)。"""
-        api_key = os.environ.get("OPENAI_API_KEY", "")
-        base = os.environ.get("OPENAI_BASE_URL", "").rstrip("/") or "https://api.openai.com/v1"
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY 未配置（.env）；stub 引擎不调用网络")
+        """OpenAI 兼容 chat/completions；返回 (content, usage)。
+
+        仅用可移植子集（model/messages/temperature/max_tokens，①）——禁用
+        response_format/function-calling/流式增量（云与 vLLM 行为不一致）。优先级：
+        注入 `chat` > 注入 `endpoint` > `.env`（向后兼容）。
+        """
+        if self._chat_fn is not None:  # 测试注入：零网络，不碰 env
+            return self._chat_fn(system, user, self.model_name)
+        if self._endpoint is not None:  # 服务端分级后端（自托管可无密钥）
+            base = self._endpoint.base_url.rstrip("/")
+            api_key = self._endpoint.api_key
+        else:  # 缺省 env（云路由）：无密钥即拒，不静默降级
+            base = os.environ.get("OPENAI_BASE_URL", "").rstrip("/") or "https://api.openai.com/v1"
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if not api_key:
+                raise RuntimeError("OPENAI_API_KEY 未配置（.env）；stub 引擎不调用网络")
         payload = {
             "model": self.model_name,
             "messages": [
@@ -273,18 +306,22 @@ class Generator:
             "max_tokens": 800,  # 2026-09-03 实测：300 对 TopN+RAG 候选问句不足，
             # 6/7 拒答源于输出截断（completion=300/300）而非语义拒答 → 提高上限
         }
+        headers = {"Content-Type": "application/json"}
+        if api_key:  # N9：密钥走请求头，绝不入 query
+            headers["Authorization"] = f"Bearer {api_key}"
         req = urllib.request.Request(
             f"{base}/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 - 受管端点
             body: dict[str, Any] = json.loads(resp.read().decode("utf-8"))
         content = str(body["choices"][0]["message"]["content"])
-        usage = {
-            "prompt_tokens": int(body.get("usage", {}).get("prompt_tokens", 0)),
-            "completion_tokens": int(body.get("usage", {}).get("completion_tokens", 0)),
+        u = body.get("usage", {})
+        usage: dict[str, int] = {
+            "prompt_tokens": int(u.get("prompt_tokens", 0)),
+            "completion_tokens": int(u.get("completion_tokens", 0)),
         }
         return content, usage
 

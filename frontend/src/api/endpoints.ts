@@ -9,20 +9,21 @@
  *    /"(\/(?:api\/v1|health)[a-z0-9_\/{}.-]*)"/g —— 仅匹配**双引号字面量**。
  *    故：路径一律用双引号；注释里提及路径只写反引号形式（如 `/api/v1/ask`），
  *    双引号包裹会被误提取成多出的一条而断言变红。
- * 3. 集合必须与后端契约 v2（ADR-0022；业务面增量见 ADR-0026）逐条对应：
- *    17 条 = 16 条 /api/v1 前缀路径（1 探针 + 5 业务 + 8 治理集合 + 2 钻取）
+ * 3. 集合必须与后端契约 v2（ADR-0022；业务面增量见 ADR-0026 / ADR-0028 ④a）逐条对应：
+ *    18 条 = 17 条 /api/v1 前缀路径（1 探针 + 6 业务 + 8 治理集合 + 2 钻取）
  *    + 1 条根探针。
  */
 export const API = {
   // 前缀探针（POST/GET 面不消费；与根探针同 body，ADR-0022 决策 ①）
   health: "/api/v1/health",
 
-  // 业务面 5 条（POST；ADR-0022 决策 ③ + ADR-0026 多步分析）
+  // 业务面 6 条（POST；ADR-0022 决策 ③ + ADR-0026 多步分析 + ADR-0028 ④a SSE 流式）
   plan: "/api/v1/plan",
   compile: "/api/v1/compile",
   ask: "/api/v1/ask",
   planExecute: "/api/v1/plan/execute",
   analyze: "/api/v1/analyze",
+  analyzeStream: "/api/v1/analyze/stream",
 
   // 治理面 8 集合（GET，只读 Git 文件与产物目录；ADR-0022 决策 ⑤）
   governanceModels: "/api/v1/governance/models",

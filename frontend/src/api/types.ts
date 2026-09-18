@@ -78,6 +78,24 @@ export interface TurnPayload {
   snapshot_bound_to_head: boolean | null;
   /** 多步分析投影（ADR-0026 决策 ⑥）：键恒存，非分析请求值为 null 而非缺失。 */
   analysis: AnalysisPayload | null;
+  /**
+   * 接地叙述块（ADR-0029 ⑤）：**条件键**——仅当请求 `llm=narrative` 且服务端发货/回落时出现；
+   * `off`/未请求时键缺失（非 null）。`grounded=false` 文本永不发货（发确定性模板）。
+   */
+  narrative?: NarrativeBlock;
+}
+
+/**
+ * 接地叙述块（ADR-0029 ③④，serving `NarrativeResult.to_payload()` 镜像）。
+ * tier=none 表回落模板；grounded 仅对 LLM 文本为真；后端由服务端定（客户端不能选）。
+ */
+export interface NarrativeBlock {
+  text: string;
+  model: string;
+  tier: "cloud" | "self_hosted" | "none";
+  grounded: boolean;
+  fallback: boolean;
+  reason_code: string | null;
 }
 
 /**
@@ -244,6 +262,11 @@ export interface AskBody {
   question: string;
   model: ModelDomain;
   session_id?: string;
+  /**
+   * LLM 意图旗标（ADR-0029 ⑤）：加性可选，缺省 `off` 逐字向后兼容。
+   * 仅表达意图，后端由服务端定（客户端不能选 backend）；角色无该能力 → 403。
+   */
+  llm?: "off" | "candidate-fallback" | "narrative";
 }
 
 export interface CompileBody {
@@ -462,4 +485,67 @@ export interface SnapshotsItem {
   bound_to_head: boolean;
   /** 后端按 created_at 降序排序后标记的首条（字典序不可靠——0019 陷阱 6）。 */
   is_latest_by_created_at: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// ④a /analyze/stream SSE 事件载荷（ADR-0028 决策 ④·执行模型 A）
+//
+// 事件名字面量与 `serving/api.py` 的 AG-UI 词表常量逐字对齐（借鉴非兼容，N2：
+// 不声称 AG-UI 兼容）。STATE_SNAPSHOT 直发 `/analyze` 同一份完整 TurnPayload
+// （单一事实源）——见 api/analysis-stream.ts 的 reducer 终态断言。
+// ---------------------------------------------------------------------------
+
+/** SSE 事件名（镜像 serving/api.py:467-473 七个词表字面量）。 */
+export type AnalysisStreamEventName =
+  | "RUN_STARTED"
+  | "STEP_STARTED"
+  | "STEP_FINISHED"
+  | "TOOL_CALL_RESULT"
+  | "STATE_SNAPSHOT"
+  | "RUN_FINISHED"
+  | "RUN_ERROR";
+
+/** 单帧 SSE：事件名 + 已解析的 JSON 载荷（未知键保留，不强收窄）。 */
+export interface AnalysisStreamEvent {
+  name: AnalysisStreamEventName;
+  data: unknown;
+}
+
+/** RUN_STARTED：`{intent}`（plan None 时 intent 为 null）。 */
+export interface RunStartedData {
+  intent: string | null;
+}
+
+/** STEP_STARTED：`{role}`（角色名，取自 ANALYSIS_ROLES）。 */
+export interface StepStartedData {
+  role: string;
+}
+
+/** STEP_FINISHED：成功步收尾（status = step.kind，恒 "answer"）。 */
+export interface StepFinishedData {
+  role: string;
+  status: string;
+  latency_ms: number;
+}
+
+/**
+ * TOOL_CALL_RESULT：成功步的已执行事实（镜像 serving/api.py:498-508）。
+ * 被拒步不出此事件（N3：被拒 SQL 不出网）。
+ */
+export interface ToolCallResultData {
+  role: string;
+  columns: string[];
+  rows: unknown[][];
+  row_count: number;
+}
+
+/** RUN_FINISHED：`{status}` = analysis_status（ok|unavailable|blocked|error）。 */
+export interface RunFinishedData {
+  status: string;
+}
+
+/** RUN_ERROR：终态失败步（reason_code 镜像 _analysis_payload 失败步口径）。 */
+export interface RunErrorData {
+  reason_code: string;
+  text: string;
 }

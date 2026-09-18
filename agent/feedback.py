@@ -53,6 +53,7 @@ class FeedbackSubmission:
     sql: str | None = None
     path: str | None = None
     engine: str | None = None
+    corrected_term: str = ""
     turns_in_session: int = 1
     submitted_at: str = ""
 
@@ -93,11 +94,14 @@ def submit_feedback(
     submission = _validated(submission)
     feedback_dir.mkdir(parents=True, exist_ok=True)
     name = f"{submission.submitted_at.replace(':', '')}_{uuid4().hex[:8]}.json"
+    # 统一 pending 形态（ADR-0027 决策 ④）：与 failure_collect 同构，
+    # 下游 export_approved 只读 payload["sample"] 一套 schema。
+    # 历史 user_feedback（顶层 question/kind）由 export_approved 兼容读取。
     payload = {
-        "schema_version": 1,
-        "status": "pending_review",  # 人工确认前不进入任何训练/演示数据
+        "schema_version": 2,
+        "status": "pending_review",
         "origin": "user",
-        **asdict(submission),
+        "sample": asdict(submission),
     }
     path = feedback_dir / name
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

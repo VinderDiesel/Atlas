@@ -16,6 +16,12 @@
  * model 同一事实源）——切换重拉 metrics + dimensions 2 条；locale 是本页局部
  * 态（`_LOCALES = ("zh_cn", "en_us")`，serving/governance.py 枚举镜像）——
  * 切换重拉 synonyms 1 条。
+ *
+ * **只读边界（ADR-0028 决策 ③）**：治理面 8 子页 + 2 钻取一律只读——所有数据
+ * 经 `getJson` 取回，无 PUT/POST/写控件/editable 属性（`governance-readonly.test.ts`
+ * 静态断言守线）。语义定义的编辑只可能经 ADR-0027 proposal 链路（提交候选 →
+ * 人工 + CI 落 Git），绝不直写；`semantic/` 的 Git 唯一事实源地位（ADR-0002）
+ * 与 N8 同名指标唯一性由此守住。
  */
 import { Alert, Divider, Select, Space, Tabs, Typography } from "antd";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -50,28 +56,33 @@ import ValuesSection from "./ValuesSection";
 
 const { Text } = Typography;
 
-/** 8 子页的唯一清单（Tabs 顺序 = 设计页 §2 面板 4 顺序）。 */
-const SECTIONS = [
-  { key: "models", label: "语义模型（models）" },
-  { key: "metrics", label: "指标（metrics）" },
-  { key: "dimensions", label: "维度（dimensions）" },
-  { key: "synonyms", label: "locale 词典（synonyms）" },
-  { key: "values", label: "值域注册表（values）" },
-  { key: "policies", label: "行级策略（policies）" },
-  { key: "reports", label: "评测报告（reports）" },
-  { key: "snapshots", label: "快照（snapshots）" },
+/**
+ * 8 子页的唯一清单（Tabs 顺序 = 设计页 §2 面板 4 顺序）。
+ * 导出为 GOV_SECTIONS 供结构断言测试（governance-grouping.test.ts）消费。
+ * group 字段划入 build（语义构建面 5 页）/ control（治理控制面 3 页）两组
+ * （ADR-0028 决策 ①）；8 key 不变，旧路由仍可解析。
+ */
+export const GOV_SECTIONS = [
+  { key: "models", label: "语义模型（models）", group: "build" as const },
+  { key: "metrics", label: "指标（metrics）", group: "build" as const },
+  { key: "dimensions", label: "维度（dimensions）", group: "build" as const },
+  { key: "synonyms", label: "locale 词典（synonyms）", group: "build" as const },
+  { key: "values", label: "值域注册表（values）", group: "build" as const },
+  { key: "policies", label: "行级策略（policies）", group: "control" as const },
+  { key: "reports", label: "评测报告（reports）", group: "control" as const },
+  { key: "snapshots", label: "快照（snapshots）", group: "control" as const },
 ] as const;
 
-type SectionKey = (typeof SECTIONS)[number]["key"];
+type SectionKey = (typeof GOV_SECTIONS)[number]["key"];
 
 /** locale 枚举（serving/governance.py `_LOCALES` 的镜像；不做本地化推断）。 */
 const LOCALES = ["zh_cn", "en_us"] as const;
 
 function isSectionKey(value: string): value is SectionKey {
-  return SECTIONS.some((item) => item.key === value);
+  return GOV_SECTIONS.some((item) => item.key === value);
 }
 
-const SECTION_LIST_TEXT = SECTIONS.map((item) => item.key).join(" / ");
+const SECTION_LIST_TEXT = GOV_SECTIONS.map((item) => item.key).join(" / ");
 
 function unknownSectionNote(section: string): string {
   return `未知子页 ${section}：治理面为 8 子页（${SECTION_LIST_TEXT}）。`;
@@ -229,9 +240,21 @@ export default function GovernanceLayout({ token, domain, onDomainChange }: Prop
       <Tabs
         activeKey={section}
         onChange={(key) => navigate(`/governance/${key}`)}
-        items={SECTIONS.map(({ key, label }) => ({
+        items={GOV_SECTIONS.filter((s) => s.group === "build").map(({ key, label }) => ({
           key,
-          label,
+          label: `构建 · ${label}`,
+          children: sectionChildren[key],
+        }))}
+      />
+      <Divider orientation="left" plain>
+        治理控制面（control）
+      </Divider>
+      <Tabs
+        activeKey={section}
+        onChange={(key) => navigate(`/governance/${key}`)}
+        items={GOV_SECTIONS.filter((s) => s.group === "control").map(({ key, label }) => ({
+          key,
+          label: `控制 · ${label}`,
           children: sectionChildren[key],
         }))}
       />

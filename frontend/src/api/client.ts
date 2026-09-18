@@ -27,7 +27,7 @@ export class ApiError extends Error {
 }
 
 /** 读错误体：FastAPI 恒为 {"detail": ...}；detail 可能是字符串或校验错误数组。 */
-async function readDetail(res: Response): Promise<string> {
+export async function readDetail(res: Response): Promise<string> {
   try {
     const body: unknown = await res.json();
     if (typeof body === "object" && body !== null && "detail" in body) {
@@ -40,7 +40,7 @@ async function readDetail(res: Response): Promise<string> {
   }
 }
 
-function parseRetryAfter(res: Response): number | null {
+export function parseRetryAfter(res: Response): number | null {
   const raw = res.headers.get("Retry-After");
   if (raw === null) {
     return null;

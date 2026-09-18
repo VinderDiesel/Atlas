@@ -3,7 +3,7 @@
 契约口径（诚实声明）
 --------------------
 - 路由契约 v2（ADR-0022 决策 ①②）：业务端点一律挂 `/api/v1` 前缀
-  （/api/v1/plan /compile /ask /plan/execute /analyze），旧无前缀路径**硬切**（404，
+  （/api/v1/plan /compile /ask /plan/execute /analyze /analyze/stream），旧无前缀路径**硬切**（404，
   无兼容期、不保留别名）；`/health` **双挂**（根 + 前缀，同一 handler）——根挂点
   是给 docker-compose healthcheck 与外部探针留的（ADR-0022 理由 2：探针字符串
   改了而无人验证过 compose，失败链没有自动兜底）。「契约 v2」指 URL 契约，
@@ -58,23 +58,31 @@
 - SPA 静态面（P0b，ADR-0018 决策 ②⑤）：`frontend/dist/index.html` 存在时才挂
   catch-all（**必须注册在两个 router 之后**，否则吞掉 /api/v1 的 404）；dist 缺失
   跳过并打 warning——fresh clone 未构建前端时 API 照常可用（条件挂载）。
+- ④a SSE 流式面（ADR-0028 决策 ④·执行模型 A compute-then-stream）：`/analyze/stream`
+  复用 `/analyze` 同一执行路径跑完 `agent.analyze()`（SQL 已全部经 Guard、锁已释放）→
+  把已算好的分步产物按 `docs/design/agui-event-mapping.md` §2/§4 词表**回放**为
+  `text/event-stream`。事件**只承载展示**、不新增任何 SQL 构造/执行通道（N3）；
+  借鉴词表 ≠ AG-UI 兼容（N2，不宣称兼容）。被拒步无 `TOOL_CALL_RESULT`（被拒 SQL 不出网）。
 """
 
 from __future__ import annotations
 
+import json
 import logging
-from collections.abc import Callable
+import time
+import urllib.request
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent.analysis import (
@@ -95,6 +103,8 @@ from agent.compiler import (
 )
 from agent.factory import SnapshotUnavailable, create_live_agent
 from agent.graph import DataAgent, SessionIdentityConflict
+from agent.llm_policy import BackendEndpoint, LlmAction, LlmConfig, resolve_llm_backend
+from agent.narrative import ChatClient, OpenAICompatClient, synthesize_narrative
 from agent.planner import ClarificationRequest, Planner
 from agent.state import ANALYSIS_RECORD_VERSION, TurnResult
 from data.identity import (
@@ -102,8 +112,9 @@ from data.identity import (
     git_short_sha_or_none,
     resolve_runtime_snapshot,
 )
+from observability.otel import record_llm_narrative
 from serving.audit import AuditLog
-from serving.auth import BearerClaims
+from serving.auth import BearerClaims, caps_for_role
 from serving.governance import build_governance_router
 from serving.ratelimit import RateLimiter
 
@@ -147,6 +158,54 @@ def _package_version() -> str:
 
 
 # ---------------------------------------------------------------------------
+# 自托管后端探活（ADR-0029 ③：分级路由决策唯一的外部 I/O，隔离在 serving 侧）
+# ---------------------------------------------------------------------------
+# `resolve_llm_backend` 是纯函数，存活状态以合并布尔 `self_hosted_ok` 传入。本函数是
+# 该布尔的唯一生产者：未配置自托管直接 False（零网络）；已配置则对 `/v1/models` 短超时
+# 探活，结果短时缓存防惊群。探活失败（无 GPU / 端点未起 / 超时）一律 False → 叙述回落
+# 确定性模板，**绝不因探活失败而升级云**（③ fail-closed）。
+_SELFHOSTED_PROBE_TTL_S = 30.0
+_selfhosted_probe_cache: dict[str, tuple[bool, float]] = {}
+
+
+def _probe_self_hosted(endpoint: BackendEndpoint) -> bool:
+    """对自托管 `/v1/models` 短超时探活；任何异常（连接拒绝/超时/非 2xx）→ False。"""
+    headers = {"Content-Type": "application/json"}
+    if endpoint.api_key:  # N9：密钥走请求头，绝不入 query
+        headers["Authorization"] = f"Bearer {endpoint.api_key}"
+    req = urllib.request.Request(
+        f"{endpoint.base_url.rstrip('/')}/models", headers=headers, method="GET"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310 - 受管端点
+            return 200 <= resp.status < 300
+    except Exception:  # noqa: BLE001 - 探活失败即视为不可用（fail-closed），不外泄异常
+        return False
+
+
+def self_hosted_available(cfg: LlmConfig) -> bool:
+    """自托管「已配置 ∩ 探活通过」的合并布尔（带 TTL 缓存；密钥不入缓存键）。"""
+    ep = cfg.self_hosted
+    if ep is None:
+        return False
+    now = time.monotonic()
+    hit = _selfhosted_probe_cache.get(ep.base_url)
+    if hit is not None and now - hit[1] < _SELFHOSTED_PROBE_TTL_S:
+        return hit[0]
+    ok = _probe_self_hosted(ep)
+    _selfhosted_probe_cache[ep.base_url] = (ok, now)
+    return ok
+
+
+class _NullClient:
+    """占位客户端：仅用于 `FALLBACK_TEMPLATE`（无自托管）分支——`synthesize_narrative`
+    在该分支直接回落模板、绝不调用本类；若被调用即说明路由错（抛错响亮失败）。"""
+
+    def complete(self, system: str, user: str, model: str) -> tuple[str, dict[str, int]]:
+        raise RuntimeError("_NullClient 不应被调用（叙述路由未解析出自托管后端）")
+
+
+# ---------------------------------------------------------------------------
 # 请求/响应模型（HTTP 面粗约束；细约束在 Guard/Planner，不在此复制）
 # ---------------------------------------------------------------------------
 
@@ -168,6 +227,11 @@ class QuestionBody(BaseModel):
 class AskBody(QuestionBody):
     session_id: str | None = Field(
         default=None, min_length=1, max_length=64, description="会话键（缺省自动生成，单轮）"
+    )
+    llm: Literal["off", "candidate-fallback", "narrative"] = Field(
+        default="off",
+        description="LLM 意图旗标（ADR-0029 ⑤，加性可选；缺省 off 逐字向后兼容）。"
+        "后端/分级/是否允许全由服务端定（客户端不能选 backend）。",
     )
 
 
@@ -456,6 +520,69 @@ def _analysis_payload(result: AnalysisResult) -> dict[str, Any] | None:
     return payload
 
 
+# --- ④a SSE 流式序列化（ADR-0028 决策④·执行模型 A compute-then-stream）---
+# 事件名为已登记 AG-UI 词表字面量（docs/design/agui-event-mapping.md §2/§4，借鉴非兼容）。
+RUN_STARTED = "RUN_STARTED"
+STEP_STARTED = "STEP_STARTED"
+STEP_FINISHED = "STEP_FINISHED"
+TOOL_CALL_RESULT = "TOOL_CALL_RESULT"
+STATE_SNAPSHOT = "STATE_SNAPSHOT"
+RUN_FINISHED = "RUN_FINISHED"
+RUN_ERROR = "RUN_ERROR"
+
+
+def _iter_analysis_events(
+    result: AnalysisResult, turn_payload: dict[str, Any]
+) -> Iterator[tuple[str, Any]]:
+    """AnalysisResult → AG-UI 词表事件序列（展示专用，N3：不执行、不新编译）。
+
+    全成流：RUN_STARTED → 每 role 一对 STEP_STARTED/STEP_FINISHED（成功步中间插
+    TOOL_CALL_RESULT 携已执行事实）→ STATE_SNAPSHOT（完整父轮 TurnPayload，含
+    `analysis` 17 键）→ RUN_FINISHED。STATE_SNAPSHOT 直发 `/analyze` 同一份
+    TurnPayload（`_analysis_turn_payload`）→ 前端零重构、终态逐字一致（N1 单源）。
+    blocked/error 终态步 → 该步 STEP_STARTED 后直接 RUN_ERROR（被拒 SQL 不出网，
+    无 TOOL_CALL_RESULT、无 STATE_SNAPSHOT，沿用 _analysis_payload 失败步裁剪口径）。
+    无分析意图（plan is None）→ 仅 RUN_STARTED/RUN_FINISHED（analysis 为 null，对齐
+    request/response 版）。
+    """
+    plan = result.plan
+    yield RUN_STARTED, {"intent": plan.intent if plan is not None else None}
+    if plan is None:
+        yield RUN_FINISHED, {"status": analysis_status(result)}
+        return
+    for role, step in zip(ANALYSIS_ROLES, result.steps, strict=False):
+        yield STEP_STARTED, {"role": role}
+        if step.kind == "answer":
+            yield (
+                TOOL_CALL_RESULT,
+                _jsonable(
+                    {
+                        "role": role,
+                        "columns": list(step.columns),
+                        "rows": list(step.rows),
+                        "row_count": step.row_count,
+                    }
+                ),
+            )
+            yield STEP_FINISHED, {"role": role, "status": step.kind, "latency_ms": step.latency_ms}
+            continue
+        yield (
+            RUN_ERROR,
+            {
+                "reason_code": "guard_blocked" if step.kind == "blocked" else "execution_error",
+                "text": f"分析步骤 {role} 未成功（{step.kind}）",
+            },
+        )
+        return
+    yield STATE_SNAPSHOT, turn_payload
+    yield RUN_FINISHED, {"status": analysis_status(result)}
+
+
+def _sse_frame(event: str, data: Any) -> str:
+    """单帧 SSE：``event: <名>\ndata: <json>\n\n``（compact JSON，无换行污染分帧）。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 def _compile_plan(body: CompileBody) -> Plan:
     return Plan(
         metric=body.metric,
@@ -537,6 +664,9 @@ def create_app(
     audit: AuditLog | None = None,
     rate_limiter: RateLimiter | None = None,
     governance_rate_limiter: RateLimiter | None = None,
+    llm_config: LlmConfig | None = None,
+    self_hosted_probe: Callable[[LlmConfig], bool] | None = None,
+    narrative_client_factory: Callable[[BackendEndpoint], ChatClient] | None = None,
 ) -> FastAPI:
     """构造 API 应用（URL 契约 v2，ADR-0022）。
 
@@ -581,6 +711,79 @@ def create_app(
         if governance_rate_limiter is not None
         else RateLimiter.governance_from_env()
     )
+
+    # LLM 服务化 seam（ADR-0029）：缺省生产装配（env 配置 + 真探活 + OpenAI 兼容客户端）；
+    # 测试注入假配置/探活/客户端以在无网络/无 GPU 下验接地发货路径。
+    llm_cfg = llm_config if llm_config is not None else LlmConfig.from_env()
+    probe = self_hosted_probe if self_hosted_probe is not None else self_hosted_available
+    client_factory = (
+        narrative_client_factory
+        if narrative_client_factory is not None
+        else (lambda ep: OpenAICompatClient(ep.base_url, ep.api_key))
+    )
+
+    def _apply_narrative(
+        body: AskBody, claims: BearerClaims, payload: dict[str, Any], *, endpoint: str
+    ) -> dict[str, Any]:
+        """确定性结果之上的 LLM 意图后处理（⑤）。**只在 `llm != "off"` 时动作**，
+        且只在成功发货/回落时新增 `narrative` 键——`off` 路径不触本函数任何分支，
+        返回的 payload 与接入前逐字一致（向后兼容硬约束）。
+
+        分级：角色无该意图 → 403（⑥，不静默降级）；narrative → 自托管接地叙述（不可用
+        /失败/非接地 → 回落确定性模板，`fallback=true`）；candidate-fallback → 仅过
+        RBAC 门（注册域内候选链仍不可达，不改确定性实答，守 §10 与诚实口径）。
+        """
+        intent = body.llm
+        if intent == "off":
+            return payload
+        caps = caps_for_role(str(claims.get("role") or ""))
+        decision = resolve_llm_backend(intent, caps, llm_cfg, self_hosted_ok=probe(llm_cfg))
+        if decision.action is LlmAction.DENY:
+            # ⑦ 先落观测再抛 403（拒因可观测；无 token、无原文）。
+            record_llm_narrative(
+                intent=intent,
+                data_class=decision.data_class,
+                tier="none",
+                action=str(decision.action),
+                grounded=False,
+                fallback=False,
+                reason_code=decision.reason_code or "role_denied",
+            )
+            audit_log.record(
+                endpoint=endpoint, claims=claims, kind="llm_denied", status=403, bucket="business"
+            )
+            raise HTTPException(status_code=403, detail=f"角色无权使用 LLM 意图：{intent}")
+        if intent != "narrative":
+            # candidate-fallback：已门控，本注册域内不改确定性实答（未真调 LLM → 无 token）。
+            record_llm_narrative(
+                intent=intent,
+                data_class=decision.data_class,
+                tier=decision.tier,
+                action=str(decision.action),
+                grounded=False,
+                fallback=False,
+                reason_code=decision.reason_code,
+            )
+            return payload
+        if decision.action is LlmAction.USE_BACKEND and decision.endpoint is not None:
+            client: ChatClient = client_factory(decision.endpoint)
+        else:
+            client = _NullClient()  # FALLBACK_TEMPLATE：不真调，synthesize 直接回落
+        result = synthesize_narrative(payload, decision, client=client)
+        # ⑦ 接地叙述观测：只记分级 + token 计数（result.usage 已由 narrative 侧剥去原文）。
+        record_llm_narrative(
+            intent=intent,
+            data_class=decision.data_class,
+            tier=result.tier,
+            action=str(decision.action),
+            grounded=result.grounded,
+            fallback=result.fallback,
+            reason_code=result.reason_code,
+            model=result.model or None,
+            usage=result.usage,
+        )
+        payload["narrative"] = result.to_payload()
+        return payload
 
     def _require_rate_limit(request: Request, claims: BearerClaims) -> None:
         """业务桶限流依赖：per-token 单维共享桶；429 命中也是审计事件。
@@ -771,7 +974,8 @@ def create_app(
             latency_ms=result.latency_ms if result.kind == "answer" else None,
             bucket="business",
         )
-        return _turn_payload(result, agent.snapshot)
+        payload = _turn_payload(result, agent.snapshot)
+        return _apply_narrative(body, _claims, payload, endpoint=f"{API_PREFIX}/ask")
 
     @router.post(
         "/plan/execute",
@@ -827,6 +1031,20 @@ def create_app(
         )
         return _turn_payload(result, agent.snapshot)
 
+    def _analysis_turn_payload(
+        result: AnalysisResult, snapshot: RuntimeSnapshot | None
+    ) -> dict[str, Any]:
+        """`/analyze` 与 `/analyze/stream` 共用的父轮 TurnPayload 单源构造（N1）。
+
+        含决策⑥净化（T08/评审 Minor-2）：仅分析轮（plan 在）的 error 出网前裁为
+        稳定文案（底层异常含连接信息不出网）；无意图 fallback 轮（plan=None）与
+        /ask 同形不净化。两种传输面共用本函数 → 终态逐字一致（流式非第二事实源）。
+        """
+        turn = result.turn
+        if result.plan is not None and turn.kind == "error" and turn.error is not None:
+            turn = replace(turn, error="分析子步骤执行失败（execution_error）")
+        return _turn_payload(turn, snapshot, analysis=_analysis_payload(result))
+
     @router.post(
         "/analyze",
         summary="多步变化贡献分析（ADR-0026；AskBody/Bearer/模型选择/限流与 /ask 同源）",
@@ -871,31 +1089,72 @@ def create_app(
                 bucket="business",
             )
             raise HTTPException(status_code=422, detail="会话身份冲突，请换新 session_id") from exc
-        turn = result.turn
-        if result.plan is not None and turn.kind == "error" and turn.error is not None:
-            # 决策⑥净化（T08 裁定；评审 Minor-2 收窄）：**仅分析轮**（plan 在）——
-            # 底层异常文本（含连接信息）不出网。TurnResult 冻结，replace 出响应
-            # 专用拷贝——只改 HTTP 响应这一份，checkpoint / 审计口径不在此处理
-            # （审计行本就不含 SQL 与 error 文本；节点内部 error 保持可诊断）。
-            # 无意图 fallback 轮（plan=None）没有分析子步，不净化：与 /ask error
-            # 轮同形（R1——原始 error 文本与 post-Guard SQL 照常出网），否则
-            # 「分析子步骤执行失败」对一轮从未开始的分析是误归因。
-            turn = replace(turn, error="分析子步骤执行失败（execution_error）")
+        payload = _analysis_turn_payload(result, agent.snapshot)
+        payload = _apply_narrative(body, _claims, payload, endpoint=f"{API_PREFIX}/analyze")
         audit_log.record(
             endpoint=f"{API_PREFIX}/analyze",
             claims=_claims,
-            session_id=turn.session_id,
-            kind=turn.kind,
-            # 与 /ask 同款：row_count/latency_ms 只在 answer 轮有语义——分析父轮
-            # row_count 恒 0（不冒充单 SQL 结果），latency 为子 SQL 耗时和
-            row_count=turn.row_count if turn.kind == "answer" else None,
-            latency_ms=turn.latency_ms if turn.kind == "answer" else None,
+            session_id=payload["session_id"],
+            kind=payload["kind"],
+            row_count=payload["row_count"] if payload["kind"] == "answer" else None,
+            latency_ms=payload["latency_ms"] if payload["kind"] == "answer" else None,
             bucket="business",
         )
-        return _turn_payload(
-            turn,
-            agent.snapshot,
-            analysis=_analysis_payload(result),
+        return payload
+
+    @router.post(
+        "/analyze/stream",
+        summary="多步归因 SSE 流式面（ADR-0028 ④a·执行模型 A compute-then-stream）",
+        response_class=StreamingResponse,
+    )
+    def analyze_stream(
+        body: AskBody,
+        _claims: BearerClaims,
+        _rl: None = Depends(_require_rate_limit),
+    ) -> StreamingResponse:
+        """④a：`/analyze` 的流式展示面——请求面与 `/analyze` 同构（AskBody/Bearer/限流）。
+
+        执行模型 A（compute-then-stream，非边执行边流）：调 `agent.analyze()`
+        （SQL 已全部经 Guard，内部锁在返回时已释放）→ 把已算好的分步产物回放为
+        SSE。本端点自身不构造/执行任何 SQL（N3 唯一通道 = agent.analyze）；事件只
+        承载展示。借鉴 AG-UI 词表 ≠ 兼容（N2）。
+        """
+        model_name = _model_name(body.model)
+        agent = _agent(model_name)
+        sid = body.session_id
+        try:
+            result = agent.analyze(body.question, session_id=sid, identity=_claims)
+        except SessionIdentityConflict as exc:
+            audit_log.record(
+                endpoint=f"{API_PREFIX}/analyze/stream",
+                claims=_claims,
+                session_id=sid,
+                kind="conflict",
+                status=422,
+                bucket="business",
+            )
+            raise HTTPException(status_code=422, detail="会话身份冲突，请换新 session_id") from exc
+        # 终态 STATE_SNAPSHOT 直发 `/analyze` 同一份 TurnPayload（单源、零重构）。
+        turn_payload = _analysis_turn_payload(result, agent.snapshot)
+        turn_payload = _apply_narrative(
+            body, _claims, turn_payload, endpoint=f"{API_PREFIX}/analyze/stream"
+        )
+        audit_log.record(
+            endpoint=f"{API_PREFIX}/analyze/stream",
+            claims=_claims,
+            session_id=turn_payload["session_id"],
+            kind=turn_payload["kind"],
+            row_count=turn_payload["row_count"] if turn_payload["kind"] == "answer" else None,
+            latency_ms=turn_payload["latency_ms"] if turn_payload["kind"] == "answer" else None,
+            bucket="business",
+        )
+        frames = [
+            _sse_frame(name, data) for name, data in _iter_analysis_events(result, turn_payload)
+        ]
+        return StreamingResponse(
+            iter(frames),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     # 装配（决策 ①②④）：业务 router + 治理 router 同 app；治理面不经过 _agent，

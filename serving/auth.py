@@ -61,29 +61,49 @@ TOKEN_TTL_SECONDS = 3600  # 本地开发 token 有效期 1 小时
 
 @dataclass(frozen=True)
 class RoleSpec:
-    """角色注册项：claims 契约 + 说明。**不含策略名**——策略由域决定（决策 ①）。"""
+    """角色注册项：claims 契约 + 说明 + LLM 能力位。**不含策略名**——策略由域决定（决策 ①）。"""
 
     required_claims: tuple[str, ...]
     list_claims: frozenset[str] = frozenset()  # 需 sql_in 渲染的列表值键
     description: str = ""
+    llm: frozenset[str] = frozenset()  # ADR-0029 ⑥：可请求的 LLM 意图集（取值同 LlmIntent）
 
+
+# 角色 → LLM 能力映射（ADR-0029 ⑥「映射是配置」，用户 2026-09-18 定）：
+# candidate-fallback=schema-only（低敏）全员；narrative=result-bearing（含结果数值、
+# 强制自托管）收窄到分析/治理角色。branch_manager/broker 仅候选路由、无叙述。
+_ROUTE = frozenset({"candidate-fallback"})
+_ROUTE_NARRATE = frozenset({"candidate-fallback", "narrative"})
 
 ROLE_DIRECTORY: dict[str, RoleSpec] = {
     # 金融域（rp_branch_visible）：gold-146 问句可注入
-    "hq_admin": RoleSpec((), frozenset(), "总部管理员：全量可见（条件 1=1，两域共用）"),
-    "branch_manager": RoleSpec(("branch",), frozenset(), "分支经理：仅见本分支"),
-    "broker": RoleSpec(("brokerid",), frozenset(), "经纪人：仅见本人 brokerid 名下"),
+    "hq_admin": RoleSpec(
+        (), frozenset(), "总部管理员：全量可见（条件 1=1，两域共用）", _ROUTE_NARRATE
+    ),
+    "branch_manager": RoleSpec(("branch",), frozenset(), "分支经理：仅见本分支", _ROUTE),
+    "broker": RoleSpec(("brokerid",), frozenset(), "经纪人：仅见本人 brokerid 名下", _ROUTE),
     "compliance_auditor": RoleSpec(
-        ("max_tier",), frozenset(), "合规审计：仅见 tier ≤ 上限的客户档"
+        ("max_tier",), frozenset(), "合规审计：仅见 tier ≤ 上限的客户档", _ROUTE
     ),
     # 零售域（rp_dept_visible）：region/product_category 逻辑列已对齐物理
     # （dim_store.s_state / dim_item.i_category，2026-09-04 P5 实测，见
     # eval/reports/rls-verify-<sha>.json）；claims：region + categories（sql_in）
-    "region_manager": RoleSpec(("region",), frozenset(), "大区（州）经理：仅见本州门店"),
+    "region_manager": RoleSpec(
+        ("region",), frozenset(), "大区（州）经理：仅见本州门店", _ROUTE_NARRATE
+    ),
     "category_analyst": RoleSpec(
-        ("region", "categories"), frozenset({"categories"}), "品类分析师：本州 + 指定品类集"
+        ("region", "categories"),
+        frozenset({"categories"}),
+        "品类分析师：本州 + 指定品类集",
+        _ROUTE_NARRATE,
     ),
 }
+
+
+def caps_for_role(role: str) -> frozenset[str]:
+    """角色 → 可请求的 LLM 意图集（ADR-0029 ⑥）。未注册角色 → 空集（拒绝一切 LLM 意图）。"""
+    spec = ROLE_DIRECTORY.get(role)
+    return spec.llm if spec is not None else frozenset()
 
 
 class AuthError(Exception):
@@ -246,7 +266,7 @@ def _jwk_rsa_public(jwk: dict[str, object]):
         from cryptography.hazmat.primitives.asymmetric import rsa
     except Exception as exc:  # noqa: BLE001 - 可选依赖，缺失即明确报错
         raise AuthError(
-            "cryptography 未安装：外部 IdP（RS256/JWKS）验证需要它" "（uv sync --extra idp）"
+            "cryptography 未安装：外部 IdP（RS256/JWKS）验证需要它（uv sync --extra idp）"
         ) from exc
     if jwk.get("kty") != "RSA":
         raise AuthError(f"仅支持 RSA JWK，收到 kty={jwk.get('kty')!r}")

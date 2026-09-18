@@ -62,14 +62,16 @@ class TestSubmitFeedback(unittest.TestCase):
         )
         self.assertTrue(path.is_file())
         record = self._read(path)
-        self.assertEqual(record["schema_version"], 1)
+        self.assertEqual(record["schema_version"], 2)
         self.assertEqual(record["status"], "pending_review")
         self.assertEqual(record["origin"], "user")
-        self.assertEqual(record["kind"], "wrong_metric")
-        self.assertEqual(record["question"], GOLD102_Q)
-        self.assertEqual(record["comment"], "我说的是交易额不是佣金")
-        self.assertEqual(record["metric"], "commission_revenue")
-        self.assertEqual(record["submitted_at"], "2026-09-03T10:00:00+00:00")
+        # 统一 pending 形态（ADR-0027 决策 ④）：submission 字段在 sample 键下
+        sample = record["sample"]
+        self.assertEqual(sample["kind"], "wrong_metric")
+        self.assertEqual(sample["question"], GOLD102_Q)
+        self.assertEqual(sample["comment"], "我说的是交易额不是佣金")
+        self.assertEqual(sample["metric"], "commission_revenue")
+        self.assertEqual(sample["submitted_at"], "2026-09-03T10:00:00+00:00")
 
     def test_submitted_at_defaults_to_utc_iso(self) -> None:
         before = datetime.now(UTC).isoformat(timespec="seconds")
@@ -78,7 +80,7 @@ class TestSubmitFeedback(unittest.TestCase):
             feedback_dir=self.tmp,
         )
         after = datetime.now(UTC).isoformat(timespec="seconds")
-        stamp = str(self._read(path)["submitted_at"])
+        stamp = str(self._read(path)["sample"]["submitted_at"])
         self.assertTrue(stamp.endswith("+00:00"), "时间必须是显式 UTC 时区")
         self.assertGreaterEqual(stamp, before)
         self.assertLessEqual(stamp, after)
@@ -114,12 +116,13 @@ class TestDataAgentIntegration(unittest.TestCase):
             r, "wrong_value", comment="数值和报表对不上", feedback_dir=self.tmp
         )
         record = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(record["metric"], "commission_revenue")
-        self.assertIn("SELECT", str(record["sql"]))
-        self.assertIn("LIMIT 5", str(record["sql"]))
-        self.assertEqual(record["question"], GOLD102_Q)
-        self.assertEqual(record["engine"], "deterministic")
-        self.assertEqual(record["turns_in_session"], 1)
+        sample = record["sample"]
+        self.assertEqual(sample["metric"], "commission_revenue")
+        self.assertIn("SELECT", str(sample["sql"]))
+        self.assertIn("LIMIT 5", str(sample["sql"]))
+        self.assertEqual(sample["question"], GOLD102_Q)
+        self.assertEqual(sample["engine"], "deterministic")
+        self.assertEqual(sample["turns_in_session"], 1)
 
     def test_feedback_from_clarify_turn_allowed(self) -> None:
         """反问轮纠错（问句本身歧义/误判）也应可上报；metric/sql 为空如实记录。"""
@@ -129,8 +132,9 @@ class TestDataAgentIntegration(unittest.TestCase):
             r, "misunderstood", comment="这个不该反问", feedback_dir=self.tmp
         )
         record = json.loads(path.read_text(encoding="utf-8"))
-        self.assertIsNone(record["metric"])
-        self.assertIsNone(record["sql"])
+        sample = record["sample"]
+        self.assertIsNone(sample["metric"])
+        self.assertIsNone(sample["sql"])
 
     def test_default_dir_is_failures_user_feedback(self) -> None:
         self.assertEqual(

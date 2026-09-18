@@ -3,7 +3,8 @@ r"""HTTP 契约 v2 防漂移测试（ADR-0022 判据 1/2/4/5/6/7/9/10；无 DB�
 
 口径（落地实测 2026-09-16；与 ADR-0022 判据原文的漂移逐条登记——N1 以实测为准）：
 
-- 判据 1/9：`EXPECTED_PATHS`（17 条字面量，0026 起）== `app.openapi()["paths"]` 集合，
+- 判据 1/9：`EXPECTED_PATHS`（18 条字面量，0026 起 17、④a 增 /analyze/stream 为 18）
+  == `app.openapi()["paths"]` 集合，
   且无前缀业务路径 404（硬切，无兼容期）。**P0b 已接入 TS 侧**：
   `frontend/src/api/endpoints.ts` 由本文件 `test_ts_endpoints_match_expected_paths`
   正则提取（`/"(\/(?:api\/v1|health)[a-z0-9_\/{}.-]*)"/g`，只认双引号字面量），
@@ -37,6 +38,10 @@ r"""HTTP 契约 v2 防漂移测试（ADR-0022 判据 1/2/4/5/6/7/9/10；无 DB�
   `b95a9e9.json` 主报告（make eval）与 `analysis-<sha>` 新模式首现
   （`analysis-b95a9e9.json`，make analysis-eval）；`e2e-acceptance-b95a9e9.json`
   / `api-acceptance-b95a9e9.json` 落既有模式；
+- 主报告 15→16、快照首条 7c966e9→1e2e557：④a 解锁证据批次（2026-09-17，用户授权
+  补锁+跑）真链全量 `make eval` 新增主报告 `1e2e557.json`（`dry=False` 计入）与
+  最新锁 `1e2e557.meta.json`（同数据多锁·created_at 最大）；`analysis-e7909f2.json`
+  落既有 `analysis-<sha>` 模式（报告模式集不变，仍 20）；
 - 快照首条 ccb4c8b→7c966e9：P0a 同日 11:43:52 新锁（同数据多锁，指纹与 ccb4c8b
   全一致，见 `data/snapshots/README.md`）；
 - explanation 13→14 键：ADR 述「13 个固定键」，实测 14（含 `data_refreshed_at`
@@ -75,8 +80,9 @@ from serving.ratelimit import (
 REPO = Path(__file__).resolve().parent.parent
 API = API_PREFIX  # 唯一前缀事实源（serving/api.py 常量；本文件不重复字面量）
 
-# 判据 1/9：17 条字面量（根 /health + 前缀 /health + 业务 5 + 治理 8 集合 + 2 钻取）
-# ADR-0026 L246：业务面增一个端点（/api/v1/analyze）须同步 OpenAPI、前端路径集合
+# 判据 1/9：18 条字面量（0026 增 /analyze 为 17；④a 增 /analyze/stream 为 18）
+# = 根 /health + 前缀 /health + 业务 6 + 治理 8 集合 + 2 钻取
+# ADR-0026 L246 / ADR-0028 ④a：业务面增端点须同步 OpenAPI、前端路径集合
 # 与类型——本集合与 TS 侧双向相等即为该同步的机器断言
 EXPECTED_PATHS: frozenset[str] = frozenset(
     {
@@ -87,6 +93,7 @@ EXPECTED_PATHS: frozenset[str] = frozenset(
         "/api/v1/ask",
         "/api/v1/plan/execute",
         "/api/v1/analyze",
+        "/api/v1/analyze/stream",
         "/api/v1/governance/models",
         "/api/v1/governance/metrics",
         "/api/v1/governance/dimensions",
@@ -134,9 +141,9 @@ EXPLANATION_KEYS = frozenset(
 
 # 诚实性标志位（判据 7 的实测快照——变更须有意更新，见模块 docstring）
 SKIPPED_VALUES = 11
-STRUCTURED_REPORTS = 15
+STRUCTURED_REPORTS = 16
 REPORT_PATTERNS = 20
-FIRST_SNAPSHOT_SHA = "7c966e9"
+FIRST_SNAPSHOT_SHA = "1e2e557"
 NON_FIRST_SNAPSHOT_SHA = "dc4f350"  # ADR 明写「断言它不是首条」
 
 GOLD102_Q = "按分支统计 2013 年佣金收入，列出前 5 名"
@@ -215,7 +222,9 @@ class TestOpenapiPaths(_BaseCase):
             f"契约 v2 路径漂移：多 {paths - EXPECTED_PATHS} 缺 {EXPECTED_PATHS - paths}",
         )
         self.assertEqual(
-            len(paths), 17, f"设计页 §5 断言 17 条（0026 增 /analyze），实测 {len(paths)}"
+            len(paths),
+            18,
+            f"设计页 §5 断言 18 条（0026 /analyze、④a /analyze/stream），实测 {len(paths)}",
         )
 
     def test_ts_endpoints_match_expected_paths(self) -> None:

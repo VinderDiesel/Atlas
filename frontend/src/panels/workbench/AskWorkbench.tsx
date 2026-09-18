@@ -18,11 +18,17 @@
  * 日志供 SessionPanel 展示）。token 空串时动作按钮禁用并指引顶栏角色切换器。
  * 零遥测口径（0018 落地注记 P1 批次）：错误原文如实渲染，吞错即违约。
  */
-import { Alert, Button, Input, Select, Space, Typography } from "antd";
+import { Alert, Button, Input, Segmented, Select, Space, Typography } from "antd";
 import { Fragment, useState, type ReactNode } from "react";
 
 import { postJson } from "../../api/client";
 import { API } from "../../api/endpoints";
+import {
+  initialStreamState,
+  reduceAnalysisEvents,
+  streamAnalysis,
+  type AnalysisStreamState,
+} from "../../api/analysis-stream";
 import type {
   CompileResponse,
   ModelDomain,
@@ -37,13 +43,17 @@ import { shortSha } from "../../lib/sha";
 
 import ChartBlock from "../chart/ChartBlock";
 
+import AnalysisBlock from "./AnalysisBlock";
 import DataTable from "./DataTable";
 import ExplanationBlock from "./ExplanationBlock";
+import NarrativeBlock from "./NarrativeBlock";
 import PlanPreview from "./PlanPreview";
 import SqlPreview from "./SqlPreview";
 import TruncationNote from "./TruncationNote";
 
-type Busy = "ask" | "plan" | "compile" | "execute";
+type Busy = "ask" | "plan" | "compile" | "execute" | "analyze";
+
+type WorkMode = "query" | "analyze";
 
 interface Props {
   /** Bearer token（App 内存态）；空串时动作按钮禁用并指引顶栏角色切换器。 */
@@ -70,6 +80,10 @@ export default function AskWorkbench({
   const [compileSql, setCompileSql] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy | null>(null);
   const [error, setError] = useState<unknown>(null);
+  /** 工作模式（决策 B）：query=现有单轮问数；analyze=消费 /analyze 多步归因。默认查询，不改既有行为。 */
+  const [mode, setMode] = useState<WorkMode>("query");
+  /** ④a 流式消费的中间态（仅 analyze 模式；终态以 payload 为准，单源逐字一致）。 */
+  const [streamState, setStreamState] = useState<AnalysisStreamState>(initialStreamState());
 
   async function run(action: Busy, fn: () => Promise<void>): Promise<void> {
     setBusy(action);
@@ -92,6 +106,38 @@ export default function AskWorkbench({
       );
       setPayload(resp);
       onTurnSeen(resp.session_id, resp.turns_in_session);
+    });
+  };
+
+  /**
+   * 多步归因（④a）：优先走流式 `/analyze/stream` 渐进消费；终态 STATE_SNAPSHOT
+   * 即与 request/response 逐字同源的完整 TurnPayload（单一事实源）。流式故障或
+   * 无分析意图（无 STATE_SNAPSHOT）时回落 `/analyze`（request/response，ADR-0026
+   * 决策⑥），渲染义务不变：错误原文经 run 的 catch → ErrorNote 如实展示。
+   */
+  const analyze = (text: string): void => {
+    void run("analyze", async () => {
+      const body = { question: text, model, session_id: sessionId };
+      const events: Parameters<typeof reduceAnalysisEvents>[0] = [];
+      setStreamState(initialStreamState());
+      let final: TurnPayload | null = null;
+      try {
+        for await (const evt of streamAnalysis(body, token)) {
+          events.push(evt);
+          setStreamState(reduceAnalysisEvents(events));
+        }
+        final = reduceAnalysisEvents(events).final;
+      } catch {
+        final = null; // 流式失败：下方统一回落 request/response
+      }
+      if (final === null) {
+        const resp = await postJson<TurnPayload>(API.analyze, body, token);
+        setPayload(resp);
+        onTurnSeen(resp.session_id, resp.turns_in_session);
+        return;
+      }
+      setPayload(final);
+      onTurnSeen(final.session_id, final.turns_in_session);
     });
   };
 
@@ -167,6 +213,9 @@ export default function AskWorkbench({
         {ANSWER_SECTIONS.map((section) => (
           <Fragment key={section}>{sections[section]}</Fragment>
         ))}
+        {/* ⑦ 接地叙述（ADR-0029 ⑤）：条件键——narrative 缺失（off/未请求）时渲染 null，
+            off 路径不占位、不改变既有 DOM（逐字向后兼容）。 */}
+        <NarrativeBlock narrative={p.narrative} />
       </Space>
     );
   }
@@ -273,6 +322,14 @@ export default function AskWorkbench({
         autoSize={{ minRows: 2, maxRows: 6 }}
       />
       <Space wrap>
+        <Segmented<WorkMode>
+          value={mode}
+          onChange={(value) => setMode(value)}
+          options={[
+            { value: "query", label: "查询" },
+            { value: "analyze", label: "分析" },
+          ]}
+        />
         <Select<ModelDomain>
           value={model}
           onChange={onModelChange}
@@ -282,15 +339,28 @@ export default function AskWorkbench({
             { value: "retail", label: "retail（零售）" },
           ]}
         />
-        <Button type="primary" loading={busy === "ask"} disabled={!canRun} onClick={() => ask(question)}>
-          问一句
-        </Button>
-        <Button loading={busy === "plan"} disabled={!canRun} onClick={showPlan}>
-          只看计划
-        </Button>
-        <Button loading={busy === "compile"} disabled={!canRun} onClick={compileOnly}>
-          只编译（不执行）
-        </Button>
+        {mode === "query" ? (
+          <>
+            <Button type="primary" loading={busy === "ask"} disabled={!canRun} onClick={() => ask(question)}>
+              问一句
+            </Button>
+            <Button loading={busy === "plan"} disabled={!canRun} onClick={showPlan}>
+              只看计划
+            </Button>
+            <Button loading={busy === "compile"} disabled={!canRun} onClick={compileOnly}>
+              只编译（不执行）
+            </Button>
+          </>
+        ) : (
+          <Button
+            type="primary"
+            loading={busy === "analyze"}
+            disabled={!canRun}
+            onClick={() => analyze(question)}
+          >
+            归因分析
+          </Button>
+        )}
         {token.trim() === "" && (
           <Typography.Text type="secondary">
             未激活身份：请用顶栏「角色」切换器激活（首次 make token 签发后粘贴；token
@@ -298,6 +368,33 @@ export default function AskWorkbench({
           </Typography.Text>
         )}
       </Space>
+
+      {mode === "analyze" && (
+        <Typography.Text type="secondary">
+          归因需绝对时间区间（如“2013Q4 相对 2013Q3”）；相对时间将回落澄清（Planner
+          不猜默认区间）。本视图为确定性两期变化分解，不构成业务解释。
+        </Typography.Text>
+      )}
+
+      {/* ④a 渐进消费：流式期间按事件到达序展示步骤进度（字段全取自后端事件，
+          前端零重算；终态到达后由 payload→AnalysisBlock 接管，本块随 busy 清空） */}
+      {mode === "analyze" && busy === "analyze" && streamState.steps.length > 0 && (
+        <Space direction="vertical" size={0} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            分析进行中{streamState.intent !== null ? `（意图 ${streamState.intent}）` : ""}：
+          </Typography.Text>
+          {streamState.steps.map((step) => (
+            <Typography.Text key={step.role}>
+              {step.role}：
+              {step.phase === "finished"
+                ? `完成（${step.latency_ms}ms）`
+                : step.phase === "result"
+                  ? `返回 ${step.row_count} 行`
+                  : "执行中…"}
+            </Typography.Text>
+          ))}
+        </Space>
+      )}
 
       {error !== null && <ErrorNote error={error} />}
 
@@ -314,7 +411,12 @@ export default function AskWorkbench({
 
       {compileSql !== null && <SqlPreview sql={compileSql} title="编译 SQL（只编译不执行）" />}
 
-      {payload !== null && renderTurn(payload)}
+      {payload !== null &&
+        (payload.analysis !== null ? (
+          <AnalysisBlock analysis={payload.analysis} />
+        ) : (
+          renderTurn(payload)
+        ))}
     </Space>
   );
 }

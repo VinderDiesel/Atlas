@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, Decimal, DecimalException, localcontext
-from typing import Final, Literal, NamedTuple
+from typing import Any, Final, Literal, NamedTuple
 
 from agent.compiler import (
     CompileError,
@@ -232,6 +232,35 @@ class AnalysisResult:
     elapsed_ms: float
     snapshot_sha: str | None
     semantic_sha256: str | None
+
+
+@dataclass(frozen=True)
+class AnalysisStepEvent:
+    """分析编排「分步接缝」事件：某子步执行产出的不可变快照（ADR-0028 GATE-④ 技术前置）。
+
+    **接缝类型，不是公开契约**：不出 AnalysisPayload、不参与 T01 闭合校验、
+    不跨 HTTP 边。它存在的唯一目的，是把 `analyze()` 内部四步循环的「一步执行
+    完成」这一事实物化成一个可被独立契约测试锁定的对象——满足 ADR-0028 GATE-④
+    「编排器需先有稳定分步产物可流」的**技术前置**。
+
+    边界（诚实口径，N2 / 裁定 C）：本类型不代表流式已实现。生成器只在
+    `analyze()` 同一把锁内被**急切驱动**到耗尽，没有任何 SSE/HTTP 端点慢读它；
+    公开 API 面与契约 17 条不变，对外**不宣称** AG-UI 兼容。
+
+    字段
+    ----
+    role           : 本步角色（ANALYSIS_ROLES 成员，顺序即执行序）。
+    step           : 本步 TurnResult——已受控的执行事实（answer 带 sql/columns/rows；
+                     blocked/error 步 sql=None、被拒 SQL 不外泄，N3）。
+    evidence_entry : 本步落进 analysis_record 的证据条目（成功步含 sql/rows 等；
+                     失败步仅 role/status/reason_code，与被裁剪的旧内联逐字一致）。
+    reason_code    : 仅终态步（blocked/error）携带的稳定安全码；成功步为 None。
+    """
+
+    role: str
+    step: TurnResult
+    evidence_entry: dict[str, Any]
+    reason_code: AnalysisReasonCode | None
 
 
 # ---------------------------------------------------------------------------

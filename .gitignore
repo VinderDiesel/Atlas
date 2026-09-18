@@ -54,3 +54,5 @@ serving/state/
 .DS_Store
 
 docs/outreach-*
+# 本地 AI 助手会话配置（Qoder CLI 权限记录，不入库）
+.qoder/

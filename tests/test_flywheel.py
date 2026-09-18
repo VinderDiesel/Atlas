@@ -161,6 +161,64 @@ class TestFlywheelExport(unittest.TestCase):
         finally:
             _cleanup(p)
 
+    def test_export_user_feedback_schema_unified(self) -> None:
+        """F0 回归：user_feedback（顶层形态）与 failure_collect（sample 包裹）均被导出。
+
+        代价 ① 缺陷：feedback.py 写顶层 question/kind，export_approved 读
+        payload["sample"]["question"] → user_feedback 即便 approved 也被静默跳过。
+        修好后两者应一致导出（单一 pending 形态，决策 ④）。
+        """
+        # failure_collect 形态（sample 包裹）
+        failure_collect = {
+            "sha": "f0",
+            "category": "understanding",
+            "status": "approved",
+            "reviewed_by": "tester",
+            "sample": {
+                "id": "fc1",
+                "question": "2016 年总交易额是多少",
+                "answer_plan": {
+                    "metric": "total_trade_value",
+                    "time": {"granularity": "year", "value": "2016"},
+                },
+            },
+        }
+        # user_feedback 形态（当前：顶层 question/kind；修后应统一为 sample 包裹）
+        user_feedback = {
+            "schema_version": 1,
+            "status": "approved",
+            "origin": "user",
+            "kind": "wrong_metric",
+            "question": "2016 年总交易额是多少",
+            "comment": "指标选错",
+            "answer_plan": {
+                "metric": "total_trade_value",
+                "time": {"granularity": "year", "value": "2016"},
+            },
+        }
+        files: list[Path] = []
+        try:
+            p1 = FAILURES_DIR / "understanding" / "f0-fc1.json"
+            p1.parent.mkdir(parents=True, exist_ok=True)
+            p1.write_text(json.dumps(failure_collect, ensure_ascii=False), encoding="utf-8")
+            files.append(p1)
+
+            p2 = FAILURES_DIR / "user_feedback" / "f0-uf1.json"
+            p2.parent.mkdir(parents=True, exist_ok=True)
+            p2.write_text(json.dumps(user_feedback, ensure_ascii=False), encoding="utf-8")
+            files.append(p2)
+
+            stats = flywheel.export_approved(dry=True)
+            self.assertEqual(
+                stats["exported"],
+                2,
+                "user_feedback 与 failure_collect 应一致导出（代价 ① 缺陷）",
+            )
+            self.assertEqual(stats["skipped_no_answer"], 0)
+        finally:
+            for p in files:
+                _cleanup(p)
+
 
 class TestFlywheelRun(unittest.TestCase):
     def test_empty_spin_state_truthful(self) -> None:

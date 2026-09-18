@@ -3,9 +3,9 @@
  *
  * 跨语言主断言在 Python 侧（tests/test_api_contract_v2.py）：读
  * frontend/src/api/endpoints.ts 正则提取路径字面量，与后端
- * `app.openapi()["paths"]` **双向相等**（17 条，0026 起）。本文件只做仓内自洽检查，
+ * `app.openapi()["paths"]` **双向相等**（18 条，0026 起 17、④a 增 /analyze/stream）。本文件只做仓内自洽检查，
  * 让 `npm run test`（ui-check 第二步）在不跑 Python 的情况下先一步变红：
- * - 条数 17 与 Python 侧 EXPECTED_PATHS 同口径（变更须两处同步，留红是有意的）；
+ * - 条数 18 与 Python 侧 EXPECTED_PATHS 同口径（变更须两处同步，留红是有意的）；
  * - 去重、前缀纪律（除根探针外全部以 /api/v1/ 起始）、钻取占位符形态。
  */
 import { describe, expect, it } from "vitest";
@@ -16,9 +16,9 @@ const PREFIXED: readonly string[] = Object.values(API);
 const ALL: readonly string[] = [...PREFIXED, PROBE_HEALTH];
 
 describe("endpoints.ts（0022 判据 9 的 TS 侧）", () => {
-  it("共 17 条：16 条 /api/v1 前缀路径 + 1 条根探针", () => {
-    expect(PREFIXED).toHaveLength(16);
-    expect(ALL).toHaveLength(17);
+  it("共 18 条：17 条 /api/v1 前缀路径 + 1 条根探针", () => {
+    expect(PREFIXED).toHaveLength(17);
+    expect(ALL).toHaveLength(18);
   });
 
   it("无重复路径", () => {
