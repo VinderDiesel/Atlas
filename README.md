@@ -4,7 +4,7 @@
 >
 > Status: **under active development**
 > 所有数字来自可复现脚本产物，不是营销断言。见 `EVAL_REPORT.md`。
-> v0.1 发布说明与已知边界：`docs/release-notes-v0.1.md`
+> v0.1 发布说明与已知边界：`docs/release-notes-v0.1.md`；当前版本 **v0.1.7**（执行内核重构 + 意图识别引擎 + 工作台全链路 + 前端控制台增强）
 >
 > English: [README.en.md](README.en.md)（快速开始 / 架构 / 评测复现 / 双域说明 / 已知限制摘要）
 
@@ -529,14 +529,20 @@ atlas-data-platform/
 ├── metadata/            # SQL 元数据抽取器（候选提取，非计算层）
 ├── airflow/             # yaml_jobs（源）+ dags/generated（自动生成，勿手改）
 ├── agent/               # graph（LangGraph 状态机）/ planner / compiler / security / feedback /
-│                        #   tools（registry 四件套 · mcp_server · chart）/ cli / prompts
+│                        #   tools（registry 四件套 · mcp_server · chart · broker）/ cli / prompts /
+│                        #   runtime（共享安全执行内核 + Doris 连接器 + 数据身份，ADR-0031 T04）/
+│                        #   intent（意图归一 / 全目录召回 / 槽位绑定，ADR-0031 T10）/
+│                        #   flows（声明式图编排：合同 / 校验 / 拓扑编译，ADR-0031 T09）/
+│                        #   jev_engine.py（JEV 决策引擎接入，ADR-0030 proposed）
 ├── retrieval/           # bm25 / milvus_client / graph_store
-├── serving/             # api（HTTP 服务面 v1，ADR-0012）/ auth / 验证工具
+├── serving/             # api（HTTP 服务面 v1，ADR-0012）/ auth / control（控制台 API：
+│                        #   运行/事件/反馈/源/部署/草稿/发布/诊断/备份，ADR-0031）/ mcp_stdio
 ├── frontend/            # 前端控制台工程边界（ADR-0018；P0b：构建链 + 端点常量，界面属 P1~P3）
 ├── observability/       # otel / dashboards
-├── eval/                # gold / spider / bird / runner / reports
-├── lora/                # SQL 适配器训练与数据飞轮
-├── infra/               # docker / adr；ci 为历史遗留草案（活动 CI 在 .github/workflows/）
+├── eval/                # gold（含 intent 差异样本）/ spider / bird / runner / reports /
+│                        #   workbench_*（基线/意图/验收评测脚本，ADR-0031）
+├── lora/                # SQL 适配器训练与数据飞轮 / intent RL 训练管线（intent_*）/ registry
+├── infra/               # docker（含 compose.connect.yml 最小发行）/ adr（累计 14 篇，含 0030 JEV 引擎 / 0031 可信工作台）；ci 为历史遗留草案（活动 CI 在 .github/workflows/）
 ├── docs/                # 验收记录、发布文案、术语表、素材图
 └── data/snapshots/      # 固定数据快照（记录 sha，保证评测可复现）
 ```
@@ -567,6 +573,10 @@ atlas-data-platform/
 | `make rbac-verify` | Polaris 层对象级 RBAC 回归验证（`make rbac-verify-ensure` 幂等建 principal/roles/grants；需 `.env` 的 POLARIS_RBAC_*） |
 | `make metrics-verify` | 新发布指标编译 + Guard + Doris 实测验证（Day 27，产出 `eval/reports/metrics-verify-<sha>.json`） |
 | `make test` | 全量单元 + 契约测试 |
+| `make backup` | 控制库备份（SQLite backup API，产物落 `backups/`） |
+| `make restore` | 从备份恢复（`RESTORE_MANIFEST=<path>`） |
+| `make diagnostics` | 调用诊断端点（`ATLAS_TOKEN=<jwt>`） |
+| `make acceptance` | T13 首次接入验收（记录动作与起止时间，输出报告） |
 | `make serve` | 启动 HTTP API（uvicorn 127.0.0.1:8000，单进程，见 §9.1） |
 | `make token` | 签发本地测试 JWT（默认 ROLE=hq_admin；如 `ROLE=branch_manager CONTEXT='{"branch": "east"}'`） |
 | `make api-verify` | HTTP API 真链验收（A1-A9：全链 EX / 认证 / 三角色差异 / 会话冲突 422 / 跨域身份拒绝 / 治理面 8 集合一轮全绿（A8）/ `/plan/execute` 真链（A9），产出 `eval/reports/api-acceptance-<sha>.json`） |
@@ -1105,7 +1115,14 @@ snapshot_sha=b933e20）。剩余边界如实（契约 v2 批次后更新，ADR-0
     评测一律 **blocked 登记，不编数字**（AGENTS.md N1）。engine=stub 仍是确定性默认；接地叙述
     文本 `grounded=false` 永不发货；角色→`llm` 能力为配置态映射，非真实 IAM。
 
-43. **可信问数工作台尚处 M0 开发（ADR-0031）**：当前新增的是 T01 只读证据清单、T02 发布原语（控制库、不可变制品装配、默认流程合同）、T03 私有部署认证（OIDC BFF 四端点 + 控制 ACL + 前端登录入口）与 T04 共享安全执行内核与数据身份（唯一执行通道 + Doris 连接器 + 快照/在线判别联合；旧执行入口全部委托同一内核，锁定快照真链 6/6 等价）、T05 运行事实与最小反馈（控制库迁移 002；幂等提交 + 单业务队列 + 重启不重跑 + 15 分钟内存窗口 + 真实事件接缝 + D13 显式捕获 fail-closed + `/feedback` 固定 pending_review/false）、T06 运行历史目录、运行图与真实 SSE（`GET /runs` 游标分页 12 键摘要、`GET /sessions` 会话目录与回合、artifact 正文 ACL 钻取、`GET /runs/{run_id}/events` 持久帧 SSE 续读/不可补齐 410/订阅不重跑；前端 RunPanel/Timeline/Graph + reducer 按 seq 去重；后端 +10、前端 +52 项新测试；浏览器实测目录/详情/刷新持久/深链/旧流回归）、T07 只读数据源接入向导（源修订/受限探测/部署绑定 + SourceWizard 面板）、T08 语义草稿、审核与 Git 制品发布（草稿非权威、审核绑定内容摘要、最小 diff、显式 commit 制品导入门禁链、CAS 发布/回退、运行中切换不串版本；后端 +46、前端 +26 项新测试；真实 Git 往返与浏览器全流程——**执行者不代用户提交，制品为既有 commit**，无新固定快照故不产生 EX 数字）、T10 检索前意图合同、完整绑定与简单问数控件（`agent/intent/` 确定性归一、授权∧已注册全目录召回 RRF K=5、槽位完整绑定未绑定只能澄清、`agent/graph.py` Generator 显式候选接缝移除隐式二次检索；gold 最小差异样本 10 条 5 对 + `eval/workbench_intent.py` 规则/LLM 对照——Recall 与 Plan/澄清分开、未配置即 blocked 不产数字；工作台「结构化问数」控件与 `lib/plan-contract` 构造点——/compile、/plan/execute 只发结构化合同；后端 +63、前端 +14 项新测试；**默认图未接理解节点、当前无生产调用方**；LLM 对照为内网自托管模型非付费云、不训练模型不替换已覆盖规则答案），测试全绿（运行面五套 56 项 + T06/T07/T08/T10 新增）；发布已可从界面全流程操作（草稿→校验→审核→导入→CAS 发布→回退，指针版本递增、旧运行仍引用旧制品）；**真 IdP 回调验收 BLOCKED（需部署者环境，不声称私有登录已在真实 IdP 上可用）**；私有模式下工作台/治理面仍走 Bearer（Cookie 会话与 Bearer 为两条不混用的认证链；SSE 实时推送、历史列表与运行图界面已由 T06 交付——运行图的节点/边为与 Agent 图定义同源的固定模板、实际路径以事件流 EDGE_TAKEN 为准，运行创建无 UI）；控制身份与数据授权分离尚未启用发布路由；**live 在线源四步分析明确拒绝（`analysis_consistency_unavailable`），`DorisConnector` 的元数据探测/取消查询/快照读/一致性分析声明全为 False（未实现不多报）**。运行/反馈面未接限流桶（D13 的 429 在该面不可达）、`GET /feedback` 未分页、保留期到期清理为原语无调度、旧同步入口不加追踪响应头——如实登记，不在文档层伪装。历史报告数字不迁移为新链路效果，快照清单不等于数据指纹已复核。开发基线的值域绑定漂移已通过实际只读重采样修复：`data.value_profile` 对锁定快照 `1e2e557` 前后复核，更新 21 份派生文件后 `make lint` 通过；值本体、计数和人工别名未变，没有修改快照、Gold set、Metric 定义或业务库。这不是 EX 或模型效果评测。
+43. **可信问数工作台尚处 M0 开发（ADR-0031）**：T01-T10/T13 已交付（详见 §5.3 各子节），
+    整体测试全绿（1760 passed + vitest 30 files/253）。**关键诚实边界**：① 真 IdP 回调
+    验收 BLOCKED（需部署者环境）；② live 在线源四步分析明确拒绝
+    （`analysis_consistency_unavailable`）；③ `DorisConnector` 元数据探测/取消查询/
+    快照读/一致性分析能力声明全 False（未实现不多报）；④ 运行/反馈面未接限流桶、
+    `GET /feedback` 未分页；⑤ 默认图尚未接理解节点（T10 合同链无生产调用方）；
+    ⑥ T09 拓扑编译只做编译不构造 LangGraph 运行时，生产流量仍走 `agent/graph.py`
+    硬编码图。历史报告数字不迁移为新链路效果，快照清单不等于数据指纹已复核
 
 **如果有真实企业数据，我会优先补做**：数据契约、IAM 集成、审计留痕、容灾、并发压测、模型红队测试、变更管理流程。
 
@@ -1115,16 +1132,16 @@ snapshot_sha=b933e20）。剩余边界如实（契约 v2 批次后更新，ADR-0
 
 | 能力 | 状态 | 本项目中的动作 |
 |---|---|---|
-| 工作台证据基线（ADR-0031 T01） | **新增清单与测试装配，M0 未完成** | `eval/workbench_baseline.py` 只读清点代码/历史/快照身份；`eval/report.py --workbench-report` 独立渲染，不混入旧效果汇总；无 SQL、网络或模型执行，不声称策略质量已测 |
-| 可信问数工作台控制原语（ADR-0031 T02） | **新增发布原语与默认流程合同，无 UI/审核/真实发布** | `serving/control/` 控制库（迁移+备份回滚、active CAS、草稿状态机、私有文件 0600）+ `agent/runtime/bundle.py` 不可变制品装配（摘要钉住、拒绝未声明文件/重复键 JSON/未注册节点）+ `agent/flows/contracts.py` D05 流程合同与默认 templates；59 项新增测试全绿（control 7 / bundle 14 / flows 33 / rules 5），未改业务库与语义权威源 |
-| 私有部署认证与控制 ACL（ADR-0031 T03） | **新增登录与控制权限，真 IdP 验收 BLOCKED** | OIDC BFF（Authlib：state/nonce/PKCE + 固定 RS256/issuer/audience/exp 校验 + 服务端内存会话/CSRF/退出失效）+ `/api/v1/auth/*` 四端点（统一错误体；配置阻塞三态 503 不伪装成功）+ 控制面授权 `authorize`（数据角色 vs 控制能力分离，viewer 无发布权）+ 前端登录入口（探测三分法，开发角色选择仅演示模式）；62 项后端新增测试 + 前端 14 项全绿；真 IdP 回调需部署者环境 → BLOCKED |
-| 共享安全执行内核与数据身份（ADR-0031 T04） | **新增唯一执行通道与 Doris 连接器，真链等价 6/6，无 live 能力** | `agent/runtime/execution.py` 唯一执行内核（`execute_plan`/`execute_guarded_sql`，失败三态 + `executed` 标记只计实际执行耗时）+ `agent/runtime/context.py` `RunContext`/`budget_from_snapshot` + `agent/runtime/connectors/`（Doris `execute_sql` 迁移，评测反向委托）+ `agent/runtime/identity.py` 数据身份判别联合（live 无伪 sha；`analysis_refusal` 拒绝 live 四步分析）；graph/registry/factory/cli/eval.runner 全部委托并由结构测试锁定；43 项新增测试（identity 17 / runtime 26）；锁定快照 `1e2e557` 上旧新入口 6/6 等价（含 2 条 RLS 注入）+ MCP→内核→Doris 1/1 |
-| 真实事件、运行恢复与最小反馈（ADR-0031 T05） | **新增运行事实与最小反馈，无 SSE 推送/历史 UI/审核** | `serving/control/migrations/002.sql`（runs/run_events/artifacts/feedback 四表）+ `runs.py`（幂等提交、单业务队列串行 peak=1、重启封 interrupted 不重跑、15 分钟内存窗口、`result_availability` 五态）+ `events.py` EventSink（seq/时刻服务端分配、payload 脱敏、写失败 fail-closed）+ `agent/graph.py` 事件接缝（默认 None 旧行为逐字节不变）+ D13 显式捕获（授权审计 fail-closed；白名单字段物化）+ 最小反馈（固定 pending_review/false）；56 项新增测试（生命周期 13 / 事件 16 / 运行 API 14 / 反馈 11 / OTel 分离 2）；契约 22→25 路径；未接限流桶与反馈列表分页（如实登记） |
-| 运行历史目录、运行图与真实 SSE（ADR-0031 T06） | **新增运行历史/事件流端点与只读工作台视图，无图编辑、无运行提交 UI、无图重构** | `GET /runs`（RunSummary 固定 12 键、游标分页 50/100、域/时间/状态过滤）+ `GET /sessions`、`GET /sessions/{session_id}`（控制库运行事实聚合、非 checkpoint dump）+ `GET /runs/{run_id}/artifacts/{artifact_id}`（字段级 ACL、清理后 410 墓碑）+ `GET /runs/{run_id}/events`（持久事件帧 SSE、`after_seq`/`Last-Event-ID` 续读、缺口 410、订阅不重跑）；前端 `RunPanel`/`RunTimeline`/`RunGraph` + `run-view-model` + `run-events`（按 seq 去重归约）+ `run-stream`（Authorization 头，token 不进 URL）+ 许可门 MIT `@xyflow/react`（React Flow 12）；后端 +10（run API 14→24）、前端 +52（8 文件）；浏览器实测（真实 Doris 执行、刷新持久、sessions 深链、旧 `/analyze/stream` 回归 200 不标实时） |
-| 只读数据源接入向导（ADR-0031 T07） | **新增源修订/受限探测/部署绑定与接入面板；无发布切换（T08）、无任意「测试 SQL」通道** | `serving/control/sources.py`（追加式修订、`env:` 引用、硬禁云元数据/link-local、DNS 后按校验 IP 连接、9 类阻塞原因、探测证据 `reproducible=false`）+ Doris 4.x `SHOW GRANTS` 表格形态解析（数据权限列规范化、资源列跳过、Roles/未知列 fail-closed——role 权限不展开、不凭空声称 read_only）+ `/api/v1/manage/sources`（POST/GET）、`/api/v1/manage/sources/{source_id}/probes`（无请求体）、`/api/v1/manage/deployments`（POST/GET，创建即 draft）、`/api/v1/manage/deployments/{deployment_id}` + 前端面板 `SourceWizard`（导航「接入」`/setup`）；30 项新增后端测试（源 onboarding 25 + 连接器表格形态 5）+ 前端 13 项；契约 29→33 路径；真实 Doris smoke（`atlas_ro` 只读、engine 5.7.99、探测 ok + 浏览器全流程）；探测后列表列不自动刷新等边界如实登记 |
-| 语义草稿、审核与 Git 制品发布（ADR-0031 T08） | **新增草稿/校验/审核/最小 diff、Git 制品导入与 CAS 发布/回退；无新快照即无 EX 数字** | `serving/control/drafts.py` DraftService（编辑撤销放行、审核只认 validated 且绑定摘要、patch base=对象库文本）+ `serving/control/releases.py` ReleaseService（40 hex 可达 commit 白名单收集、内容==已审核草稿、整制品门禁、登记不激活、CAS 发布/回退）+ 前端 `SemanticDraft.tsx`（显式 CAS：PUT `If-Match`）与治理 `PublishIdentitySection.tsx`（显式点击加载）+ 契约 38→43 路径；46 项后端 + 26 项前端新测试；真实 Git 往返 smoke（R1/R2/R3 三段制品、同内容不同 commit 不同身份）与浏览器全流程；执行者不代用户提交 Git；ruff 33/mypy 81 与基线持平 |
-| 理解合同、召回与完整绑定（ADR-0031 T10） | **新增意图合同链路与工作台结构化问数控件；默认图未接理解节点、当前无生产调用方** | `agent/intent/`（`normalize_intent` 证据三重校验与固定时钟 / `retrieve_intent` 授权∧已注册全目录召回 RRF K=5 / `bind_intent` 槽位完整绑定——未绑定只能澄清不执行）+ `agent/prompts/intent.yaml` 外置提示词 + Generator 显式候选接缝（keyword-only candidates，移除隐式二次检索）+ `eval/workbench_intent.py` 规则/LLM 双引擎对照与 `eval/gold/intent` 10 条 5 对最小差异样本（split=test 冻结）+ 前端 `PlanComposer`/`lib/plan-contract`（指标/时间/筛选控件选项取治理面；/compile、/plan/execute 请求体唯一构造点，执行恒不含 question）+ 报告模式 21→23；63 项后端 + 14 项前端新测试；LLM 对照为内网自托管模型（非付费云）；不训练模型、不替换已覆盖规则答案 |
-| 最小发行、运维与首次接入验收（ADR-0031 T13） | **新增备份/恢复/诊断端点/最小 compose/验收脚本；诊断展示注册状态而非实时探测** | `serving/control/maintenance.py`（`backup_control` SQLite backup API / `restore_control` 隔离验证→恢复，不重跑 SQL/训练）+ `GET /manage/diagnostics`（源故障仍 200、不泄露 DSN/密钥、需 operator 能力）+ `infra/docker/compose.connect.yml`（无默认秘密，N9）+ Makefile `backup`/`restore`/`diagnostics`/`acceptance` 入口 + `eval/workbench_acceptance.py` 首次接入验收脚本；路径集合 43→44；19 项新增测试全绿 |
+| 工作台证据基线（ADR-0031 T01） | **新增清单与测试装配，M0 未完成** | 详见 §5.3「工作台证据清单」 |
+| 可信问数工作台控制原语（ADR-0031 T02） | **新增发布原语与默认流程合同** | 详见 §5.3「控制库与默认流程合同」 |
+| 私有部署认证与控制 ACL（ADR-0031 T03） | **新增登录与控制权限，真 IdP 验收 BLOCKED** | 详见 §5.3「身份登录与控制权限」 |
+| 共享安全执行内核与数据身份（ADR-0031 T04） | **新增唯一执行通道，真链等价 6/6** | 详见 §5.3「共享安全执行内核与数据身份」 |
+| 真实事件、运行恢复与最小反馈（ADR-0031 T05） | **新增运行事实与最小反馈** | 详见 §5.3「真实事件、运行恢复与最小反馈」 |
+| 运行历史目录、运行图与真实 SSE（ADR-0031 T06） | **新增运行历史/事件流端点与只读视图** | 详见 §5.3「运行历史、运行图与真实 SSE」 |
+| 只读数据源接入向导（ADR-0031 T07） | **新增源修订/受限探测/部署绑定** | 详见 §5.3「只读数据源接入向导」 |
+| 语义草稿、审核与 Git 制品发布（ADR-0031 T08） | **新增草稿/校验/审核/CAS 发布/回退** | 详见 §5.3「语义草稿、审核与 Git 制品发布」 |
+| 理解合同、召回与完整绑定（ADR-0031 T10） | **新增意图合同链路，默认图未接理解节点** | 详见 §5.3「理解合同、召回与完整绑定」 |
+| 最小发行、运维与首次接入验收（ADR-0031 T13） | **新增备份/恢复/诊断/验收入口** | 详见 §5.3「最小发行、运维与首次接入验收」 |
 | Multi-LoRA SQL 推理、SFT 飞轮 | 已有工程经验 | 用公开数据重建训练/评测流水线，**不声称是新发明** |
 | 元数据治理、SQL/tokenizer 解析 | 已有工程经验 | 改造为 Atlas 的 DDL/ETL 注释抽取器 |
 | 标签体系、Bitmap、OneID、销售/金融指标 | 已有业务经验 | 抽象为 Atlas 的指标/实体/分群/权限设计模式 |
@@ -1140,6 +1157,7 @@ snapshot_sha=b933e20）。剩余边界如实（契约 v2 批次后更新，ADR-0
 | Agent 安全执行与自动洞察 | **需新建** | 先做安全工具，再扩展规划与归因 |
 | HTTP API / 认证中间件 | 已有工程经验 | 以 FastAPI 落地 serving/api.py + serving/governance.py（ADR-0012 + ADR-0022 契约 v2：`/api/v1` 前缀 + 治理面 8 集合/2 钻取 + 限流两桶 + `/plan/execute` + JWT），/api 契约测试 96 例（身份注入/会话冲突 422/限流两桶 429/契约 v2 防漂移 22 路径/审计字段集）+ 真链验收 api-verify A1-A9 在档 |
 | LLM 引擎服务化（ADR-0029：分级路由 + 接地叙述 + fail-closed + 受控门控） | **部分落地（确定性内核已实现，真机评测 blocked）** | 已实现并测：`resolve_llm_backend` 决策矩阵（叙述强制自托管、云排除）、`verify_grounded` 数字硬闸、serving `llm` 加性旗标（off 逐字兼容、该旗标不增端点）+ RBAC 403 + `atlas.llm.narrative` 埋点（N9 无原文/密钥；成本与 Guard Budget 分离）；测试：`tests/test_llm_policy.py`/`test_narrative_guard.py`/`test_narrative.py`/`test_generator_injection.py`/`test_api_llm_serving.py`/`test_otel_llm.py` + 前端 `narrative-block.test.tsx`。真机候选/叙述质量与 EX 数字 = blocked（无 GPU/端点，不编数，见 Known Limitations #42） |
+| JEV 决策引擎接入（ADR-0030：可插拔判别后端，加性扩展 ADR-0029） | **proposed（设计已定，实现未启动）** | 为「非 OpenAI 兼容线格式」判别引擎（如 TypeSafe System One 的 Choice/Score/Noul 强类型原语）补引擎类型维度 + 判别客户端协议；继承 ADR-0029 全部安全约束（敏感度划界 / fail-closed / RBAC / 可观测）；Jev 永不产 SQL、不新增执行通道（N3）；CJK 支持须自测，不得假定可用；**实现未启动，不声称已落地** |
 
 ---
 
