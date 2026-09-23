@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import time
 import unittest
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -132,7 +133,9 @@ class ForbiddenGenerator:
 
     engine = "stub"
 
-    def generate(self, question: str, k: int = 5) -> Any:
+    def generate(
+        self, question: str, k: int = 5, *, candidates: Sequence[str] | None = None
+    ) -> Any:
         raise AssertionError("plan_override 通道不得进入候选链 generate")
 
 

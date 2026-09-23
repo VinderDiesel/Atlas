@@ -1,0 +1,34 @@
+# Jev System One 判别提示词（ADR-0030 ③）：state → 受限判别（Choice/Score/Noul）
+# 契约：版本/owner/description/changelog（AGENTS.md 7.4，禁止内联在 Python 代码里）
+# 变更必须触发 CI 回归评测（PromptOps）
+#
+# 说明：Jev 的判别原语与候选选项由 API 的 `questions` 字段**结构化传入**
+# （强类型约束在协议层，不在提示词层）。本文件只提供 `state` 的封装模板与
+# 判据说明——即「如何把 Atlas 的上下文表述成一次可判别的问题」。
+# 提示词内**不得**出现任何业务结果数值（schema-only，ADR-0030 ②）。
+
+version: 0.1.0
+owner: finance@atlas.local
+description: >
+  把 Atlas 的 schema-only 上下文（问句 + 候选指标的 name/synonyms/description）
+  封装为 Jev 的 state 文本，供 Choice/Score/Noul 判别使用。硬约束：只描述
+  「候选是什么」，不描述「结果是多少」——本提示词在任何情况下都不得承载
+  业务结果数值（result-bearing 一律禁止进 Jev，ADR-0030 ②）。
+changelog:
+  - "2026-09-19 v0.1.0 初版：候选重排场景的 state 模板（schema-only），仅 system_one 引擎消费"
+
+# ---- 以下为消息模板（Python 侧以 __NAME__ 占位符替换后发送）----
+
+# 重排场景的 state 封装：问句 + 候选清单（无结果数值）
+rerank_state_template: |
+  用户问句：__QUESTION__
+
+  候选指标（按名称字母序，无先后含义）：
+  __CANDIDATES__
+
+  每个候选的格式为：名称 = 同义词 = 说明
+
+# 判别项说明（作为 questions 的语义补充，供审计与人工复核阅读）
+rerank_choice_note: >
+  从候选中选出「最能代表用户问句意图」的一个指标。若信息不足以唯一确定，
+  以高质量分布表达不确定性（不要为了给出答案而强行集中概率）。

@@ -1,130 +1,267 @@
 /**
- * 面板 3：会话时间线（SessionPanel；设计页 §2 面板 3）——P2。
+ * 面板 3：会话与历史（SessionPanel）。
  *
- * 数据源：`GET /api/v1/health` 的 `boot_id`（服务端本次运行标识；公开面免
- * token，由 App 拉取后传入）+ 工作台响应回传的 `session_id` / `turns_in_session`
- * （App 内存累积的 SessionLogEntry[]；本面板不自行发请求）。
- *
- * **限制横幅是渲染义务**（设计页 §7 KL 草案 / dev-plan §2.7 允许的限制）：
- * 0022 未开 `/governance/sessions` 类端点 → 跨重启、跨标签页的历史会话无数据源，
- * 本页只能列出「本标签页本次运行累积」的会话。横幅文案与 README KL 条目同源，
- * **不得删除或弱化**；服务端重启后 boot_id 变化即为该限制的可见证据。
- *
- * **边界约束（B2a 分组布局演进）**：
- * - 会话记录按角色分组展示（groupSessionsByRole；设计页 §3.5 约束 1 的可视化）
- * - 数据源仅为 App 内存态的 SessionLogEntry[]（no-persist 约束；§3.5 约束 3）
- * - 不引入 localStorage / sessionStorage / IndexedDB（静态断言见 no-persist.test.ts）
- * - 跨重启/跨刷新的会话列表**无数据源**（0022 未开只读端点；README 已知限制）
- * - 分组函数为纯函数（可被 vitest 直接断言；不 import React）
+ * 展示服务端会话目录（跨重启持久化）和本标签页会话日志（内存态，刷新即失）。
+ * token 空串不发请求（认证前不产生 401 噪声）。
  */
-import { Alert, Descriptions, Divider, Space, Tag, Typography } from "antd";
+import { Button, Divider, Space, Table, Tag, Typography } from "antd";
+import { useEffect, useState } from "react";
 
-import type { HealthPayload } from "../../api/types";
-import { groupSessionsByRole, type SessionLogEntry } from "../../state/session";
+import { listSessionRuns, listSessions } from "../../api/control";
+import type { RunStatus, RunSummary, SessionSummary } from "../../api/types";
+import EmptyState from "../../components/EmptyState";
 import ErrorNote from "../../components/ErrorNote";
+import PageHeader from "../../components/PageHeader";
+import Section from "../../components/Section";
+import { groupSessionsByRole, type SessionLogEntry } from "../../state/session";
+import { statusTag } from "../runs/run-view-model";
 
 const { Text } = Typography;
 
 interface Props {
-  health: HealthPayload | null;
-  healthError: string | null;
   log: readonly SessionLogEntry[];
   currentId: string;
+  /** Bearer token（App 内存态）；空串时不发请求。 */
+  token: string;
+  /** 打开运行详情（App 提供路由动作：navigate 到 /runs?run=）。 */
+  onOpenRun: (runId: string) => void;
 }
 
 function formatTime(epochMs: number): string {
   return new Date(epochMs).toLocaleString();
 }
 
-export default function SessionPanel({ health, healthError, log, currentId }: Props) {
+function StatusTagCell({ status }: { status: RunStatus }) {
+  const meta = statusTag(status);
+  return <Tag color={meta.color}>{meta.label}</Tag>;
+}
+
+const PAGE_HEADER = (
+  <PageHeader
+    title="会话历史"
+    description="查看历史会话和每次查询的运行记录。"
+  />
+);
+
+export default function SessionPanel({
+  log,
+  currentId,
+  token,
+  onOpenRun,
+}: Props) {
   const groups = groupSessionsByRole(log);
+  const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
+  const [sessionsError, setSessionsError] = useState<unknown>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [runs, setRuns] = useState<RunSummary[] | null>(null);
+  const [runsError, setRunsError] = useState<unknown>(null);
+
+  // 服务端会话目录（token 变化即重载；空 token 不发请求）
+  useEffect(() => {
+    if (token === "") {
+      setSessions(null);
+      setSessionsError(null);
+      return;
+    }
+    let cancelled = false;
+    setSessionsError(null);
+    listSessions(token, { limit: 20 })
+      .then((page) => {
+        if (!cancelled) {
+          setSessions(page.items);
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setSessionsError(e);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  // 展开会话的运行清单（新→旧）
+  useEffect(() => {
+    if (token === "" || expanded === null) {
+      return;
+    }
+    let cancelled = false;
+    setRuns(null);
+    setRunsError(null);
+    listSessionRuns(expanded, token, { limit: 20 })
+      .then((page) => {
+        if (!cancelled) {
+          setRuns(page.items);
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setRunsError(e);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, expanded]);
+
+  // 未认证：显示友好空状态
+  if (token === "") {
+    return (
+      <div className="atlas-page">
+        {PAGE_HEADER}
+        <EmptyState
+          icon="lock"
+          title="尚未登录"
+          description="请先在右上角选择角色开始使用"
+        />
+      </div>
+    );
+  }
 
   return (
-    <Space
-      direction="vertical"
-      size="middle"
-      style={{ width: "100%", maxWidth: 1080, margin: "0 auto", display: "flex" }}
-    >
-      <Alert
-        type="warning"
-        showIcon
-        message="会话时间线只能展示当前运行的会话（跨重启历史无数据源）"
-        description={
-          <Space direction="vertical" size={0}>
-            <span>
-              HTTP 契约 v2 未开 /governance/sessions 类端点；0020 的 SQLite checkpoint
-              是 Agent 内部状态存储，不是可查询的会话目录。
-            </span>
-            <span>
-              本页只列出本浏览器标签页内本次运行累积的会话；服务端重启后 boot_id
-              变化，历史会话虽在 SQLite 里但前端列不出来。
-            </span>
-            <span>
-              列出历史会话需新增只读端点并裁定其权限口径（会话含问句原文，属敏感面）
-              ——未裁定（README 已知限制）。
-            </span>
-          </Space>
-        }
-      />
+    <div className="atlas-page">
+      {PAGE_HEADER}
 
-      {healthError !== null && <ErrorNote error={healthError} title="health 拉取失败" />}
+      <Section title="会话列表">
+        {sessionsError !== null ? (
+          <ErrorNote error={sessionsError} title="加载失败" />
+        ) : sessions === null ? (
+          <Text type="secondary">加载中…</Text>
+        ) : sessions.length === 0 ? (
+          <EmptyState
+            icon="inbox"
+            title="暂无会话"
+            description="在工作台提问后，会话记录会出现在这里"
+          />
+        ) : (
+          <>
+            <Table
+              size="small"
+              rowKey="session_id"
+              pagination={false}
+              scroll={{ x: "max-content" }}
+              dataSource={sessions}
+              columns={[
+                {
+                  title: "会话 ID",
+                  dataIndex: "session_id",
+                  render: (value: string) => <Text code>{value.slice(0, 12)}…</Text>,
+                },
+                { title: "运行数", dataIndex: "run_count", width: 80 },
+                {
+                  title: "最近状态",
+                  dataIndex: "last_status",
+                  width: 104,
+                  render: (value: RunStatus) => <StatusTagCell status={value} />,
+                },
+                { title: "最近运行", dataIndex: "last_run_at", width: 200 },
+                {
+                  title: "操作",
+                  key: "op",
+                  width: 100,
+                  render: (_: unknown, row: SessionSummary) => (
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() =>
+                        setExpanded((prev) => (prev === row.session_id ? null : row.session_id))
+                      }
+                    >
+                      {expanded === row.session_id ? "收起" : "查看运行"}
+                    </Button>
+                  ),
+                },
+              ]}
+            />
+            {expanded !== null && (
+              <div style={{ marginTop: 12 }}>
+                <Divider orientation="left" plain style={{ margin: "8px 0" }}>
+                  运行记录
+                </Divider>
+                {runsError !== null && (
+                  <ErrorNote error={runsError} title="运行列表加载失败" />
+                )}
+                {runs === null && runsError === null && <Text type="secondary">加载中…</Text>}
+                {runs !== null && runs.length === 0 && (
+                  <Text type="secondary">该会话暂无运行记录。</Text>
+                )}
+                {runs !== null && runs.length > 0 && (
+                  <Table
+                    size="small"
+                    rowKey="run_id"
+                    pagination={false}
+                    scroll={{ x: "max-content" }}
+                    dataSource={runs}
+                    columns={[
+                      {
+                        title: "运行 ID",
+                        dataIndex: "run_id",
+                        render: (value: string) => <Text code>{value.slice(0, 12)}…</Text>,
+                      },
+                      {
+                        title: "状态",
+                        dataIndex: "status",
+                        width: 96,
+                        render: (value: RunStatus) => <StatusTagCell status={value} />,
+                      },
+                      { title: "更新时间", dataIndex: "updated_at", width: 200 },
+                      {
+                        title: "操作",
+                        key: "op",
+                        width: 80,
+                        render: (_: unknown, row: RunSummary) => (
+                          <Button
+                            type="link"
+                            size="small"
+                            onClick={() => onOpenRun(row.run_id)}
+                          >
+                            详情
+                          </Button>
+                        ),
+                      },
+                    ]}
+                  />
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </Section>
 
-      <Descriptions size="small" column={1} title="服务端本次运行">
-        <Descriptions.Item label="boot_id">
-          {health === null ? (
-            <Text type="secondary">未取得（/api/v1/health 未返回）</Text>
-          ) : (
-            <Text code>{health.boot_id}</Text>
-          )}
-        </Descriptions.Item>
-        <Descriptions.Item label="health.status">
-          {health === null ? "—" : health.status}
-        </Descriptions.Item>
-      </Descriptions>
-
-      {groups.length === 0 ? (
-        <Text type="secondary">尚无会话记录（工作台响应回传 session_id 后自动累积）</Text>
-      ) : (
-        groups.map((group, idx) => (
-          <div key={group.role ?? "__null__"}>
-            {idx > 0 && <Divider orientation="left" plain>角色切换</Divider>}
-            <Divider orientation="left">
-              {group.role === null ? "未认证" : group.role}（{group.sessions.length} 条会话）
-            </Divider>
-            <Space direction="vertical" size="small" style={{ width: "100%" }}>
-              {group.sessions.map((entry) => (
-                <div
-                  key={entry.id}
-                  style={{
-                    padding: "8px 12px",
-                    border: "1px solid #d9d9d9",
-                    borderRadius: 6,
-                    backgroundColor: entry.id === currentId ? "#e6f4ff" : "#fafafa",
-                  }}
-                >
-                  <Space size={4} style={{ marginBottom: 4 }}>
-                    <Text code style={{ fontSize: 12 }}>
-                      {entry.id}
-                    </Text>
-                    {entry.id === currentId && <Tag color="blue">当前</Tag>}
-                  </Space>
-                  <div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      开始：{formatTime(entry.startedAt)} · 轮数：{entry.turnsSeen}
-                    </Text>
+      {groups.length > 0 && (
+        <Section title="本次会话" meta="刷新后清除">
+          {groups.map((group, idx) => (
+            <div key={group.role ?? "__null__"}>
+              {idx > 0 && <Divider plain />}
+              <Space direction="vertical" size="small" style={{ width: "100%" }}>
+                {group.sessions.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className={
+                      entry.id === currentId
+                        ? "atlas-session-entry atlas-session-entry--current"
+                        : "atlas-session-entry"
+                    }
+                  >
+                    <Space size={4} style={{ marginBottom: 4 }}>
+                      <Text code style={{ fontSize: 12 }}>
+                        {entry.id.slice(0, 12)}…
+                      </Text>
+                      {entry.id === currentId && <Tag color="blue">当前</Tag>}
+                    </Space>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        开始：{formatTime(entry.startedAt)} · 轮数：{entry.turnsSeen}
+                      </Text>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </Space>
-          </div>
-        ))
+                ))}
+              </Space>
+            </div>
+          ))}
+        </Section>
       )}
-
-      <Text type="secondary">
-        轮数来自工作台响应回传的 turns_in_session（本页记录已见最大值）；
-        「当前」行的 session_id 即工作台多轮续接所用——激活不同身份（切角色）会轮换出新行。
-        问句原文在服务端 checkpoint 内，本页不展示（无只读出口，见上方横幅）。
-      </Text>
-    </Space>
+    </div>
   );
 }

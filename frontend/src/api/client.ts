@@ -63,13 +63,40 @@ async function request<T>(path: string, init: RequestInit, token: string | null)
   return (await res.json()) as T;
 }
 
-/** POST JSON；token 为空串则不注入 Authorization（由后端 401 语义说话）。 */
+/**
+ * POST JSON；token 为空串则不注入 Authorization（由后端 401 语义说话）。
+ * `body` 传 undefined 时 `JSON.stringify` 返回 undefined——不携带请求体
+ * （校验/探测类端点的纪律：无请求体即无通道）。
+ */
 export function postJson<T>(path: string, body: unknown, token: string): Promise<T> {
   return request<T>(
     path,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    token,
+  );
+}
+
+/**
+ * PUT JSON + 修订 ETag CAS（T08c 草稿编辑；ADR-0031 D04/D13）。
+ *
+ * `If-Match: "<revision>"` 是显式并发控制：缺头/格式错后端一律 422，修订不匹配
+ * 409——绝不盲写（不静默覆盖他人编辑）。
+ */
+export function putJson<T>(
+  path: string,
+  body: unknown,
+  token: string,
+  ifMatch: number,
+): Promise<T> {
+  return request<T>(
+    path,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": `"${ifMatch}"` },
       body: JSON.stringify(body),
     },
     token,

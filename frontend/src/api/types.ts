@@ -549,3 +549,439 @@ export interface RunErrorData {
   reason_code: string;
   text: string;
 }
+
+// ---------------------------------------------------------------------------
+// T06 运行面：事件、状态机与节点视图（ADR-0031 D07/D13）
+//
+// 逐字镜像 `serving/control/contracts.py`（EventType/RunStatus/ResultKind）与
+// `serving/control/events.py`（NodeStatus）——图与时间线由同一事件流归约
+// （state/run-events.ts 的 reducer），前端零重算（N1）。
+// ---------------------------------------------------------------------------
+
+/** 运行状态机：queued → running → 唯一终态（interrupted = 恢复封存，不自动重跑）。 */
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "blocked"
+  | "failed"
+  | "interrupted";
+
+/** 结果可用性投影（D07）：按此显示结果或「正文未保留/已过期/受限」。 */
+export type ResultAvailability =
+  | "pending"
+  | "available"
+  | "not_retained"
+  | "expired"
+  | "restricted";
+
+/** 结果种类（内容不可用时的安全摘要保留项；摘要事件不能伪造答案）。 */
+export type ResultKind = "answer" | "clarify" | "handoff" | "blocked" | "error";
+
+/** 单一真实事件类型（D07③；镜像 contracts.py:EventType 13 个字面量）。 */
+export type RunEventType =
+  | "RUN_ACCEPTED"
+  | "RUN_STARTED"
+  | "NODE_STARTED"
+  | "NODE_FINISHED"
+  | "NODE_FAILED"
+  | "NODE_SKIPPED"
+  | "EDGE_TAKEN"
+  | "TOOL_STARTED"
+  | "TOOL_FINISHED"
+  | "FALLBACK"
+  | "STATE_SNAPSHOT"
+  | "RUN_FINISHED"
+  | "RUN_INTERRUPTED";
+
+/**
+ * 运行事件（固定 12 键；镜像 contracts.py:RunEventRecord）。
+ *
+ * seq 同 run 内事务递增（唯一序证据）；occurred_at 由服务端时钟生成
+ * （前端不从 UI 时间推断执行）。payload 是脱敏摘要通道：问句/SQL/结果行/
+ * Prompt 一律不进入（D07）。
+ */
+export interface RunEvent {
+  schema_version: 1;
+  run_id: string;
+  seq: number;
+  event_id: string;
+  occurred_at: string;
+  node_id: string | null;
+  node_run_id: string | null;
+  parent_node_run_id: string | null;
+  attempt: number | null;
+  event_type: RunEventType;
+  release_id: string | null;
+  payload: Record<string, unknown>;
+}
+
+/** 归约后的节点状态（镜像 events.py:NodeStatus；skipped 只来自显式事件）。 */
+export type RunNodeStatus = "not_reached" | "running" | "finished" | "failed" | "skipped";
+
+/** 运行模式（镜像 contracts.py:RunMode）。 */
+export type RunMode = "ask" | "analyze" | "execute_plan";
+
+/** 反馈结论（镜像 FeedbackVerdict）；状态在 T12 审核前恒 pending_review。 */
+export type FeedbackVerdict = "up" | "down" | "corrected";
+export type FeedbackStatus = "pending_review" | "approved" | "rejected";
+
+/** 控制面稳定所有者（镜像 contracts.py:Owner；issuer+subject，非会话指纹）。 */
+export interface ControlOwner {
+  issuer: string;
+  subject: string;
+}
+
+/** 分页信封（GET /runs、/sessions、/sessions/{id} 统一形状；next_cursor 不透明）。 */
+export interface Page<T> {
+  items: T[];
+  next_cursor: string | null;
+}
+
+/** 运行列表行（固定 12 键；只含摘要，不含正文/问句/结果）。 */
+export interface RunSummary {
+  run_id: string;
+  session_id: string;
+  deployment_id: string;
+  scope: string;
+  mode: RunMode;
+  status: RunStatus;
+  result_availability: ResultAvailability;
+  result_kind: ResultKind | null;
+  replay_of: string | null;
+  last_seq: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 内容不可用时的安全摘要（D07）：保留结果种类枚举，不伪造答案。 */
+export interface RunTraceSummary {
+  result_kind: ResultKind | null;
+}
+
+/** GET /runs/{id} 固定 10 键视图；result 的裁剪由服务端 ACL 决定。 */
+export interface RunView {
+  run_id: string;
+  session_id: string;
+  release_id: string | null;
+  status: RunStatus;
+  result: Record<string, unknown> | null;
+  result_availability: ResultAvailability;
+  data_identity: Record<string, unknown> | null;
+  replay_of: string | null;
+  last_seq: number;
+  trace_summary: RunTraceSummary;
+}
+
+/** 会话目录行（固定 6 键；控制库运行事实聚合，非 checkpoint dump）。 */
+export interface SessionSummary {
+  session_id: string;
+  deployment_id: string;
+  scope: string;
+  run_count: number;
+  last_run_at: string;
+  last_status: RunStatus;
+}
+
+/** 捕获正文白名单字段（镜像 CaptureField）。 */
+export type CaptureField = "question" | "node_io" | "result";
+
+/** 显式捕获的私有制品；清理后 content/content_digest 为 null 且保留 cleaned_at。 */
+export interface ArtifactRecord {
+  artifact_id: string;
+  run_id: string;
+  kind: "capture";
+  purpose: string;
+  fields: CaptureField[];
+  content: Record<string, unknown> | null;
+  content_digest: string | null;
+  retain_until: string;
+  cleaned_at: string | null;
+  created_at: string;
+}
+
+/** 反馈记录（T05d）；审核状态与训练资格由服务端固定，客户端无权指定。 */
+export interface FeedbackRecord {
+  feedback_id: string;
+  run_id: string;
+  owner: ControlOwner;
+  verdict: FeedbackVerdict;
+  comment: string | null;
+  correction: Record<string, unknown> | null;
+  status: FeedbackStatus;
+  training_eligible: boolean;
+  created_at: string;
+}
+
+/** POST /feedback 提交体（comment 可选的补充说明；审核字段不可指定）。 */
+export interface FeedbackBody {
+  run_id: string;
+  verdict: FeedbackVerdict;
+  comment?: string;
+  correction?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// 数据源接入 / 探测 / 部署（T07；ADR-0031 D03/D04/D13；镜像 contracts.py）
+// ---------------------------------------------------------------------------
+
+/** 连接器种类（镜像 SourceConnectorKind；当前仅 Doris）。 */
+export type SourceConnectorKind = "doris";
+
+/** TLS 策略（镜像 TlsPolicy）：required 强校验；disabled 只用于内网/测试。 */
+export type TlsPolicy = "required" | "disabled";
+
+/** 探测状态（镜像 ProbeStatus）。 */
+export type ProbeStatus = "ok" | "blocked";
+
+/** 探测阻塞理由（9 类；镜像 ProbeBlockedReason；中文标签在向导组件内映射）。 */
+export type ProbeBlockedReason =
+  | "credential_missing"
+  | "target_forbidden"
+  | "target_not_allowlisted"
+  | "tls_error"
+  | "table_out_of_whitelist"
+  | "read_only_unconfirmed"
+  | "metadata_missing"
+  | "credential_rejected"
+  | "connect_failed";
+
+/** 探测证据摘要（D03：有时间戳的证据，不是永久保证；不回显凭据）。 */
+export interface SourceProbeSummary {
+  probe_id: string;
+  status: ProbeStatus;
+  blocked_reason: ProbeBlockedReason | null;
+  observed_at: string;
+}
+
+/** GET/POST /manage/sources 行（固定 13 键；引用名可回显，秘密与 DSN 永不回显）。 */
+export interface SourceRevisionRecord {
+  source_id: string;
+  version: number;
+  revision: string;
+  connector_kind: SourceConnectorKind;
+  secret_ref: string;
+  allowed_catalogs: string[];
+  allowed_tables: string[];
+  timezone: string;
+  tls_policy: TlsPolicy;
+  query_budget: number;
+  created_by: ControlOwner;
+  created_at: string;
+  last_probe: SourceProbeSummary | null;
+}
+
+/** POST /manage/sources 提交体（秘密只收 env:<NAME> 引用；越界表在合同层 422）。 */
+export interface SourceRevisionBody {
+  source_id: string;
+  revision: string;
+  connector_kind: SourceConnectorKind;
+  secret_ref: string;
+  allowed_catalogs: string[];
+  allowed_tables: string[];
+  timezone: string;
+  tls_policy: TlsPolicy;
+  query_budget: number;
+}
+
+/** 探测确认的能力（D03 证据化：只声明本次探测证实的能力）。 */
+export interface ProbeCapabilities {
+  dialect: string;
+  read_only: boolean;
+  metadata_probe: boolean;
+  cancel_query: boolean;
+  snapshot_read: boolean;
+  consistent_analysis: boolean;
+}
+
+/** POST /manage/sources/{id}/probes 结果（固定 10 键；reproducible 恒 False）。 */
+export interface ProbeResult {
+  probe_id: string;
+  source_id: string;
+  version: number;
+  status: ProbeStatus;
+  blocked_reason: ProbeBlockedReason | null;
+  observed_at: string;
+  engine_version: string | null;
+  schema_digest: string | null;
+  capabilities: ProbeCapabilities;
+  reproducible: false;
+}
+
+/** 部署指针行（固定 8 键；创建即 draft——首次发布前 active_release_id=null）。 */
+export interface DeploymentRecord {
+  deployment_id: string;
+  scope: string;
+  source_id: string;
+  active_release_id: string | null;
+  revision: number;
+  created_by: ControlOwner;
+  created_at: string;
+  updated_at: string;
+}
+
+/** POST /manage/deployments 提交体（不得夹带 active_release_id——首次发布属 T08）。 */
+export interface DeploymentBody {
+  deployment_id: string;
+  scope: string;
+  source_id: string;
+}
+
+// ---------------------------------------------------------------------------
+// 语义草稿 / 校验 / 审核 / 发布（T08；ADR-0031 D02/D04/D13；镜像 contracts.py）
+// ---------------------------------------------------------------------------
+
+/** 草稿种类（镜像 DraftKind；当前只有 semantic 具备确定性校验器）。 */
+export type DraftKind = "semantic" | "flow" | "node_config";
+
+/** 草稿生命周期（镜像 DraftStatus；修改内容返回 draft 并使旧验证/审核失效）。 */
+export type DraftStatus =
+  | "draft"
+  | "validated"
+  | "reviewed"
+  | "source_imported"
+  | "release_ready"
+  | "published"
+  | "retired";
+
+/** 草稿内容（形状门：键恰为 {target, document}；target 命中制品白名单）。 */
+export interface DraftContent {
+  target: string;
+  document: Record<string, unknown>;
+}
+
+/** 草稿行（固定 11 键；非权威副本，base_git_sha 由服务端取本地 HEAD）。 */
+export interface DraftRecord {
+  draft_id: string;
+  kind: DraftKind;
+  owner: ControlOwner;
+  scope: string;
+  base_git_sha: string;
+  revision: number;
+  status: DraftStatus;
+  content: DraftContent;
+  content_digest: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** POST /manage/drafts 提交体（创建不改变任何运行 Metric 与发布指针）。 */
+export interface DraftBody {
+  kind: DraftKind;
+  scope: string;
+  content: DraftContent;
+}
+
+/** PUT /manage/drafts/{id} 提交体（内容整体替换；并发由 If-Match 修订 ETag 控制）。 */
+export interface DraftEditBody {
+  content: DraftContent;
+}
+
+/** 校验发现归因（镜像 FindingCode；三套确定性校验器，不引入模糊结论）。 */
+export type FindingCode = "structure" | "governance" | "policy";
+
+/** 单条确定性校验发现：code 标明产生它的校验器，message 为校验器原文。 */
+export interface ValidationFinding {
+  code: FindingCode;
+  message: string;
+}
+
+/** 校验证据行（固定 8 键；绑定 draft 的 revision 与内容摘要，可重复审计）。 */
+export interface DraftValidationRecord {
+  validation_id: string;
+  draft_id: string;
+  revision: number;
+  content_digest: string;
+  status: "passed" | "failed";
+  findings: ValidationFinding[];
+  actor: ControlOwner;
+  created_at: string;
+}
+
+/** 审核决定（镜像 ReviewDecision）。 */
+export type ReviewDecision = "approved" | "rejected";
+
+/** POST /manage/drafts/{id}/reviews 提交体（决定绑定当前摘要）。 */
+export interface DraftReviewBody {
+  decision: ReviewDecision;
+  comment?: string;
+}
+
+/** 人工审核证据行（固定 8 键；approved 的状态推进由服务层绑定摘要）。 */
+export interface DraftReviewRecord {
+  review_id: string;
+  draft_id: string;
+  revision: number;
+  content_digest: string;
+  decision: ReviewDecision;
+  comment: string | null;
+  actor: ControlOwner;
+  created_at: string;
+}
+
+/** 补丁影响面摘要（固定 6 键；指标按全局 name、维度按 `dataset.field`）。 */
+export interface PatchImpact {
+  added_metrics: string[];
+  removed_metrics: string[];
+  changed_metrics: string[];
+  added_dimensions: string[];
+  removed_dimensions: string[];
+  changed_dimensions: string[];
+}
+
+/** GET /manage/drafts/{id}/patch 视图（固定 7 键；最小统一 diff + 影响面）。 */
+export interface DraftPatchView {
+  draft_id: string;
+  revision: number;
+  content_digest: string;
+  base_git_sha: string;
+  target: string;
+  patch: string;
+  impact: PatchImpact;
+}
+
+/** POST /manage/releases/imports 提交体（显式 commit；不接受工作树/索引/引用）。 */
+export interface ReleaseImportBody {
+  draft_id: string;
+  source_git_sha: string;
+  source_id: string;
+}
+
+/** 导入响应（固定 7 键；制品身份 + 草稿推进后的状态 release_ready）。 */
+export interface ReleaseImportRecord {
+  release_id: string;
+  content_digest: string;
+  draft_id: string;
+  draft_revision: number;
+  status: "release_ready";
+  target: string;
+  created_at: string;
+}
+
+/** POST /manage/deployments/{id}/releases|rollbacks 提交体（D04 CAS）。 */
+export interface ActivationBody {
+  release_id: string;
+  expected_active_release_id: string | null;
+}
+
+/** 激活视图（固定 6 键；action=publish|rollback；revision 是指针版本）。 */
+export interface ActivationRecord {
+  deployment_id: string;
+  action: "publish" | "rollback";
+  previous_release_id: string | null;
+  active_release_id: string;
+  revision: number;
+  updated_at: string;
+}
+
+/** 发布登记行（固定 8 键，脱敏：只有 Manifest 与身份，无模型正文/凭据）。 */
+export interface ReleaseRecord {
+  release_id: string;
+  content_digest: string;
+  scope: string;
+  source_id: string;
+  source_revision: string;
+  manifest: Record<string, unknown>;
+  created_by: ControlOwner;
+  created_at: string;
+}

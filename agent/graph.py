@@ -29,6 +29,7 @@ explain，落地为 **plan 先行** 的条件路由图（AGENTS.md 决策优先�
   与 lora/build_pairs 训练语料同口径）；失败在节点内重生成一次（共 ≤2 次
   generate），仍败转 clarify——图无回环，失败轮不残留误导状态
 - execute    ：Compiler → Guard(enforce) → 执行器（唯一执行通道，N3 红线；
+  执行链委托共享内核 agent/runtime/execution.execute_plan〔ADR-0031 T04d〕；
   Guard 拒绝 → blocked 终端，不泄露被拒 SQL）
 - explain    ：归因组装（Day 43 最小骨架：指标/口径表达式/SQL/行数/链路来源；
   Day 46 扩展表/过滤/刷新时间/版本）
@@ -54,7 +55,9 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -67,6 +70,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RunnableConfig
+from pydantic import JsonValue
 from sqlglot import exp
 
 from agent.analysis import (
@@ -80,7 +84,7 @@ from agent.analysis import (
     plan_projection,
     synthesize,
 )
-from agent.compiler import CompileError, Compiler, Plan, SemanticModel
+from agent.compiler import Compiler, Plan, SemanticModel
 from agent.feedback import (
     DEFAULT_FEEDBACK_DIR,
     FeedbackKind,
@@ -89,26 +93,42 @@ from agent.feedback import (
 )
 from agent.generator import GenerationResult, Generator, validate_plan_json
 from agent.planner import ClarificationRequest, Planner
-from agent.security.sql_guard import (
-    Budget,
-    BudgetExceeded,
-    Policy,
-    UnsafeQuery,
-    enforce,
-)
+from agent.runtime.context import RunContext
+from agent.runtime.execution import execute_plan
+from agent.security.sql_guard import Budget
 from agent.state import ANALYSIS_RECORD_VERSION, TurnResult, TurnState, encode_rows
 from agent.tools.chart import ChartError, render_chart
-from agent.tools.execution_validator import ExecutionValidator
 from agent.tools.schema_linker import SchemaLinker
 from data.identity import RuntimeSnapshot
 from observability.otel import record_analysis_step, record_turn
-from serving.auth import AuthError, claims_fingerprint, resolve_claims
+from serving.auth import claims_fingerprint
+from serving.control.contracts import EventType
+from serving.control.events import EventSink, RunEvent
 
 # 执行器同构约定（与 eval/runner.execute_sql 一致）：只读执行 guarded SQL
 Executor = Callable[[str], tuple[list[tuple[Any, ...]], list[str]]]
 
 DEFAULT_CANDIDATE_K = 5
 MAX_GENERATE_ATTEMPTS = 2  # 候选链 validate 失败重试上限（共 2 次 generate 尝试）
+
+# 定义图节点清单（ADR-0031 T05 同源归约的「未执行」判定基线）：与下方装配
+# （builder.add_node）保持同步——归约用它把未到达节点标 not_reached 而不是 skipped。
+GRAPH_NODE_IDS: tuple[str, ...] = (
+    "plan",
+    "retrieve",
+    "generate",
+    "validate",
+    "execute",
+    "explain",
+    "clarify",
+    "handoff",
+)
+
+# 事件接缝的当前运行/节点上下文（ADR-0031 T05b）：节点包装器从 invoke config
+# 读出 atlas_run 后写入本线程上下文，供节点内部子调用（TOOL_*）关联；无接缝
+# 调用链上恒为 None，不产生额外分配。
+_ACTIVE_RUN: ContextVar[dict[str, Any] | None] = ContextVar("atlas_active_run", default=None)
+_ACTIVE_NODE: ContextVar[tuple[str, str] | None] = ContextVar("atlas_active_node", default=None)
 
 # checkpointer 序列化白名单：TurnState 里**所有**自研 dataclass，含嵌在 Plan 内的成员。
 # 两条实测口径（langgraph 1.2.11 / checkpoint 4.2.0，别按直觉改回去）：
@@ -160,7 +180,13 @@ class PlanGenerator(Protocol):
 
     engine: str
 
-    def generate(self, question: str, k: int = 5) -> GenerationResult: ...
+    def generate(
+        self,
+        question: str,
+        k: int = 5,
+        *,
+        candidates: Sequence[str] | None = None,
+    ) -> GenerationResult: ...
 
 
 def _plan_to_json(plan: Plan) -> dict[str, Any]:
@@ -184,6 +210,7 @@ def build_graph(
     snapshot_meta: dict[str, Any] | None = None,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     persist: bool = True,
+    event_sink: EventSink | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
     """组装并编译 LangGraph 状态机（checkpointer 可注入，默认 MemorySaver）。
 
@@ -212,6 +239,11 @@ def build_graph(
                       persist=True 完全同一套，仅无独立 checkpoint、无身份指纹
                       绑定（父级身份绑定是上层职责）。False 且同时传入
                       checkpointer 是配置冲突，直接 ValueError，不允许静默二选一。
+    event_sink      : 真实事件接缝（ADR-0031 D07②）。None（默认）= 旧行为逐字节
+                      不变（CLI/评测/既有测试零开销）；非 None 时**仅当** invoke
+                      config 同时带 `configurable.atlas_run`（run_id 等运行上下文，
+                      同 identity 的每请求通道）才发出真实事件。写入失败向上传播
+                      （fail closed：事件盘失败，下一次 SQL 不得启动）。
 
     返回
     ----
@@ -241,7 +273,6 @@ def build_graph(
     linker = linker or SchemaLinker(model)
     compiler = compiler or Compiler(model)
     gen = generator or Generator(model, engine=engine)
-    validator = ExecutionValidator()
 
     # -- 节点：plan（确定性解析入口 + 每轮状态冲刷） ------------------------
     def node_plan(state: TurnState) -> dict[str, Any]:
@@ -337,7 +368,9 @@ def build_graph(
 
     # -- 节点：retrieve（域外措辞候选收窄） --------------------------------
     def node_retrieve(state: TurnState) -> dict[str, Any]:
+        _tool("TOOL_STARTED", "schema_linking")
         linked = linker.link(str(state["question"]), k=DEFAULT_CANDIDATE_K)
+        _tool("TOOL_FINISHED", "schema_linking", candidates=len(linked.candidates))
         if not linked.candidates:
             # 0 候选：不猜不空转，落 handoff 终端（生成无素材、反问无候选可澄清）
             return {"reason": "schema linking 未检索到注册域候选指标"}
@@ -345,7 +378,19 @@ def build_graph(
 
     # -- 节点：generate（LLM 候选 Plan，候选必须再过确定性关卡） -----------
     def node_generate(state: TurnState) -> dict[str, Any]:
-        result = gen.generate(str(state["question"]), k=DEFAULT_CANDIDATE_K)
+        _tool("TOOL_STARTED", "generate")
+        # 候选输入路径（D09 L265）：显式携带 retrieve 产物，Generator 内不再二次检索
+        result = gen.generate(
+            str(state["question"]),
+            k=DEFAULT_CANDIDATE_K,
+            candidates=state.get("candidates"),
+        )
+        _tool(
+            "TOOL_FINISHED",
+            "generate",
+            prompt_tokens=int(result.usage.get("prompt_tokens", 0)),
+            completion_tokens=int(result.usage.get("completion_tokens", 0)),
+        )
         prev = state.get("usage") or {}
         usage = {
             key: int(prev.get(key, 0)) + int(result.usage.get(key, 0))
@@ -381,7 +426,18 @@ def build_graph(
         if plan2 is None and attempts < MAX_GENERATE_ATTEMPTS:
             # 防御性重试：LLM 候选一次不合格 → 重生成一次（共 ≤2 次 generate，
             # 注册域内 0 触发——候选链仅域外措辞可达，见模块 docstring）
-            retried = gen.generate(str(state["question"]), k=DEFAULT_CANDIDATE_K)
+            _tool("TOOL_STARTED", "generate")
+            retried = gen.generate(
+                str(state["question"]),
+                k=DEFAULT_CANDIDATE_K,
+                candidates=state.get("candidates"),
+            )
+            _tool(
+                "TOOL_FINISHED",
+                "generate",
+                prompt_tokens=int(retried.usage.get("prompt_tokens", 0)),
+                completion_tokens=int(retried.usage.get("completion_tokens", 0)),
+            )
             attempts += 1
             if retried.plan is not None:
                 plan2, fail = _check_candidate(retried.plan)
@@ -408,9 +464,11 @@ def build_graph(
         }
 
     # -- 节点：execute（编译→Guard→执行 的唯一通道） ------------------------
-    # identity 经 invoke config 注入（每轮独立、不落 checkpoint，见 DataAgent.ask
-    # docstring）；非 None 时先 resolve_claims 渲染行级策略（与 rls-verify/demo
-    # 同机制：Policy(name, condition) → enforce 注入），策略名由当前语义模型
+    # 执行链委托共享内核 agent/runtime/execution.execute_plan（ADR-0031 T04d）：
+    # 现场编译 → 身份策略 → Guard → 执行计时 → 结果校验逐段等价；identity 经
+    # invoke config 注入（每轮独立、不落 checkpoint，见 DataAgent.ask docstring），
+    # 非 None 时由内核 resolve_claims 渲染行级策略（与 rls-verify/demo 同机制：
+    # Policy(name, condition) → enforce 注入），策略名由当前语义模型
     # 的 default_row_policy 决定（ADR-0021：域 → 策略的唯一事实源；缺失即拒绝，
     # 不降级为无策略执行）；谓词非法/无 join 路径由 Guard 拒绝（blocked，不外泄
     # 细节）——graph 层不做二次校验实现。
@@ -418,67 +476,50 @@ def build_graph(
         plan = state.get("plan")
         if not isinstance(plan, Plan):
             return {"error": "内部状态缺失 Plan（不应到达 execute）"}
-        sql = state.get("sql")
-        if sql is None:  # deterministic 链：validate 未预检，现场编译
-            try:
-                sql, _ = compiler.compile(plan)
-            except CompileError as exc:
-                # `/plan/execute` 可注入任意 Plan（ADR-0022 决策 ③/代价⑤）：编译失败
-                # 是回合级 error 而非 500——HTTP 面不得复制编译预检（N3 单通道），
-                # 故捕获点只能在这里
-                return {"error": f"{type(exc).__name__}: {exc}"}
-        policy: Policy | None = None
-        effect: str | None = None
         identity = (config or {}).get("configurable", {}).get("identity")
-        if identity is not None:
-            if not isinstance(identity, dict):
-                return {"error": "identity 必须为已验证 claims 字典（role + user_context）"}
-            policy_name = compiler.model.default_row_policy
-            if policy_name is None:
-                # 缺失即拒绝（ADR-0021 决策 ②，default_deny 精神）：不降级为无策略执行
-                return {"error": "语义模型未声明 default_row_policy，无法注入行级策略"}
-            try:
-                resolved = resolve_claims(identity, policy_name=policy_name)
-            except AuthError as exc:
-                # 身份不可解析 → 拒绝执行（防御：不携带被拒原因之外的细节）
-                return {"error": f"身份策略解析失败：{exc}"}
-            policy = Policy(name=resolved.policy_name, condition=resolved.condition)
-            # 生效句只含角色 + 策略名（0011 不外泄细节：条件值不出本模块）
-            effect = f"行级策略已生效（角色 {resolved.role}，策略 {resolved.policy_name}）"
-        try:
-            if policy is None:
-                guarded, _ = enforce(sql, budget=budget)
-            else:
-                guarded, _ = enforce(sql, policy=policy, budget=budget)
-        except (UnsafeQuery, BudgetExceeded) as exc:
+        if identity is not None and not isinstance(identity, dict):
+            # 非 claims 形态 → 拒绝（fail-closed；绝不静默丢弃身份降级为无策略
+            # 执行。内核有同款防御，此处前置保留既有的错误出口）
+            return {"error": "identity 必须为已验证 claims 字典（role + user_context）"}
+        _tool("TOOL_STARTED", "execute_plan")
+        result = execute_plan(
+            plan,
+            RunContext(
+                budget=budget,
+                executor=executor,
+                identity=identity,
+                compiler=compiler,
+            ),
+        )
+        _tool("TOOL_FINISHED", "execute_plan", kind=result.kind, executed=bool(result.executed))
+        if result.kind == "blocked":
             # 只报拒绝类型与原因，不携带被拒 SQL（纵深防御，不外泄细节）
-            return {"block_reason": f"{type(exc).__name__}: {exc}"}
-        started = time.perf_counter()
-        try:
-            rows, columns = executor(guarded)
-        except Exception as exc:  # noqa: BLE001 - 执行故障记入回合，不中断会话
+            return {"block_reason": result.block_reason}
+        if result.kind == "error":
+            if not result.executed:
+                # 编译失败（`/plan/execute` 可注入任意 Plan，ADR-0022 决策 ③/代价⑤：
+                # 回合级 error 而非 500——HTTP 面不得复制编译预检，N3 单通道）与
+                # 身份解析失败等未执行出口：不携带 SQL 与耗时（冲刷值保持 None/0.0）
+                return {"error": result.error}
             # 执行后失败（ADR-0026 决策 ③）：与「未执行被拒」必须可区分——SQL 已过
             # Guard 且已送达执行器，如实记下已执行证据与尝试耗时，上层据此做到
-            # 「耗时汇总只计实际执行的子 SQL」。编译/身份等失败仍走上方 sql=None 出口。
+            # 「耗时汇总只计实际执行的子 SQL」
             return {
-                "error": f"{type(exc).__name__}: {exc}",
-                "sql": guarded,
-                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                "error": result.error,
+                "sql": result.sql,
+                "latency_ms": result.latency_ms,
             }
-        latency_ms = round((time.perf_counter() - started) * 1000, 1)
-        rows_t = tuple(tuple(r) for r in rows)
-        issues = validator.check(list(rows_t), list(columns), grouped=bool(plan.dimensions)).issues
         return {
-            "sql": guarded,
-            "rows": rows_t,
-            "columns": tuple(columns),
+            "sql": result.sql,
+            "rows": result.rows,
+            "columns": result.columns,
             # 编译声明的实际时间轴别名（ADR-0025 决策 ①3）：与本轮 plan 同源；
             # plain/rank 与候选链 plan 为 None（渲染端走列名兜底）
-            "time_column": compiler.emitted_time_column(plan),
-            "row_count": len(rows_t),
-            "latency_ms": latency_ms,
-            "validation_issues": issues,
-            "policy_effect": effect,
+            "time_column": result.time_column,
+            "row_count": result.row_count,
+            "latency_ms": result.latency_ms,
+            "validation_issues": result.validation_issues,
+            "policy_effect": result.policy_effect,
             # 冲刷会把 path 置 None（键存在），get 默认值不生效 → or 回退
             "path": state.get("path") or "deterministic",
             "engine": state.get("engine") or "deterministic",
@@ -532,7 +573,9 @@ def build_graph(
         # 未经过 retrieve 则现场确定性检索（0 LLM token，不编造候选）
         candidates = state.get("candidates")
         if candidates is None:
+            _tool("TOOL_STARTED", "schema_linking")
             linked = linker.link(str(state["question"]), k=DEFAULT_CANDIDATE_K)
+            _tool("TOOL_FINISHED", "schema_linking", candidates=len(linked.candidates))
             candidates = tuple(linked.candidates)
         reason = state.get("reason") or "问句未命中任何注册指标，需要澄清口径"
         return {
@@ -569,20 +612,128 @@ def build_graph(
             return "end"
         return "explain"
 
+    # -- 事件接缝（ADR-0031 D07②③，T05b）-----------------------------------
+    # sink=None 或 invoke 未带运行上下文（旧调用/CLI/评测）→ 一切按旧路径直通：
+    # 零事件、零额外分配、节点/边行为逐字节不变。graph 侧不持有 run_id——运行
+    # 上下文每请求经 config 传入（同 identity 通道），事件归属由服务端分配。
+    def _event_run(config: RunnableConfig | None) -> dict[str, Any] | None:
+        """读 invoke config 的运行上下文；缺 run_id 视为无接缝（不发事件）。"""
+        if not isinstance(config, dict):
+            return None
+        configurable = config.get("configurable") or {}
+        ctx = configurable.get("atlas_run")
+        if isinstance(ctx, dict) and ctx.get("run_id"):
+            return ctx
+        return None
+
+    def _emit(
+        run: dict[str, Any],
+        event_type: EventType,
+        *,
+        node_id: str | None = None,
+        node_run_id: str | None = None,
+        payload: dict[str, JsonValue] | None = None,
+        attempt: int | None = None,
+    ) -> None:
+        """提交一条真实事件；payload 是脱敏摘要（问句/SQL/行/Prompt 不进事件）。"""
+        assert event_sink is not None
+        parent = run.get("parent_node_run_id")
+        event_sink.append(
+            RunEvent(
+                run_id=str(run["run_id"]),
+                event_type=event_type,
+                payload=payload or {},
+                node_id=node_id,
+                node_run_id=node_run_id,
+                parent_node_run_id=parent if isinstance(parent, str) else None,
+                attempt=attempt,
+            )
+        )
+
+    def _tool(
+        event_type: Literal["TOOL_STARTED", "TOOL_FINISHED"], name: str, **facts: JsonValue
+    ) -> None:
+        """节点内部子调用留痕（检索/模型/执行）：无接缝 no-op，不影响返回值。"""
+        if event_sink is None:
+            return
+        run = _ACTIVE_RUN.get()
+        if run is None:
+            return
+        node = _ACTIVE_NODE.get()
+        _emit(
+            run,
+            event_type,
+            node_id=node[0] if node else None,
+            node_run_id=node[1] if node else None,
+            payload={"name": name, **facts},
+        )
+
+    def _node_traced(
+        node_id: str, node: Callable[..., dict[str, Any]], *, with_config: bool = False
+    ) -> Callable[..., dict[str, Any]]:
+        """节点接缝：NODE_STARTED → 节点体 → NODE_FINISHED / NODE_FAILED。
+
+        NODE_STARTED 写失败 → 节点体不执行；NODE_FINISHED 写失败 → 结果不交付
+        （异常传播）。每次进入节点分配独立 node_run_id（重试/多次运行可区分）。
+
+        config 注解必须是 `RunnableConfig`（不带 `| None`）：langgraph 按字面量白
+        名单校验注解形式，`from __future__ import annotations` 下 `RunnableConfig
+        | None` 是字符串且不在白名单 → 既不注入 config 又发 UserWarning。
+        """
+
+        def traced(state: TurnState, config: RunnableConfig) -> dict[str, Any]:
+            run = _event_run(config) if event_sink is not None else None
+            if run is None:
+                return node(state, config) if with_config else node(state)
+            node_run_id = uuid4().hex
+            _emit(run, "NODE_STARTED", node_id=node_id, node_run_id=node_run_id)
+            run_token = _ACTIVE_RUN.set(run)
+            node_token = _ACTIVE_NODE.set((node_id, node_run_id))
+            try:
+                out = node(state, config) if with_config else node(state)
+            except BaseException:
+                # 失败留痕尽力而为：二次写入失败不得掩盖原始异常（原始异常本身
+                # 已保证 fail closed——执行流不会继续到 SQL）
+                with suppress(Exception):
+                    _emit(run, "NODE_FAILED", node_id=node_id, node_run_id=node_run_id)
+                raise
+            finally:
+                _ACTIVE_NODE.reset(node_token)
+                _ACTIVE_RUN.reset(run_token)
+            _emit(run, "NODE_FINISHED", node_id=node_id, node_run_id=node_run_id)
+            return out
+
+        return traced
+
+    def _route_traced(node_id: str, route: Callable[..., str]) -> Callable[..., str]:
+        """边接缝：记录确定的分支裁决（EDGE_TAKEN）；写失败同样 fail closed。
+
+        同 _node_traced：config 注解用 `RunnableConfig`（langgraph 白名单形式）。
+        """
+
+        def traced(state: TurnState, config: RunnableConfig) -> str:
+            target = route(state)
+            run = _event_run(config) if event_sink is not None else None
+            if run is not None:
+                _emit(run, "EDGE_TAKEN", node_id=node_id, payload={"to": target})
+            return target
+
+        return traced
+
     # -- 组装 ---------------------------------------------------------------
     builder = StateGraph(TurnState)
-    builder.add_node("plan", node_plan)
-    builder.add_node("retrieve", node_retrieve)
-    builder.add_node("generate", node_generate)
-    builder.add_node("validate", node_validate)
-    builder.add_node("execute", node_execute)
-    builder.add_node("explain", node_explain)
-    builder.add_node("clarify", node_clarify)
-    builder.add_node("handoff", node_handoff)
+    builder.add_node("plan", _node_traced("plan", node_plan))
+    builder.add_node("retrieve", _node_traced("retrieve", node_retrieve))
+    builder.add_node("generate", _node_traced("generate", node_generate))
+    builder.add_node("validate", _node_traced("validate", node_validate))
+    builder.add_node("execute", _node_traced("execute", node_execute, with_config=True))
+    builder.add_node("explain", _node_traced("explain", node_explain))
+    builder.add_node("clarify", _node_traced("clarify", node_clarify))
+    builder.add_node("handoff", _node_traced("handoff", node_handoff))
     builder.add_edge(START, "plan")
     builder.add_conditional_edges(
         "plan",
-        route_after_plan,
+        _route_traced("plan", route_after_plan),
         {
             "execute": "execute",
             "retrieve": "retrieve",
@@ -592,21 +743,23 @@ def build_graph(
     )
     builder.add_conditional_edges(
         "retrieve",
-        route_after_retrieve,
+        _route_traced("retrieve", route_after_retrieve),
         {"generate": "generate", "handoff": "handoff"},
     )
     builder.add_conditional_edges(
         "generate",
-        route_after_generate,
+        _route_traced("generate", route_after_generate),
         {"validate": "validate", "clarify": "clarify"},
     )
     builder.add_conditional_edges(
         "validate",
-        route_after_validate,
+        _route_traced("validate", route_after_validate),
         {"execute": "execute", "clarify": "clarify"},
     )
     builder.add_conditional_edges(
-        "execute", route_after_execute, {"explain": "explain", "end": END}
+        "execute",
+        _route_traced("execute", route_after_execute),
+        {"explain": "explain", "end": END},
     )
     builder.add_edge("clarify", END)
     builder.add_edge("handoff", END)
@@ -735,6 +888,7 @@ class DataAgent:
         snapshot_meta: dict[str, Any] | None = None,
         snapshot: RuntimeSnapshot | None = None,
         checkpointer: BaseCheckpointSaver[Any] | None = None,
+        event_sink: EventSink | None = None,
     ) -> None:
         if snapshot is not None and snapshot_meta is not None and snapshot.meta != snapshot_meta:
             # 消息带出两份 sha：只说「参数不一致」会让人回去翻调用栈才知道是哪个
@@ -761,6 +915,9 @@ class DataAgent:
             "linker": linker,
             "compiler": compiler,
             "snapshot_meta": snapshot.meta if snapshot is not None else snapshot_meta,
+            # 事件接缝（ADR-0031 T05b）：主图与无状态子图拿到同一 sink；运行上下文
+            # 仍由每次 invoke 的 config 传入（本参数不含 run_id，图实例可被多 run 复用）
+            "event_sink": event_sink,
         }
         self._graph = build_graph(self.model, checkpointer=checkpointer, **self._graph_kwargs)
         # 实例级可重入锁（ADR-0026 决策 ④①）：ask / run_plan / analyze（T07）的
@@ -789,6 +946,7 @@ class DataAgent:
         sid: str,
         payload: dict[str, Any],
         identity: dict[str, object] | None,
+        run_context: dict[str, Any] | None = None,
     ) -> TurnResult:
         """回合装配与执行（ask / run_plan 共享）：thread_id、身份校验、invoke、埋点。
 
@@ -802,9 +960,17 @@ class DataAgent:
         用 RunnableConfig 标注而不是裸 dict：`get_state` 与 `invoke` 的重载只认它
         （裸 dict 实测被 mypy 判为「无匹配重载」）。configurable 是同一个 dict 引用，
         下面补 identity 对两个调用都可见，不必重建 config。
+
+        run_context 是运行上下文（ADR-0031 T05c）：`/runs` 面传
+        `{"run_id": ...}`，经 configurable.atlas_run 发给图的事件接缝（T05b），
+        使本轮真实事件归入该 run。None（CLI/评测/既有调用）→ 无事件接缝，行为
+        与接入前逐字节一致。
         """
         configurable: dict[str, Any] = {"thread_id": f"{self.model.name}:{sid}"}
         config: RunnableConfig = {"configurable": configurable}
+        if run_context is not None:
+            # 拷贝：运行上下文由服务端每请求分配（run_id 等），图实例可被多 run 复用
+            configurable["atlas_run"] = dict(run_context)
         if identity is not None:
             configurable["identity"] = identity
             # 身份绑定与校验（ADR-0020 决策 ⑥）：指纹随状态进 checkpoint（跨重启仍
@@ -832,6 +998,7 @@ class DataAgent:
         *,
         session_id: str | None = None,
         identity: dict[str, object] | None = None,
+        run_context: dict[str, Any] | None = None,
     ) -> TurnResult:
         """问一句：同一 session_id 视为同一会话（多轮计数与事实留痕）。
 
@@ -848,6 +1015,8 @@ class DataAgent:
                      serving/api）。**落 checkpoint 的只有校验用指纹哈希**：首轮写入
                      `session_fingerprint`，续轮在 invoke 前比对，不一致抛
                      `SessionIdentityConflict`（ADR-0020 决策 ⑥）。
+        run_context: 运行上下文（`{"run_id": ...}`，ADR-0031 `/runs` 面传入）；
+                     None = 无事件接缝（CLI / 评测 / 旧调用行为不变）。
 
         返回
         ----
@@ -861,7 +1030,9 @@ class DataAgent:
         # 实例级可重入锁（ADR-0026 决策 ④①）：与 run_plan / analyze（T07，须加入
         # 同一把锁）串行化，保证分析四步不被并发的普通请求插入中间状态。
         with self._lock:
-            return self._invoke_turn(sid, {"question": question, "session_id": sid}, identity)
+            return self._invoke_turn(
+                sid, {"question": question, "session_id": sid}, identity, run_context
+            )
 
     def run_plan(
         self,
@@ -870,6 +1041,7 @@ class DataAgent:
         session_id: str | None = None,
         identity: dict[str, object] | None = None,
         question: str | None = None,
+        run_context: dict[str, Any] | None = None,
     ) -> TurnResult:
         """执行一个给定的 Plan（`/api/v1/plan/execute` 的底层，ADR-0022 决策 ③）。
 
@@ -889,6 +1061,8 @@ class DataAgent:
                      成为下一轮残句追问的补全基线（代价 ⑥，期望行为）。
         identity   : 已验证 claims（与 ask 同语义：身份指纹校验 + 行级策略注入）。
         question   : 展示/审计用问句（**不参与解析**；缺省 `plan:<metric>` 形态）。
+        run_context: 运行上下文（`{"run_id": ...}`，ADR-0031 `/runs` 面传入）；
+                     None = 无事件接缝（旧调用行为不变）。
 
         返回
         ----
@@ -908,7 +1082,7 @@ class DataAgent:
         # 实例级可重入锁（ADR-0026 决策 ④①）：与 ask / analyze（T07，须加入
         # 同一把锁）串行化，保证分析四步不被并发的普通请求插入中间状态。
         with self._lock:
-            return self._invoke_turn(sid, payload, identity)
+            return self._invoke_turn(sid, payload, identity, run_context)
 
     def analyze(
         self,

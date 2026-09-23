@@ -25,7 +25,9 @@
 - 输出对象是**指标**；表是伴随展开（库域仅 6 张 dwd 表且图全连通，表集合
   无区分度，见 eval/schema_link_eval.py 的 coverage 口径说明）。
 - 无维度信号（detect_dimensions 空）时阶段 1 不过滤，退化为全量域召回。
-- 全部组件确定性：同一问句 → 同一输出（Bm25Index 参数固定 k1/b、词典序重排）。
+- **默认全链确定性**：同一问句 → 同一输出（Bm25Index 参数固定 k1/b、词典序重排）。
+  注入 `chooser`（ADR-0030 ⑤）后阶段 3 引入判别式建议：**仅在置信度达阈值时**
+  提前选中项，且判别失败/低置信一律退回确定性序——默认不注入时行为逐字不变。
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from agent.compiler import SemanticModel
 from retrieval.bm25 import Bm25Index
 from retrieval.graph_store import SemanticGraph
 from retrieval.metric_docs import MetricDoc, build_metric_docs
-from retrieval.rerank import MetaReranker
+from retrieval.rerank import MetaReranker, MetricChooser
 
 
 @dataclass(frozen=True)
@@ -59,11 +61,22 @@ class SchemaLinker:
         self,
         model: SemanticModel,
         popularity: dict[str, int] | None = None,
+        chooser: MetricChooser | None = None,
     ) -> None:
+        """构造链接器。
+
+        参数
+        ----
+        model      : SemanticModel。
+        popularity : 热度映射（阶段 3 重排用；与 retrieval_eval 同口径）。
+        chooser    : 可选判别引擎（ADR-0030 ⑤，如 `JevEngine`）。传 `None`
+                     （默认）时阶段 3 与 ADR-0030 之前**逐字一致**；注入后仅在
+                     高置信判别时提前选中项，异常/低置信退回确定性词典序。
+        """
         self._model = model
         self._graph = SemanticGraph(model)
         self._docs = {d.doc_id: d.text for d in build_metric_docs(model)}
-        self._reranker = MetaReranker(model, popularity)
+        self._reranker = MetaReranker(model, popularity, chooser=chooser)
         self._all_metrics = tuple(model.metrics)
 
     def link(self, question: str, k: int = 5, engine: str = "bm25") -> SchemaLinkResult:

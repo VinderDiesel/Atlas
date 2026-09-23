@@ -1,4 +1,4 @@
-.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance license-check export plan compile ask query eval analysis-eval baseline compare paraphrase e2e demo retrieve rag-eval schema-link extract-meta train train-distill train-dryrun lora-infer report report-latest test adr adr-list rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify profile-values ui-check ui-dev ui-build serve-dev
+.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance license-check export plan compile ask query eval analysis-eval baseline compare paraphrase e2e demo retrieve rag-eval schema-link extract-meta train train-distill train-dryrun lora-infer report report-latest test adr adr-list rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify profile-values ui-check ui-dev ui-build serve-dev backup restore diagnostics acceptance
 
 PYTHON       ?= .venv/bin/python
 
@@ -76,6 +76,12 @@ help:
 	@echo "    make api-verify      HTTP API 真链验收（A1-A9：/api/v1 全链 + 治理面 + plan/execute）"
 	@echo "    make adr             新建 ADR（用法: make adr TITLE=\"标题\" SLUG=\"english-slug\"）"
 	@echo "    make adr-list        列出现有 ADR 编号与标题（含下一个可用编号）"
+	@echo ""
+	@echo "  运维（ADR-0031 D12/T13）"
+	@echo "    make backup          控制库备份（SQLite backup API，产物落 backups/）"
+	@echo "    make restore         从备份恢复（用法: make restore RESTORE_MANIFEST=<path>）"
+	@echo "    make diagnostics     调用诊断端点（用法: make diagnostics ATLAS_TOKEN=<jwt>）"
+	@echo "    make acceptance      T13 首次接入验收（记录动作与起止时间，输出报告）"
 
 install:
 	uv sync --extra dev || pip install -e ".[dev]"
@@ -408,3 +414,25 @@ serve-dev:
 		exit 1; \
 	}
 	uv run --env-file .env uvicorn serving.api:app --host 127.0.0.1 --port 8000
+
+# ---- 运维入口（ADR-0031 D12/T13）----
+# backup：控制库备份（SQLite backup API，不直接复制 WAL）
+# 产物落 backups/ 目录，manifest 记录摘要与 schema 版本
+BACKUP_DEST ?= backups
+backup:
+	$(PYTHON) -c "from pathlib import Path; from serving.control.store import ControlStore; from serving.control.maintenance import backup_control; store = ControlStore(Path('serving/state/control.sqlite')); m = backup_control(store=store, bundles_root=Path('serving/state/bundles'), destination=Path('$(BACKUP_DEST)')); print(f'备份完成：{m.backup_id}，schema v{m.schema_version}')"
+
+# restore：从备份恢复控制库（先隔离验证，再恢复服务）
+RESTORE_MANIFEST ?=
+restore:
+	@[ -n "$(RESTORE_MANIFEST)" ] || { echo "错误：请指定 RESTORE_MANIFEST=<path>" >&2; exit 1; }
+	$(PYTHON) -c "import json; from pathlib import Path; from serving.control.maintenance import BackupManifest, restore_control; m = BackupManifest.from_dict(json.loads(Path('$(RESTORE_MANIFEST)').read_text())); r = restore_control(manifest=m, target_path=Path('serving/state/control.sqlite'), bundles_root=Path('serving/state/bundles')); print(f'恢复{\"成功\" if r.restored else \"失败\"}：{r.reason or \"ok\"}')"
+
+# diagnostics：调用诊断端点（需 operator token）
+diagnostics:
+	@[ -n "$(ATLAS_TOKEN)" ] || { echo "错误：请设置 ATLAS_TOKEN=<jwt>" >&2; exit 1; }
+	curl -s -H "Authorization: Bearer $(ATLAS_TOKEN)" http://127.0.0.1:8000/api/v1/manage/diagnostics | python -m json.tool
+
+# acceptance：T13 首次接入验收（记录动作与起止时间，输出报告）
+acceptance:
+	$(PYTHON) -m eval.workbench_acceptance --report eval/reports/workbench-acceptance-$$(git rev-parse --short HEAD).json

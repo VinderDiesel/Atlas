@@ -1,0 +1,28 @@
+{
+  "id": "intent-07",
+  "pair_id": "month-year",
+  "split": "test",
+  "source_family": "finance-manual-v1",
+  "question": "上个月佣金收入是多少？",
+  "reference_time": "2013-07-15T10:00:00+08:00",
+  "timezone": "Asia/Shanghai",
+  "annotation": {
+    "metric_mentions": ["佣金收入"],
+    "groups": [],
+    "filters": [],
+    "time_mentions": ["上个月"]
+  },
+  "expected": {
+    "candidates_include": ["commission_revenue"],
+    "reason_code": "bound",
+    "unresolved_slots": [],
+    "plan": {
+      "metric": "commission_revenue",
+      "dimensions": [],
+      "time": {"granularity": "month", "value": 201306},
+      "filters": [],
+      "order_by": [],
+      "limit": 100
+    }
+  }
+}

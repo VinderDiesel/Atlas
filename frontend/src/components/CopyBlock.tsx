@@ -18,7 +18,7 @@ export default function CopyBlock({ command }: Props) {
       copyable={{ text: command, tooltips: ["复制命令", "已复制"] }}
       style={{ marginBottom: 0 }}
     >
-      <code style={{ userSelect: "all", wordBreak: "break-all" }}>{command}</code>
+      <code style={{ userSelect: "all", wordBreak: "break-all", touchAction: "manipulation" }}>{command}</code>
     </Typography.Paragraph>
   );
 }

@@ -20,6 +20,7 @@ import json
 import threading
 import time
 import unittest
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -151,7 +152,9 @@ class ForbiddenGenerator:
 
     engine = "stub"
 
-    def generate(self, question: str, k: int = 5) -> Any:
+    def generate(
+        self, question: str, k: int = 5, *, candidates: Sequence[str] | None = None
+    ) -> Any:
         raise AssertionError("分析澄清轮不得进入候选链 generate")
 
 

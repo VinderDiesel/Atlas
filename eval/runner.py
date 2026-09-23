@@ -30,17 +30,21 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import pymysql
-
 from agent.compiler import Compiler, Plan, SemanticModel, TimeSpec
 from agent.planner import ClarificationRequest, Planner
+
+# 共享执行委托（ADR-0031 T04）：Doris 连接的唯一实现在 runtime 连接器——本模块
+# 不再持有连接代码，也不再是在线执行的工厂（工厂走 agent.runtime）。显式再导出
+# （X as X）保持 `from eval.runner import …` 消费方零改动，也是 mypy strict
+# （--no-implicit-reexport）下唯一成立的兼容形式（口径同 ADR-0019 决策 ②）。
+from agent.runtime.connectors.doris import execute_sql as execute_sql
+from agent.runtime.context import budget_from_snapshot as budget_from_snapshot
 from agent.security.sql_guard import Budget, UnsafeQuery, enforce
 
 # sha 身份与快照目录的单一事实源（ADR-0019 决策 ②）。两个名字保留在本模块
@@ -50,6 +54,14 @@ from agent.security.sql_guard import Budget, UnsafeQuery, enforce
 # 使这条兼容承诺在运行时成立、在类型检查层破功。判据 5(c) 因此同时断言 mypy 干净。
 from data.identity import SNAPSHOT_DIR as SNAPSHOT_DIR
 from data.identity import git_short_sha as git_short_sha
+
+# 旧名兼容层（ADR-0031 T04）：`build_budget` 曾是本模块定义的函数，委托共享实现
+# 后以**模块属性别名**保留 `from eval.runner import build_budget` 零改动。不能写成
+# 重命名导入（`import budget_from_snapshot as build_budget`）——mypy strict 只认
+# 「同名 as 同名」的显式再导出，重命名导入对下游不可见，7 处消费方报
+# attr-defined 而运行时测试全绿（本轮实测踩坑记录）。赋值必须在全部 import
+# 之后，否则后续 import 触发 E402（ruff 实测）。
+build_budget = budget_from_snapshot
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GOLD_DIR = REPO_ROOT / "eval" / "gold"
@@ -65,7 +77,8 @@ TZ = timezone(timedelta(hours=8))  # 契约要求：时间戳显式 +08:00
 # 占位符（AGENTS.md 9.3：未完成数字一律 <待填写>，评测锚定前不得编造）
 PLACEHOLDER_HASH = "<待执行后填写>"
 PLACEHOLDER_SHA = "<待锁定后填写>"
-MAX_ROWS = 10_000  # Guard 强制行数上限（gold SQL 自带更小 LIMIT，不受影响）
+# Guard 行数上限的默认值归共享实现（agent.runtime.context.DEFAULT_MAX_ROWS）——
+# 白名单与上限只此一份口径（T04）。
 
 
 def verify_snapshot() -> None:
@@ -154,46 +167,6 @@ def _scalar(value: Any) -> str:
     if isinstance(value, float):
         return repr(value)
     return str(value)
-
-
-def execute_sql(sql: str) -> tuple[list[tuple[Any, ...]], list[str]]:
-    """在 Doris 执行只读 SQL，返回 (rows, columns)。
-
-    连接参数走环境变量（AGENTS.md 第 13 节，本地开发默认 root 空密码，
-    .env 可覆盖：DORIS_HOST/DORIS_PORT/DORIS_USER/DORIS_PASSWORD）。
-    """
-    conn = pymysql.connect(
-        host=os.environ.get("DORIS_HOST", "127.0.0.1"),
-        port=int(os.environ.get("DORIS_PORT", "9030")),
-        user=os.environ.get("DORIS_USER", "root"),
-        password=os.environ.get("DORIS_PASSWORD", ""),
-        connect_timeout=15,
-    )
-    try:
-        cursor = conn.cursor()
-        try:
-            cursor.execute(sql)
-            columns = [desc[0] for desc in (cursor.description or [])]
-            rows = [tuple(row) for row in cursor.fetchall()]
-        finally:
-            cursor.close()
-    finally:
-        conn.close()
-    return rows, columns
-
-
-def build_budget(snapshot_meta: dict[str, Any]) -> Budget:
-    """Guard 预算：方言=doris，表白名单 = 锁定快照内的全部表。
-
-    评测 SQL 只允许触碰已锁快照的表——未来新增表未入快照前不允许被评测，
-    防止评测对象漂移（与 data/snapshots/README.md 规则一致）。
-    """
-    allowed = {
-        f"atlas.{ns}.{table}"
-        for ns, tables in snapshot_meta["row_counts"].items()
-        for table in tables
-    }
-    return Budget(dialect="doris", max_rows=MAX_ROWS, allowed_tables=frozenset(allowed))
 
 
 def anchor_hash(gold_path: str, sample: dict[str, Any], hash_value: str, sha: str) -> None:

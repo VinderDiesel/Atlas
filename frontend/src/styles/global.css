@@ -1,0 +1,457 @@
+/**
+ * 全局样式——CSS 自定义属性 + 页面骨架类 + 基础样式 + 滚动条 + 选中态 + skip link。
+ *
+ * 双主题：`data-theme` 由 ThemeProvider 同步到 <html>，深色/浅色变量一一对应。
+ * 色值与 theme/tokens.ts 的 BRAND / BRAND_LIGHT 保持同步。
+ * 内容最大宽度唯一出处 --atlas-content-max（.atlas-page 消费，各面板不再写魔法数字）。
+ *
+ * 层级体系：
+ *   H1 页名 20/600（.atlas-page-header__title，一屏一个）
+ *   Section 标题 15/600（.atlas-section__title）
+ *   endpoint 微签 12/mono（.atlas-endpoint，退到区块头部右端）
+ *   正文 14（antd 默认）/ 说明 13~12 次级色
+ */
+
+/* ── 深色主题（默认） ─────────────────────────────────── */
+
+:root,
+[data-theme="dark"] {
+  --atlas-bg: #0c1220;
+  --atlas-surface: #131d2e;
+  --atlas-border: #1e2d42;
+  --atlas-primary: #6ee7f5;
+  --atlas-accent: #f5b56e;
+  --atlas-text: #e2e8f0;
+  --atlas-muted: #8b98a9;
+  --atlas-success: #34d399;
+  --atlas-danger: #f87171;
+  --atlas-code-bg: #0a0f1a;
+  --atlas-content-max: 1200px;
+}
+
+/* ── 浅色主题 ──────────────────────────────────────────── */
+
+[data-theme="light"] {
+  --atlas-bg: #f8fafc;
+  --atlas-surface: #ffffff;
+  --atlas-border: #e2e8f0;
+  --atlas-primary: #0891b2;
+  --atlas-accent: #d97706;
+  --atlas-text: #1e293b;
+  --atlas-muted: #64748b;
+  --atlas-success: #059669;
+  --atlas-danger: #dc2626;
+  --atlas-code-bg: #f1f5f9;
+}
+
+/* ── 基础样式 ──────────────────────────────────────────── */
+
+body {
+  background: var(--atlas-bg);
+  color: var(--atlas-text);
+  font-family: "Outfit", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans CJK SC", system-ui, sans-serif;
+  transition: background 200ms, color 200ms;
+}
+
+code,
+pre,
+.ant-typography code {
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ── 滚动条（深色窄轨） ────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--atlas-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--atlas-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--atlas-muted);
+}
+
+/* ── 选中态高亮 ────────────────────────────────────────── */
+
+::selection {
+  background: var(--atlas-primary);
+  color: var(--atlas-bg);
+}
+
+/* ── Skip link 聚焦可见（WIG：键盘用户可跳至主内容） ──── */
+
+.skip-link:focus {
+  position: fixed !important;
+  left: 16px;
+  top: 16px;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  z-index: 9999;
+  padding: 8px 16px;
+  background: var(--atlas-primary);
+  color: var(--atlas-bg);
+  border-radius: 4px;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+/* ── :focus-visible 增强（WIG：键盘焦点环可见） ────────── */
+
+:focus-visible {
+  outline: 2px solid var(--atlas-primary);
+  outline-offset: 2px;
+}
+
+/* ── 顶栏与内容容器 ────────────────────────────────────── */
+
+.atlas-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--atlas-border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.atlas-header__title {
+  margin: 0 !important;
+  white-space: nowrap;
+}
+
+/* 顶栏菜单自带的下边界与顶栏 border-bottom 重复，去掉 */
+.atlas-header .ant-menu-horizontal {
+  border-bottom: none !important;
+}
+
+.atlas-content {
+  padding: 20px 24px 48px;
+}
+
+/* ── 页面骨架：PageHeader（H1 页名 + 一行说明） ────────── */
+
+.atlas-page {
+  width: 100%;
+  max-width: var(--atlas-content-max);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.atlas-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.atlas-page-header__title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--atlas-text);
+}
+
+.atlas-page-header__desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--atlas-muted);
+}
+
+/* ── 页面骨架：Section（区块卡：标题行 + 内容） ────────── */
+
+.atlas-section {
+  background: var(--atlas-surface);
+  border: 1px solid var(--atlas-border);
+  border-radius: 8px;
+}
+
+.atlas-section__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--atlas-border);
+}
+
+.atlas-section__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.atlas-section__meta {
+  font-size: 12px;
+  color: var(--atlas-muted);
+}
+
+.atlas-section__body {
+  padding: 16px 20px 20px;
+}
+
+/* ── 表单分组与页脚 ────────────────────────────────────── */
+
+.atlas-group-label {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--atlas-muted);
+}
+
+.atlas-group-label:not(:first-child) {
+  margin-top: 18px;
+}
+
+.atlas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  column-gap: 16px;
+}
+
+.atlas-form-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--atlas-border);
+}
+
+/* ── 代码/文本块（patch 原文、JSON 编辑器） ────────────── */
+
+.atlas-pre {
+  margin: 0;
+  padding: 12px;
+  background: var(--atlas-code-bg);
+  border: 1px solid var(--atlas-border);
+  border-radius: 6px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.atlas-editor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+/* ── 贡献条（归因）；条宽 = 后端原串，此处只管轨道与色 ── */
+
+.atlas-contrib-track {
+  width: 160px;
+  background: var(--atlas-border);
+  border-radius: 2px;
+}
+
+.atlas-contrib-fill {
+  height: 12px;
+}
+
+.atlas-contrib-fill--pos {
+  background: var(--atlas-success);
+}
+
+.atlas-contrib-fill--neg {
+  background: var(--atlas-danger);
+}
+
+/* ── 步骤列表（结果块内的扁平条目） ────────── */
+
+.atlas-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.atlas-step {
+  border: 1px solid var(--atlas-border);
+  border-radius: 6px;
+  background: var(--atlas-bg);
+  padding: 10px 14px 14px;
+}
+
+.atlas-step__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ── 规则折叠条 ────────────────────────────────────────── */
+
+.atlas-rules {
+  background: var(--atlas-surface);
+  border: 1px solid var(--atlas-border);
+  border-radius: 8px;
+  padding: 10px 20px;
+}
+
+.atlas-rules .ant-collapse-header {
+  padding: 0 !important;
+  align-items: center !important;
+}
+
+.atlas-rules .ant-collapse-header-text {
+  font-size: 13px;
+  color: var(--atlas-muted);
+}
+
+.atlas-rules .ant-collapse-content-box {
+  padding: 8px 0 0 !important;
+}
+
+.atlas-rules__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--atlas-muted);
+}
+
+/* ── 运行关系图（React Flow 容器与图例） ──── */
+
+.atlas-graph {
+  height: 320px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 8px;
+  background: var(--atlas-bg);
+}
+
+.atlas-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  margin-right: 6px;
+}
+
+/* ── 会话条目（本标签页日志；当前会话高亮） ───────────── */
+
+.atlas-session-entry {
+  padding: 8px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 6px;
+  background: var(--atlas-bg);
+}
+
+.atlas-session-entry--current {
+  border-color: var(--atlas-primary);
+  background: rgba(8, 145, 178, 0.06);
+}
+
+/* ── 治理子页：来源路径列表 ────────────────────────────── */
+
+.atlas-source-list {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.atlas-source-list li + li {
+  margin-top: 4px;
+}
+
+/* ── 表格：表头降噪 ────────────────────────────────────── */
+
+.ant-table-wrapper .ant-table-thead > tr > th {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.02em;
+}
+
+/* ── 数据表斑马纹（DataTable rowClassName 消费） ────────── */
+
+.atlas-row-stripe td {
+  background: color-mix(in srgb, var(--atlas-text, #e2e8f0) 3%, transparent) !important;
+}
+
+/* ── 动效：答案区渐入 ──────────────────────────────────── */
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.atlas-fade-in {
+  animation: fadeSlideIn 300ms ease-out both;
+}
+
+/* ── 动效：卡片 hover 微升 ─────────────────────────────── */
+
+.ant-card {
+  transition: transform 200ms ease, border-color 200ms ease;
+}
+
+.ant-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--atlas-primary);
+}
+
+/* ── 动效：按钮交互（禁止 transition: all，WIG 强制显式属性） */
+
+.ant-btn {
+  transition: background-color 150ms ease, transform 150ms ease, border-color 150ms ease;
+}
+
+.ant-btn-primary:hover {
+  filter: brightness(1.1);
+}
+
+.ant-btn-primary:active {
+  filter: brightness(0.95);
+}
+
+/* ── WIG 强制：prefers-reduced-motion 全局关闭动画 ──────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── 响应式：小屏适配 ──────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .atlas-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .atlas-content {
+    padding: 12px 12px 32px;
+  }
+
+  .atlas-section__head,
+  .atlas-section__body {
+    padding-inline: 14px;
+  }
+}

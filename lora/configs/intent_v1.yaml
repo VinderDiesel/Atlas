@@ -1,0 +1,70 @@
+# intent_v1 adapter 训练配方（T14，ADR-0031 D11）
+# owner: agent-onboarding@atlas.local；最后修改：2026-09-23
+#
+# 说明：本文件是 intent_v1 的训练配方初始值（D11 逐字对应）。
+# 所有训练结果数字由脚本产出（AGENTS.md N1：禁止手写数字）。
+# 本机无 GPU 未实测训练分支——任何实测数字待 GPU 就绪后由脚本生成。
+
+# ---- 训练目标（ADR-0031 D11）----
+# SFT 目标 = 合法 Plan JSON（metric/dimensions/time/top_n），挂 understand 节点。
+# 不覆盖历史 sql_v1，不优先接重排。
+# 训练数据来自 DatasetManifest（T12 审核后的反馈标签），不从线上数据库。
+
+# ---- 底座与量化（沿用 ADR-0008，D11 逐字）----
+base_model: Qwen/Qwen2.5-7B-Instruct   # Apache-2.0；24G 不足时切 3B（config 级降级）
+base_model_revision: "unknown"           # 实测时锁定精确 revision（D11：精确基座 revision 写 manifest）
+quantization:
+  method: bitsandbytes                   # QLoRA nf4（依赖见 pyproject ml extra）
+  load_in_4bit: true
+  bnb_4bit_quant_type: nf4
+  bnb_4bit_compute_dtype: bfloat16
+
+# ---- LoRA 超参（D11 初始值）----
+lora:
+  r: 16                                  # D11：LoRA rank=16
+  alpha: 32                              # D11：alpha=32
+  dropout: 0.05                          # D11：dropout=0.05
+  target_modules:                        # Qwen2.5 全注意力+MLP 线性层
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  task_type: CAUSAL_LM
+
+# ---- 训练（transformers.Trainer，D11 参数）----
+training:
+  epochs: 1                              # D11：epochs=1（intent 首版保守）
+  learning_rate: 2.0e-4                  # D11：lr=0.0002
+  batch_size: 1                          # D11：micro_batch=1
+  grad_accum_steps: 16                   # D11：gradient_accumulation=16（有效 batch 16）
+  max_length: 2048                       # D11：max_length=2048
+  warmup_ratio: 0.1
+  lr_scheduler: cosine
+  seed: 42                               # D11：seed=42
+  logging_steps: 10
+
+# ---- 模板（训练文本形态）----
+template:
+  prompt: "问题：{question}\n输出合法的计划 JSON（只输出一个 JSON，不要解释）："
+  # answer = 合法 Plan JSON 原样（question 部分 loss mask 掉，见 lora/intent_train.py）
+
+# ---- 数据（D11：训练数据来自冻结数据集）----
+data:
+  manifest_path: ""                      # DatasetManifest JSON 路径（T12 build_intent_dataset 产物）
+  min_samples: 50                        # 低于门槛拒绝训练
+  max_samples: 2000
+  # 超长样本拒绝或显式分片，不静默截掉条件（D11 逐字）
+
+# ---- 输出与下一步 ----
+output:
+  weights_dir: lora/weights/intent_v1    # 权重不入库（.gitignore）
+  adapter_name: intent_v1
+# serve（GPU 机上，vLLM 加载 adapter 后以 OpenAI 兼容端点暴露）：
+#   vllm serve Qwen/Qwen2.5-7B-Instruct --enable-lora \
+#     --lora-modules intent_v1=lora/weights/intent_v1 \
+#     --served-model-name intent_v1 --port 8001
+#   然后：OPENAI_BASE_URL=http://localhost:8001/v1 OPENAI_API_KEY=stub \
+#     uv run python -m eval.workbench_intent --engine openai

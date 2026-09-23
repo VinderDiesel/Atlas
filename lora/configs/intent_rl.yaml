@@ -1,0 +1,48 @@
+# T16 GRPO 配方（DRAFT）
+# owner: Atlas team
+# 最后修改：T16 初始配方，待 GPU 就绪后实测调整
+
+# 基座模型（许可白名单：Apache-2.0 Qwen2.5 系列）
+base_model: Qwen/Qwen2.5-7B-Instruct
+
+# GRPO 超参（待实测调整，不预设目标增益）
+grpo:
+  num_generations: 4        # 每个 prompt 生成候选数
+  generation_batch_size: 4  # 生成批次
+  train_batch_size: 1       # 训练批次
+  gradient_accumulation_steps: 16
+  num_epochs: 1
+  learning_rate: 1.0e-5     # GRPO 学习率通常低于 SFT
+  max_prompt_length: 1024
+  max_completion_length: 1024
+  temperature: 0.7          # 采样温度
+
+# 奖励函数配置
+reward:
+  type: strict_binary       # 严格 0.0/1.0
+  # 捷径检测（T16 合同核心）
+  reject_shortcuts:
+    - always_clarify        # 一律澄清
+    - drop_negation         # 丢否定
+    - search_everything     # 搜一切
+    - coincidental_match    # 巧合匹配
+
+# 数据隔离
+data:
+  # 训练数据与评测数据必须分离
+  eval_split: test          # 冻结评测集 split
+  train_split: train        # 训练集 split
+  min_samples: 50           # 最小样本数
+
+# 前置门禁
+preflight:
+  sft_baseline_frozen: true
+  reward_cases_required: true
+  budget_approval_required: true
+  license_check_required: true
+
+# 与 SFT 对照配置
+comparison:
+  sft_recipe: lora/configs/intent_v1.yaml
+  same_data: true           # 与 SFT 使用相同训练数据
+  same_retrieval_budget: true  # 与 SFT 相同推理预算

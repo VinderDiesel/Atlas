@@ -83,13 +83,19 @@ def measure_data_range() -> str:
     return f"{pc.min(column).as_py().isoformat()}~{pc.max(column).as_py().isoformat()}"
 
 
-def raw_size_bytes() -> int:
-    """TPC-DI 源数据目录递归字节数（含 Batch1~3，与 source=TPC-DI 口径一致）。"""
-    return sum(f.stat().st_size for f in RAW_DIR.rglob("*") if f.is_file())
+def raw_size_bytes(raw_dir: Path | None = None) -> int:
+    """返回 TPC-DI 源目录递归字节数；显式目录不存在时抛 FileNotFoundError。
+
+    raw_dir 为空时沿用 RAW_DIR（含 Batch1~3），显式目录用于隔离工作区复用源数据。
+    """
+    directory = RAW_DIR if raw_dir is None else raw_dir
+    if raw_dir is not None and not directory.is_dir():
+        raise FileNotFoundError(f"原始数据目录不存在或不是目录：{directory}")
+    return sum(f.stat().st_size for f in directory.rglob("*") if f.is_file())
 
 
-def build_meta(notes: str | None = None) -> dict:
-    """组装 meta.json 内容（不含 created_at 的文件名无关字段）。"""
+def build_meta(notes: str | None = None, *, raw_dir: Path | None = None) -> dict:
+    """现场测量并返回 meta；raw_dir 覆盖原始数据目录，测量/IO 异常向上传播。"""
     row_counts = measure_row_counts()
     has_retail = set(row_counts.get("dwd", {})) & set(RETAIL_DWD_TABLES)
     return {
@@ -98,7 +104,7 @@ def build_meta(notes: str | None = None) -> dict:
         # 全库多源时如实声明（零售 4 表随装载进 dwd，见 RETAIL_DWD_TABLES）
         "source": "TPC-DI + TPC-DS SF0.1" if has_retail else "TPC-DI",
         "data_range": measure_data_range(),
-        "raw_size_bytes": raw_size_bytes(),
+        "raw_size_bytes": raw_size_bytes() if raw_dir is None else raw_size_bytes(raw_dir),
         "row_counts": row_counts,
         "snapshot_ids": measure_snapshot_ids(),
         "generation_seconds": None,  # 数据加载耗时未单独计时（历史会话完成）

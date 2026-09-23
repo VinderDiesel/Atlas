@@ -67,6 +67,24 @@ def git_short_sha() -> str:
     return out.stdout.strip()
 
 
+def git_full_sha(repo: Path) -> str:
+    """返回显式本地仓库 HEAD 的完整 SHA，用于代码制品/证据绑定。
+
+    repo 必须是 Git 工作树；与运行时短身份不同，不消费 ATLAS_GIT_SHA，
+    防止采集另一个目录时误标为当前容器身份。Git/IO/超时错误直接抛出，
+    不替调用方回退；既有 git_short_sha 的容器注入行为保持不变。
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    return result.stdout.strip()
+
+
 def git_short_sha_or_none() -> str | None:
     """HEAD 短 sha，解析失败返回 `None`（不抛）。
 

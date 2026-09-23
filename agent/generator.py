@@ -31,7 +31,7 @@ import os
 import re
 import time
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -193,24 +193,44 @@ class Generator:
             or _DEFAULT_MODEL
         )
         self._planner = Planner(model)  # stub 引擎与确定性校验复用
-        self._linker = SchemaLinker(model)  # RAG 上下文检索（确定性）
+        # 旧入口适配器的检索器惰性构造（D09 L265：候选输入路径不触碰检索）
+        self._linker_cache: SchemaLinker | None = None
         self._prompt = self._load_prompt()
         self._metrics_text = self._metrics_block()
         self._dims_info = self._dimension_info()
 
     # -- 公开接口 ----------------------------------------------------------
 
-    def generate(self, question: str, k: int = 5) -> GenerationResult:
-        """路由生成：问句 → Plan 候选；无法确定 → GenerationRefusal。"""
+    def generate(
+        self,
+        question: str,
+        k: int = 5,
+        *,
+        candidates: Sequence[str] | None = None,
+    ) -> GenerationResult:
+        """路由生成：问句 → Plan 候选；无法确定 → GenerationRefusal。
+
+        `candidates` 显式给出（T10 候选输入路径：retrieve 产物）时，Prompt 候选块
+        逐字使用该清单（顺序不变、不截断），**不再触发隐式二次检索**；`None` 时
+        保持旧入口适配器行为（SchemaLinker 自适应 top-k 检索，其上下文含全量
+        指标清单，不构成公平 top-K 对照声明——ADR-0031 D09）。
+        """
         started = time.perf_counter()
         if self.engine == "stub":
             result = self._generate_stub(question)
         else:
-            result = self._generate_llm(question, k=k)
+            result = self._generate_llm(question, k=k, candidates=candidates)
         result.latency_ms = round((time.perf_counter() - started) * 1000, 1)
         return result
 
     # -- 内部实现 ----------------------------------------------------------
+
+    @property
+    def _linker(self) -> SchemaLinker:
+        """惰性构造旧入口检索器（D09 L265）；候选输入路径完全不触碰。"""
+        if self._linker_cache is None:
+            self._linker_cache = SchemaLinker(self.model)
+        return self._linker_cache
 
     def _load_prompt(self) -> dict[str, str]:
         """读 prompts/generator_plan.yaml（版本管理，禁止代码内联）。"""
@@ -241,13 +261,19 @@ class Generator:
                 lines.append(f"{f.name}（{ds_name}，用户说『{f.synonyms[0]}』即此字段）")
         return "\n".join(lines)
 
-    def _candidates_text(self, question: str, k: int) -> str:
-        """RAG 上下文：SchemaLinker top-k 候选的文档（问句相关指标）。"""
-        linked = self._linker.link(question, k=k)
-        lines = [f"候选{idx}：{name}" for idx, name in enumerate(linked.candidates, start=1)]
-        if linked.dims:
-            lines.append(f"问句检出的分组维度（参考）：{', '.join(linked.dims)}")
-        return "\n".join(lines)
+    def _candidates_text(
+        self, question: str, k: int, *, candidates: Sequence[str] | None = None
+    ) -> str:
+        """候选块：显式清单（retrieve 产物）逐字渲染；`None` 时走旧适配器检索。"""
+        if candidates is None:
+            linked = self._linker.link(question, k=k)
+            lines = [f"候选{idx}：{name}" for idx, name in enumerate(linked.candidates, start=1)]
+            if linked.dims:
+                lines.append(f"问句检出的分组维度（参考）：{', '.join(linked.dims)}")
+            return "\n".join(lines)
+        if not candidates:
+            return "（本轮无候选）"  # retrieve 0 命中：明确告知，不落回检索
+        return "\n".join(f"候选{idx}：{name}" for idx, name in enumerate(candidates, start=1))
 
     def _generate_stub(self, question: str) -> GenerationResult:
         """确定性 stub：Planner 结果序列化为 Plan（评测链路契约验证用）。
@@ -263,13 +289,15 @@ class Generator:
             )
         return GenerationResult(question=question, plan=result)
 
-    def _generate_llm(self, question: str, k: int) -> GenerationResult:
+    def _generate_llm(
+        self, question: str, k: int, *, candidates: Sequence[str] | None = None
+    ) -> GenerationResult:
         """调 OpenAI 兼容端点，解析并校验响应。"""
         user = (
             self._prompt["user"]
             .replace("__METRICS__", self._metrics_text)
             .replace("__QUESTION__", question)
-            .replace("__CANDIDATES__", self._candidates_text(question, k))
+            .replace("__CANDIDATES__", self._candidates_text(question, k, candidates=candidates))
         )
         system = (
             self._prompt["system"]

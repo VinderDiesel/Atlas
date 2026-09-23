@@ -3,7 +3,13 @@ r"""HTTP 契约 v2 防漂移测试（ADR-0022 判据 1/2/4/5/6/7/9/10；无 DB�
 
 口径（落地实测 2026-09-16；与 ADR-0022 判据原文的漂移逐条登记——N1 以实测为准）：
 
-- 判据 1/9：`EXPECTED_PATHS`（18 条字面量，0026 起 17、④a 增 /analyze/stream 为 18）
+- 判据 1/9：`EXPECTED_PATHS`（44 条字面量，0026 起 17、④a 增 /analyze/stream 为 18、
+  ADR-0031 D13 增 auth 4 为 22、T05c 增 /runs 提交与视图 2 为 24、T05d 增 /feedback 为 25、
+  T06a 增 sessions 2 与 artifact 1 为 28、T06b 增 /runs/{run_id}/events 为 29、
+  T07a 增 /manage/sources 为 30、T07b 增 probes 为 31、T07c 增 deployments 列/创建与
+  详情 2 为 33、T08a 增 /manage/drafts 列/创建与详情 2 为 35、T08a-s2 增
+  validations/reviews/patch 3 为 38、T08b 增发布导入 1 与部署发布/回退 2 与发布列/详情 2 为 43、
+  T13 增 /manage/diagnostics 为 44）
   == `app.openapi()["paths"]` 集合，
   且无前缀业务路径 404（硬切，无兼容期）。**P0b 已接入 TS 侧**：
   `frontend/src/api/endpoints.ts` 由本文件 `test_ts_endpoints_match_expected_paths`
@@ -42,6 +48,8 @@ r"""HTTP 契约 v2 防漂移测试（ADR-0022 判据 1/2/4/5/6/7/9/10；无 DB�
   补锁+跑）真链全量 `make eval` 新增主报告 `1e2e557.json`（`dry=False` 计入）与
   最新锁 `1e2e557.meta.json`（同数据多锁·created_at 最大）；`analysis-e7909f2.json`
   落既有 `analysis-<sha>` 模式（报告模式集不变，仍 20）；
+- 报告模式 20→21：ADR-0031 T01 新增 `workbench-baseline-<sha>-m0-t01` 清单；
+  按既有非主报告降级，主报告数量不变，不把清单提升为效果报告。
 - 快照首条 ccb4c8b→7c966e9：P0a 同日 11:43:52 新锁（同数据多锁，指纹与 ccb4c8b
   全一致，见 `data/snapshots/README.md`）；
 - explanation 13→14 键：ADR 述「13 个固定键」，实测 14（含 `data_refreshed_at`
@@ -80,9 +88,19 @@ from serving.ratelimit import (
 REPO = Path(__file__).resolve().parent.parent
 API = API_PREFIX  # 唯一前缀事实源（serving/api.py 常量；本文件不重复字面量）
 
-# 判据 1/9：18 条字面量（0026 增 /analyze 为 17；④a 增 /analyze/stream 为 18）
-# = 根 /health + 前缀 /health + 业务 6 + 治理 8 集合 + 2 钻取
-# ADR-0026 L246 / ADR-0028 ④a：业务面增端点须同步 OpenAPI、前端路径集合
+# 判据 1/9：43 条字面量（0026 增 /analyze 为 17；④a 增 /analyze/stream 为 18；
+# D13 增 auth 4 为 22；T05c 增 /runs 提交与视图 2 为 24；T05d 增 /feedback 为 25；
+# T06a 增 sessions 2 与 artifact 1 为 28；T06b 增 /runs/{run_id}/events 为 29；
+# T07a 增 /manage/sources 为 30；T07b 增 /manage/sources/{source_id}/probes 为 31；
+# T07c 增 /manage/deployments 列/创建与详情 2 为 33；T08a 增 /manage/drafts
+#   列/创建与详情 2 为 35；T08a-s2 增 validations/reviews/patch 3 为 38；
+# T08b 增 /manage/releases/imports 1 与部署发布/回退 2 与发布列/详情 2 为 43；
+# T13 增 /manage/diagnostics 为 44）
+# = 根 /health + 前缀 /health + 业务 6 + 治理 8 集合 + 2 钻取 + 认证 4 + 运行 4
+#   + 会话 2 + 反馈 1 + 源管理 2 + 部署 4（含 T08b 发布/回退）+ 草稿 5
+#   + 发布 3（T08b imports + 列/详情）（运行 4 = T05c 提交/视图 + T06a
+#   artifact 钻取 + T06b SSE）
+# ADR-0026 L246 / ADR-0028 ④a / ADR-0031 D13：增端点须同步 OpenAPI、前端路径集合
 # 与类型——本集合与 TS 侧双向相等即为该同步的机器断言
 EXPECTED_PATHS: frozenset[str] = frozenset(
     {
@@ -104,6 +122,32 @@ EXPECTED_PATHS: frozenset[str] = frozenset(
         "/api/v1/governance/snapshots",
         "/api/v1/governance/values/{item}",
         "/api/v1/governance/reports/{name}",
+        "/api/v1/auth/login",
+        "/api/v1/auth/callback",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/session",
+        "/api/v1/runs",
+        "/api/v1/runs/{run_id}",
+        "/api/v1/runs/{run_id}/artifacts/{artifact_id}",
+        "/api/v1/runs/{run_id}/events",
+        "/api/v1/sessions",
+        "/api/v1/sessions/{session_id}",
+        "/api/v1/feedback",
+        "/api/v1/manage/sources",
+        "/api/v1/manage/sources/{source_id}/probes",
+        "/api/v1/manage/deployments",
+        "/api/v1/manage/deployments/{deployment_id}",
+        "/api/v1/manage/drafts",
+        "/api/v1/manage/drafts/{draft_id}",
+        "/api/v1/manage/drafts/{draft_id}/validations",
+        "/api/v1/manage/drafts/{draft_id}/reviews",
+        "/api/v1/manage/drafts/{draft_id}/patch",
+        "/api/v1/manage/releases/imports",
+        "/api/v1/manage/deployments/{deployment_id}/releases",
+        "/api/v1/manage/deployments/{deployment_id}/rollbacks",
+        "/api/v1/manage/releases",
+        "/api/v1/manage/releases/{release_id}",
+        "/api/v1/manage/diagnostics",
     }
 )
 
@@ -142,7 +186,7 @@ EXPLANATION_KEYS = frozenset(
 # 诚实性标志位（判据 7 的实测快照——变更须有意更新，见模块 docstring）
 SKIPPED_VALUES = 11
 STRUCTURED_REPORTS = 16
-REPORT_PATTERNS = 20
+REPORT_PATTERNS = 24
 FIRST_SNAPSHOT_SHA = "1e2e557"
 NON_FIRST_SNAPSHOT_SHA = "dc4f350"  # ADR 明写「断言它不是首条」
 
@@ -223,8 +267,14 @@ class TestOpenapiPaths(_BaseCase):
         )
         self.assertEqual(
             len(paths),
-            18,
-            f"设计页 §5 断言 18 条（0026 /analyze、④a /analyze/stream），实测 {len(paths)}",
+            44,
+            f"设计页 §5 断言 44 条（0026 /analyze、④a /analyze/stream、D13 auth 4、"
+            f"T05c /runs 2、T05d /feedback 1、T06a sessions 2 与 artifact 1、"
+            f"T06b /runs/{{run_id}}/events 1、T07a /manage/sources 1、"
+            f"T07b probes 1、T07c deployments 2、T08a drafts 2、T08a-s2 drafts 3、"
+            f"T08b releases imports 1 + deployments 发布/回退 2 + releases 2、"
+            f"T13 diagnostics 1），"
+            f"实测 {len(paths)}",
         )
 
     def test_ts_endpoints_match_expected_paths(self) -> None:

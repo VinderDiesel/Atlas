@@ -12,13 +12,19 @@
  * - 只看计划：POST /plan → PlanPreview（含「执行此计划」→ POST /plan/execute）；
  * - 只编译（不执行）：取 Plan 产物 → POST /compile → SqlPreview。
  *
+ * T10f 结构化合同（ADR-0031 R04；dev-plan T10「前端控件与计划卡片只发结构化
+ * 合同」）：查询模式提供「结构化问数」折叠区块（PlanComposer，可选懒挂载——
+ * 展开才发治理面 2 条选项请求）；本组件与计划卡片的 /compile、/plan/execute
+ * 请求体一律经 `lib/plan-contract` 构造——6 键 + model（执行另加
+ * session_id），恒不含 question（缺省由后端从 Plan 生成规范文本）。
+ *
  * P2 受控化（本批次）：token / model / session_id 上收到 App（域是全局单源；会话
  * 由 App 在切角色时轮换——§3.5 约束 1）。本组件不再自持 model 与 sessionId；
  * 每个成功回合经 onTurnSeen 回报 session_id 与 turns_in_session（App 记录到会话
  * 日志供 SessionPanel 展示）。token 空串时动作按钮禁用并指引顶栏角色切换器。
  * 零遥测口径（0018 落地注记 P1 批次）：错误原文如实渲染，吞错即违约。
  */
-import { Alert, Button, Input, Segmented, Select, Space, Typography } from "antd";
+import { Alert, Button, Collapse, Input, Segmented, Select, Space, Typography } from "antd";
 import { Fragment, useState, type ReactNode } from "react";
 
 import { postJson } from "../../api/client";
@@ -37,8 +43,11 @@ import type {
   TurnPayload,
 } from "../../api/types";
 import ErrorNote from "../../components/ErrorNote";
+import PageHeader from "../../components/PageHeader";
+import Section from "../../components/Section";
 import { truncationState } from "../../lib/honesty";
 import { ANSWER_SECTIONS, branchOf, type AnswerSection } from "../../lib/order";
+import { toCompileBody, toExecuteBody } from "../../lib/plan-contract";
 import { shortSha } from "../../lib/sha";
 
 import ChartBlock from "../chart/ChartBlock";
@@ -47,6 +56,7 @@ import AnalysisBlock from "./AnalysisBlock";
 import DataTable from "./DataTable";
 import ExplanationBlock from "./ExplanationBlock";
 import NarrativeBlock from "./NarrativeBlock";
+import PlanComposer from "./PlanComposer";
 import PlanPreview from "./PlanPreview";
 import SqlPreview from "./SqlPreview";
 import TruncationNote from "./TruncationNote";
@@ -54,6 +64,13 @@ import TruncationNote from "./TruncationNote";
 type Busy = "ask" | "plan" | "compile" | "execute" | "analyze";
 
 type WorkMode = "query" | "analyze";
+
+const PAGE_HEADER = (
+  <PageHeader
+    title="问数工作台"
+    description="用自然语言提问，自动生成只读 SQL 并返回数据与图表。"
+  />
+);
 
 interface Props {
   /** Bearer token（App 内存态）；空串时动作按钮禁用并指引顶栏角色切换器。 */
@@ -160,18 +177,27 @@ export default function AskWorkbench({
         }
         plan = resp.plan;
       }
-      const { sql } = await postJson<CompileResponse>(API.compile, { ...plan, model }, token);
+      const { sql } = await postJson<CompileResponse>(
+        API.compile,
+        toCompileBody(plan, model),
+        token,
+      );
       setCompileSql(sql);
     });
   };
 
+  /**
+   * 计划卡片执行（T10f）：只发结构化合同（Plan 6 键 + model + session_id，
+   * 恒不含 question——缺省由后端从 Plan 生成规范文本；`lib/plan-contract`
+   * 为唯一构造点）。
+   */
   const executePlan = (plan: PlanPayload): void => {
     void run("execute", async () => {
-      const q = question.trim();
-      // question 缺省由后端取 Plan 规范化文本；空串不能发（min_length=1）
-      const body =
-        q === "" ? { ...plan, model, session_id: sessionId } : { ...plan, model, session_id: sessionId, question: q };
-      const resp = await postJson<TurnPayload>(API.planExecute, body, token);
+      const resp = await postJson<TurnPayload>(
+        API.planExecute,
+        toExecuteBody(plan, model, sessionId),
+        token,
+      );
       setPayload(resp);
       onTurnSeen(resp.session_id, resp.turns_in_session);
     });
@@ -201,7 +227,7 @@ export default function AskWorkbench({
           </Typography.Text>
         </Space>
       ),
-      sql: <SqlPreview sql={p.sql} title="出口 SQL（Guard 校验后，只读）" />,
+      sql: <SqlPreview sql={p.sql} title="出口 SQL" />,
       data: <DataTable columns={p.columns} rows={p.rows} renderedRows={t.renderedRows} />,
       truncation: <TruncationNote state={t} />,
       // ⑥ 图表（ADR-0025 决策 ②）：chart === null 时 ChartBlock 渲染 null，
@@ -310,70 +336,115 @@ export default function AskWorkbench({
   const canRun = question.trim() !== "" && token.trim() !== "" && busy === null;
 
   return (
-    <Space
-      direction="vertical"
-      size="middle"
-      style={{ width: "100%", maxWidth: 1080, margin: "0 auto", display: "flex" }}
-    >
-      <Input.TextArea
-        placeholder="用中文或英文问一句，例如：2013 年第二季度总交易额"
-        value={question}
-        onChange={(e) => setQuestion(e.target.value)}
-        autoSize={{ minRows: 2, maxRows: 6 }}
-      />
-      <Space wrap>
-        <Segmented<WorkMode>
-          value={mode}
-          onChange={(value) => setMode(value)}
-          options={[
-            { value: "query", label: "查询" },
-            { value: "analyze", label: "分析" },
-          ]}
+    <div className="atlas-page">
+      {PAGE_HEADER}
+  
+      <Section title="提问">
+        {/* 工具栏：模式 + 域选择 */}
+        <Space wrap align="center" size={12} style={{ marginBottom: 12 }}>
+          <Segmented<WorkMode>
+            value={mode}
+            onChange={(value) => setMode(value)}
+            options={[
+              { value: "query", label: "查询" },
+              { value: "analyze", label: "分析" },
+            ]}
+          />
+          <Select<ModelDomain>
+            value={model}
+            onChange={onModelChange}
+            style={{ width: 160 }}
+            options={[
+              { value: "finance", label: "金融" },
+              { value: "retail", label: "零售" },
+            ]}
+          />
+        </Space>
+  
+        <Input.TextArea
+          name="question"
+          autoComplete="off"
+          spellCheck={false}
+          aria-label="问数输入框"
+          placeholder={mode === "query" ? "用自然语言提问，例如：2013 年第二季度总交易额" : "输入归因问题，例如：2013Q4 佣金收入相对 2013Q3 的变化"}
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          autoSize={{ minRows: 2, maxRows: 6 }}
+          onPressEnter={(e) => {
+            if (e.shiftKey) return; // Shift+Enter 换行
+            e.preventDefault();
+            if (canRun) {
+              mode === "query" ? ask(question) : analyze(question);
+            }
+          }}
         />
-        <Select<ModelDomain>
-          value={model}
-          onChange={onModelChange}
-          style={{ width: 160 }}
-          options={[
-            { value: "finance", label: "finance（金融）" },
-            { value: "retail", label: "retail（零售）" },
-          ]}
-        />
-        {mode === "query" ? (
-          <>
-            <Button type="primary" loading={busy === "ask"} disabled={!canRun} onClick={() => ask(question)}>
-              问一句
-            </Button>
-            <Button loading={busy === "plan"} disabled={!canRun} onClick={showPlan}>
-              只看计划
-            </Button>
-            <Button loading={busy === "compile"} disabled={!canRun} onClick={compileOnly}>
-              只编译（不执行）
-            </Button>
-          </>
-        ) : (
-          <Button
-            type="primary"
-            loading={busy === "analyze"}
-            disabled={!canRun}
-            onClick={() => analyze(question)}
-          >
-            归因分析
-          </Button>
-        )}
-        {token.trim() === "" && (
-          <Typography.Text type="secondary">
-            未激活身份：请用顶栏「角色」切换器激活（首次 make token 签发后粘贴；token
-            只存内存，刷新后需重粘贴）
+  
+        {/* 操作按钮行 */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
+          {token.trim() === "" && (
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+              请先在右上角选择角色开始使用
+            </Typography.Text>
+          )}
+          <Space size={8}>
+            {mode === "query" ? (
+              <>
+                <Button
+                  type="primary"
+                  loading={busy === "ask"}
+                  disabled={!canRun}
+                  onClick={() => ask(question)}
+                >
+                  查询
+                </Button>
+                <Button loading={busy === "plan"} disabled={!canRun} onClick={showPlan}>
+                  预览计划
+                </Button>
+                <Button loading={busy === "compile"} disabled={!canRun} onClick={compileOnly}>
+                  生成 SQL
+                </Button>
+              </>
+            ) : (
+              <Button
+                type="primary"
+                loading={busy === "analyze"}
+                disabled={!canRun}
+                onClick={() => analyze(question)}
+              >
+                归因分析
+              </Button>
+            )}
+          </Space>
+        </div>
+  
+        {mode === "analyze" && (
+          <Typography.Text type="secondary" style={{ display: "block", marginTop: 12, fontSize: 13 }}>
+            提示：归因需指定绝对时间区间（如"2013Q4 相对 2013Q3"），系统不会猜测默认区间。
           </Typography.Text>
         )}
-      </Space>
-
-      {mode === "analyze" && (
-        <Typography.Text type="secondary">
-          归因需绝对时间区间（如“2013Q4 相对 2013Q3”）；相对时间将回落澄清（Planner
-          不猜默认区间）。本视图为确定性两期变化分解，不构成业务解释。
-        </Typography.Text>
+      </Section>
+  
+      {mode === "query" && (
+        <Collapse
+          items={[
+            {
+              key: "composer",
+              label: "高级选项：手动指定指标与筛选条件",
+              children: (
+                <PlanComposer
+                  token={token}
+                  model={model}
+                  sessionId={sessionId}
+                  onCompiled={(sql) => setCompileSql(sql)}
+                  onExecuted={(resp) => {
+                    setPayload(resp);
+                    onTurnSeen(resp.session_id, resp.turns_in_session);
+                  }}
+                />
+              ),
+            },
+          ]}
+        />
       )}
 
       {/* ④a 渐进消费：流式期间按事件到达序展示步骤进度（字段全取自后端事件，
@@ -409,14 +480,17 @@ export default function AskWorkbench({
         />
       )}
 
-      {compileSql !== null && <SqlPreview sql={compileSql} title="编译 SQL（只编译不执行）" />}
+      {compileSql !== null && <SqlPreview sql={compileSql} title="生成的 SQL" />}
 
-      {payload !== null &&
-        (payload.analysis !== null ? (
-          <AnalysisBlock analysis={payload.analysis} />
-        ) : (
-          renderTurn(payload)
-        ))}
-    </Space>
+      {/* WIG：答案区动态内容通知（aria-live=polite，屏幕阅读器可读） */}
+      <div aria-live="polite">
+        {payload !== null &&
+          (payload.analysis !== null ? (
+            <AnalysisBlock analysis={payload.analysis} />
+          ) : (
+            renderTurn(payload)
+          ))}
+      </div>
+    </div>
   );
 }

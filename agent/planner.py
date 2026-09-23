@@ -46,11 +46,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+import yaml
 
 from agent import value_domain
 from agent.compiler import (
@@ -62,6 +65,8 @@ from agent.compiler import (
     TimeSpec,
     load_locale_patterns,
     load_locale_synonyms,
+    parse_locale_patterns_doc,
+    parse_locale_synonyms_doc,
 )
 
 # ---------------------------------------------------------------------------
@@ -118,8 +123,28 @@ def _tp_year(m: re.Match[str]) -> TimeSpec:
     return TimeSpec("year", int(m.group(1)))
 
 
-# kind 分发表：解析器已实现形态的唯一权威。词典与本表不一致 = 某类时间形态
-# 要么写了却没实现、要么实现了却没词——加载失败（不静默丢形态）。
+def _verify_time_kinds(
+    patterns: tuple[tuple[str, re.Pattern[str]], ...],
+    dispatch: Mapping[str, object],
+    *,
+    lexicon: str,
+    dispatch_label: str,
+) -> None:
+    """kind 分发表与词典形态集合的一致性校验（路径加载与制品装配共用）。
+
+    不一致 = 某类时间形态要么写了却没实现、要么实现了却没词——
+    加载/装配即失败（不静默丢形态）。
+    """
+    if {kind for kind, _ in patterns} != set(dispatch):
+        raise ValueError(
+            f"{lexicon} 的 time.patterns kind 与解析器实现不一致："
+            f"词典 {sorted(kind for kind, _ in patterns)} vs "
+            f"实现 {sorted(dispatch)}（新增形态需同时补 {dispatch_label} 分支）"
+        )
+
+
+# kind 分发表：解析器已实现形态的唯一权威。默认路径直接消费本表；制品
+# 装配经 _bind_zh_dispatch 按本包编号表绑定后消费（见 LocaleRules）。
 _TIME_DISPATCH: dict[str, Callable[[re.Match[str]], TimeSpec]] = {
     "date": _tp_date,
     "iso_date": _tp_iso_date,
@@ -128,12 +153,12 @@ _TIME_DISPATCH: dict[str, Callable[[re.Match[str]], TimeSpec]] = {
     "month": _tp_month,
     "year": _tp_year,
 }
-if {kind for kind, _ in _TIME_PATTERNS} != set(_TIME_DISPATCH):
-    raise ValueError(
-        "patterns_zh_cn.yml 的 time.patterns kind 与解析器实现不一致："
-        f"词典 {sorted(kind for kind, _ in _TIME_PATTERNS)} vs "
-        f"实现 {sorted(_TIME_DISPATCH)}（新增形态需同时补 _TIME_DISPATCH 分支）"
-    )
+_verify_time_kinds(
+    _TIME_PATTERNS,
+    _TIME_DISPATCH,
+    lexicon="patterns_zh_cn.yml",
+    dispatch_label="_TIME_DISPATCH",
+)
 
 # 相对时间词：命中即反问（固定快照评测下必然漂移，ADR-0014 ③ 设计性不支持）
 _RELATIVE_TIME = _ZH_PATTERNS["time"]["relative_reject"]["words"]
@@ -244,12 +269,12 @@ _EN_TIME_DISPATCH: dict[str, Callable[[str, re.Match[str]], TimeSpec | None]] = 
     "year_prep": _tp_en_year_prep,
     "year_bare": _tp_en_year_bare,
 }
-if {kind for kind, _ in _EN_TIME_PATTERNS} != set(_EN_TIME_DISPATCH):
-    raise ValueError(
-        "patterns_en_us.yml 的 time.patterns kind 与解析器实现不一致："
-        f"词典 {sorted(kind for kind, _ in _EN_TIME_PATTERNS)} vs "
-        f"实现 {sorted(_EN_TIME_DISPATCH)}（新增形态需同时补 _EN_TIME_DISPATCH 分支）"
-    )
+_verify_time_kinds(
+    _EN_TIME_PATTERNS,
+    _EN_TIME_DISPATCH,
+    lexicon="patterns_en_us.yml",
+    dispatch_label="_EN_TIME_DISPATCH",
+)
 
 # 相对时间词：命中即反问（固定快照评测下必然漂移，ADR-0014 ③ 设计性不支持）
 _EN_RELATIVE_TIME = _EN_PATTERNS["time"]["relative_reject"]["words"]
@@ -278,16 +303,229 @@ _EN_FOLLOWUP_INSTEAD_RE = _EN_PATTERNS["followup"]["instead"]["pattern"]
 # 同义词表外置（ADR-0015）：zh = 语义模型 ai_context 注记（实测全中文，唯一
 # 例外 GMV/AOV 中英通用）；en = 模型注记 ∪ `semantic/synonyms/en_us.yml`。
 # planner 内不保留任何硬编码措辞表——新场景接入英文措辞只改 YAML（B7 前提）。
-_LOCALE_SYNONYM_FILE = {"zh": "zh_cn", "en": "en_us"}
+# ADR-0031 D04 起英文表的读取点收拢到规则包（LocaleRules）：默认路径取本机
+# 词典（进程级单例），发布装配取制品内字节（按内容寻址缓存）——互不污染。
 
 
-def _locale_synonyms(locale: str, section: str) -> dict[str, tuple[str, ...]]:
-    """取本 locale 的同义词补充表（指标 metric_synonyms / 维度 dimension_synonyms）。
+def _load_yaml_doc(raw: bytes, source: str) -> Any:
+    """制品规则文件字节 → YAML 文档（解析失败带制品内标签报错）。"""
+    try:
+        return yaml.safe_load(raw.decode("utf-8"))
+    except (yaml.YAMLError, UnicodeDecodeError) as exc:
+        raise ValueError(f"规则文件不是合法 YAML（{exc}）：{source}") from exc
 
-    zh_cn.yml 当前为空占位（中文注记全部活在模型里，搬进词典属 B3a），
-    因此 en 以外的合并恒等于模型注记本体——行为与外置前逐字一致。
+
+def _bind_zh_dispatch(
+    cn_numerals: Mapping[str, int],
+) -> dict[str, Callable[[re.Match[str]], TimeSpec]]:
+    """按给定中文编号表绑定季度 handler（制品装配路径）。
+
+    默认路径不经过本函数（直接用模块级 _TIME_DISPATCH，与词典同源）：
+    制品可能携带与仓库不同的编号表，季度解析必须读**本制品**的表。
     """
-    return load_locale_synonyms(_LOCALE_SYNONYM_FILE[locale])[section]
+
+    def _tp_quarter_bound(m: re.Match[str]) -> TimeSpec:
+        return TimeSpec("quarter", f"{m.group(1)}Q{cn_numerals[m.group(2)]}")
+
+    return {**_TIME_DISPATCH, "quarter": _tp_quarter_bound}
+
+
+def _bind_en_dispatch(
+    months: Mapping[str, int], threshold_words: tuple[str, ...]
+) -> dict[str, Callable[[str, re.Match[str]], TimeSpec | None]]:
+    """按给定月份表/裸年封锁表绑定 handler（制品装配路径）。"""
+
+    def _tp_en_month_bound(question: str, m: re.Match[str]) -> TimeSpec | None:
+        return TimeSpec("month", int(m.group(2)) * 100 + months[m.group(1).lower()])
+
+    def _tp_en_year_bare_bound(question: str, m: re.Match[str]) -> TimeSpec | None:
+        if any(w in question.lower() for w in threshold_words):
+            return None
+        return TimeSpec("year", int(m.group(1)))
+
+    return {
+        **_EN_TIME_DISPATCH,
+        "month": _tp_en_month_bound,
+        "year_bare": _tp_en_year_bare_bound,
+    }
+
+
+@dataclass(frozen=True)
+class LocaleRules:
+    """一个解析规则来源（本机权威源或某个发布制品）的完整规则包。
+
+    实例构造后即冻结：消费方（Planner）只读；`*_time_dispatch` 是 kind →
+    构造函数的绑定表——制品装配按本包的编号/月份/封锁表绑定（_bind_*），
+    默认路径直接用模块级分发表（与词典同源，行为零变化）。
+    """
+
+    zh_time_patterns: tuple[tuple[str, re.Pattern[str]], ...]
+    zh_time_dispatch: Mapping[str, Callable[..., TimeSpec | None]]
+    zh_relative_time: tuple[str, ...]
+    zh_group_re: re.Pattern[str]
+    zh_top_n_re: re.Pattern[str]
+    zh_eq_filter_re: re.Pattern[str]
+    zh_exc_filter_re: re.Pattern[str]
+    zh_threshold_gt_re: re.Pattern[str]
+    zh_threshold_lt_re: re.Pattern[str]
+    zh_cn_units: Mapping[str, int]
+    zh_cn_numerals: Mapping[str, int]
+    zh_followup_prefixes: tuple[str, ...]
+    zh_followup_dim_re: re.Pattern[str]
+    en_time_patterns: tuple[tuple[str, re.Pattern[str]], ...]
+    en_time_dispatch: Mapping[str, Callable[..., TimeSpec | None]]
+    en_relative_time: tuple[str, ...]
+    en_threshold_words: tuple[str, ...]
+    en_month_names: Mapping[str, int]
+    en_group_re: re.Pattern[str]
+    en_top_n_re: re.Pattern[str]
+    en_top_n_dim_re: re.Pattern[str]
+    en_include_re: re.Pattern[str]
+    en_exclude_re: re.Pattern[str]
+    en_threshold_gt_re: re.Pattern[str]
+    en_threshold_lt_re: re.Pattern[str]
+    en_units: Mapping[str, int]
+    en_followup_what_re: re.Pattern[str]
+    en_followup_instead_re: re.Pattern[str]
+    en_metric_synonyms: Mapping[str, tuple[str, ...]]
+    en_dimension_synonyms: Mapping[str, tuple[str, ...]]
+
+    @classmethod
+    def _assemble(
+        cls,
+        zh: dict[str, Any],
+        en: dict[str, Any],
+        en_synonyms: dict[str, dict[str, tuple[str, ...]]],
+        *,
+        bound: bool,
+    ) -> LocaleRules:
+        """两个已归一化词典 + 英文同义词表 → 规则包。
+
+        `bound=False`（默认路径）：分发表直接引用模块级对象——季度/月份/裸年
+        handler 与模块常量同源，行为与规则包引入前逐字一致。
+        `bound=True`（制品装配）：按装配时给定的编号表/月份表/封锁表绑定。
+        """
+        zh_numerals = zh["magnitude"]["cn_numerals"]
+        en_months = en["months"]
+        en_gate = en["time"]["threshold_gate"]["words"]
+        zh_dispatch: Mapping[str, Callable[..., TimeSpec | None]]
+        en_dispatch: Mapping[str, Callable[..., TimeSpec | None]]
+        if bound:
+            zh_dispatch = _bind_zh_dispatch(zh_numerals)
+            en_dispatch = _bind_en_dispatch(en_months, en_gate)
+            zh_label, en_label = "制品 patterns_zh_cn.yml", "制品 patterns_en_us.yml"
+        else:
+            zh_dispatch = _TIME_DISPATCH
+            en_dispatch = _EN_TIME_DISPATCH
+            zh_label, en_label = "patterns_zh_cn.yml", "patterns_en_us.yml"
+        _verify_time_kinds(
+            zh["time"]["patterns"],
+            zh_dispatch,
+            lexicon=zh_label,
+            dispatch_label="LocaleRules zh 分发表",
+        )
+        _verify_time_kinds(
+            en["time"]["patterns"],
+            en_dispatch,
+            lexicon=en_label,
+            dispatch_label="LocaleRules en 分发表",
+        )
+        return cls(
+            zh_time_patterns=zh["time"]["patterns"],
+            zh_time_dispatch=zh_dispatch,
+            zh_relative_time=zh["time"]["relative_reject"]["words"],
+            zh_group_re=zh["grouping"]["pattern"],
+            zh_top_n_re=zh["topn"]["pattern"],
+            zh_eq_filter_re=zh["filter_include"]["pattern"],
+            zh_exc_filter_re=zh["filter_exclude"]["pattern"],
+            zh_threshold_gt_re=zh["threshold"]["greater"]["pattern"],
+            zh_threshold_lt_re=zh["threshold"]["less"]["pattern"],
+            zh_cn_units=zh["magnitude"]["cn_units"],
+            zh_cn_numerals=zh_numerals,
+            zh_followup_prefixes=zh["followup"]["prefixes"],
+            zh_followup_dim_re=zh["followup"]["dim_pattern"],
+            en_time_patterns=en["time"]["patterns"],
+            en_time_dispatch=en_dispatch,
+            en_relative_time=en["time"]["relative_reject"]["words"],
+            en_threshold_words=en_gate,
+            en_month_names=en_months,
+            en_group_re=en["grouping"]["pattern"],
+            en_top_n_re=en["topn"]["pattern"],
+            en_top_n_dim_re=en["topn_dim"]["pattern"],
+            en_include_re=en["filter_include"]["pattern"],
+            en_exclude_re=en["filter_exclude"]["pattern"],
+            en_threshold_gt_re=en["threshold"]["greater"]["pattern"],
+            en_threshold_lt_re=en["threshold"]["less"]["pattern"],
+            en_units=en["magnitude"]["en_units"],
+            en_followup_what_re=en["followup"]["what"]["pattern"],
+            en_followup_instead_re=en["followup"]["instead"]["pattern"],
+            en_metric_synonyms=en_synonyms["metric_synonyms"],
+            en_dimension_synonyms=en_synonyms["dimension_synonyms"],
+        )
+
+    @classmethod
+    def from_documents(
+        cls,
+        zh_patterns: bytes,
+        en_patterns: bytes,
+        zh_synonyms: bytes,
+        en_synonyms: bytes,
+    ) -> LocaleRules:
+        """四个制品规则文件的原始字节 → 规则包（按内容寻址缓存）。
+
+        同一内容 → 同一对象；任一字节不同 → 不同对象，两个发布的规则绝不
+        串用。四个文件都必须能解析且过全部形态校验，否则 ValueError
+        （调用方 agent.runtime.bundle 转成 BundleError）。
+        缓存键 = 四个字节的联合摘要；zh 同义词表当前为空表，解析一次仅为
+        拒绝制品携带的非法内容（zh 侧解析器不读该表）。
+        """
+        key = hashlib.sha256(
+            b"\x00".join((zh_patterns, en_patterns, zh_synonyms, en_synonyms))
+        ).hexdigest()
+        cached = _RULES_CACHE.get(key)
+        if cached is not None:
+            return cached
+        zh = parse_locale_patterns_doc(
+            "zh_cn",
+            _load_yaml_doc(zh_patterns, "patterns_zh_cn.yml"),
+            "patterns_zh_cn.yml",
+        )
+        en = parse_locale_patterns_doc(
+            "en_us",
+            _load_yaml_doc(en_patterns, "patterns_en_us.yml"),
+            "patterns_en_us.yml",
+            shared_zh=zh,
+        )
+        parse_locale_synonyms_doc(_load_yaml_doc(zh_synonyms, "zh_cn.yml"), "zh_cn.yml")
+        en_table = parse_locale_synonyms_doc(
+            _load_yaml_doc(en_synonyms, "en_us.yml"), "en_us.yml"
+        )
+        rules = cls._assemble(zh, en, en_table, bound=True)
+        _RULES_CACHE[key] = rules
+        return rules
+
+
+_RULES_CACHE: dict[str, LocaleRules] = {}
+_DEFAULT_RULES: LocaleRules | None = None
+
+
+def default_locale_rules() -> LocaleRules:
+    """本机路径加载的规则包（进程级单例）。
+
+    未装配发布的调用方（CLI / 既有测试）继续走默认路径：词典来自
+    `semantic/synonyms/`（Git 权威源）+ `semantic/ossie/` 的模型注记，
+    与模块级常量同源，行为零变化。装载制品规则不写入本单例
+    （制品装配见 LocaleRules.from_documents）。
+    """
+    global _DEFAULT_RULES
+    if _DEFAULT_RULES is None:
+        _DEFAULT_RULES = LocaleRules._assemble(
+            _ZH_PATTERNS,
+            _EN_PATTERNS,
+            load_locale_synonyms("en_us"),
+            bound=False,
+        )
+    return _DEFAULT_RULES
 
 
 @dataclass(frozen=True)
@@ -337,7 +575,9 @@ class TimeSpan:
     spec: TimeSpec
 
 
-def _scan_time_spans(question: str, locale: str) -> tuple[TimeSpan, ...] | ClarificationRequest:
+def _scan_time_spans(
+    question: str, locale: str, rules: LocaleRules | None = None
+) -> tuple[TimeSpan, ...] | ClarificationRequest:
     """扫描问句中**全部**绝对期间（ADR-0026 T03 两期拆分的共用底座）。
 
     - 相对时间词命中 → 直接返回 relative_time 澄清（与 `_parse_time` 既有
@@ -351,10 +591,13 @@ def _scan_time_spans(question: str, locale: str) -> tuple[TimeSpan, ...] | Clari
     与 `_parse_time` 的等价性：声明顺序遍历保证"首个收集到的 span"就是旧
     `regex.search` 的首个命中，故 `_parse_time` 取 spans[0].spec 逐字等价。
     locale 必须已解析为 "zh"/"en"（调用方负责）。
+    `rules`：解析规则包（ADR-0031 D04）；缺省 = 本机权威源单例。发布装配的
+    调用方必须显式传入——两个发布的规则不得经默认单例串用。
     """
+    active = default_locale_rules() if rules is None else rules
     if locale == "en":
         lowered = question.lower()
-        if any(t in lowered for t in _EN_RELATIVE_TIME):
+        if any(t in lowered for t in active.en_relative_time):
             return ClarificationRequest(
                 question,
                 (
@@ -363,22 +606,19 @@ def _scan_time_spans(question: str, locale: str) -> tuple[TimeSpan, ...] | Clari
                 ),
                 kind="relative_time",
             )
-        patterns: tuple[tuple[str, re.Pattern[str]], ...] = _EN_TIME_PATTERNS
-        # Mapping（值型协变）：zh 分发表 dict[str, Callable[[re.Match], TimeSpec]]
-        # 可赋给 Mapping[str, Callable[..., TimeSpec | None]]（dict 本身不变型）
-        dispatch: Mapping[str, Callable[..., TimeSpec | None]] = _EN_TIME_DISPATCH
+        # 两个分支的 patterns/dispatch 均来自同一规则包（类型一致，无需再标）
+        patterns = active.en_time_patterns
+        dispatch = active.en_time_dispatch
         takes_question = True
     else:
-        if any(t in question for t in _RELATIVE_TIME):
+        if any(t in question for t in active.zh_relative_time):
             return ClarificationRequest(
                 question,
                 ("不支持相对时间（固定快照评测下会漂移，请使用绝对日期）",),
                 kind="relative_time",
             )
-        patterns = _TIME_PATTERNS
-        # 类型已由 en 分支的注解声明（Callable[..., TimeSpec | None] 对 zh 分发表
-        # 逐字兼容：参数 ... 兼容 (re.Match)，返回 TimeSpec ⊆ TimeSpec | None）
-        dispatch = _TIME_DISPATCH
+        patterns = active.zh_time_patterns
+        dispatch = active.zh_time_dispatch
         takes_question = False
     spans: list[TimeSpan] = []
     for kind, regex in patterns:
@@ -418,10 +658,21 @@ scan_time_spans = _scan_time_spans
 class Planner:
     """问句 → Plan 的确定性解析器。"""
 
-    def __init__(self, model: SemanticModel, values_dir: Path | None = None) -> None:
-        """values_dir：值域注册表目录，缺省 = `semantic/values/`（仅测试注入 tmp 目录）。"""
+    def __init__(
+        self,
+        model: SemanticModel,
+        values_dir: Path | None = None,
+        *,
+        rules: LocaleRules | None = None,
+    ) -> None:
+        """values_dir：值域注册表目录，缺省 = `semantic/values/`（仅测试注入 tmp 目录）。
+
+        rules：解析规则包（ADR-0031 D04）；缺省 = 本机权威源单例（旧 CLI/测试
+        行为零变化）；发布装配方传制品规则（`RuntimeBundle.locale_rules()`）。
+        """
         self.model = model
         self.values_dir = values_dir or value_domain.VALUES_DIR
+        self._rules = rules if rules is not None else default_locale_rules()
 
     def plan(self, question: str, locale: str | None = None) -> Plan | ClarificationRequest:
         """解析问句。返回 Plan；无法唯一确定时返回 ClarificationRequest。
@@ -535,7 +786,7 @@ class Planner:
         """中文指代追问（原实现，2026-09-04 前逐字一致）。"""
         text = question.strip().strip("？?。!！，, ")
         # 链接词开头或"呢"结尾才算口语残句（否则维持原 unmatched 流程）
-        if not (text.startswith(_FOLLOWUP_PREFIXES) or text.endswith("呢")):
+        if not (text.startswith(self._rules.zh_followup_prefixes) or text.endswith("呢")):
             return None
         # 时间片段：壳词不影响既有时间正则；相对时间 → 透传澄清
         time = self._parse_time(text, "zh")
@@ -544,7 +795,7 @@ class Planner:
         # 维度片段：换维壳命中后做维度字段子串匹配（多命中全取，与分组解析同风格）；
         # 壳误吃时间短语（"换成 2014 年"）时 new_dims 为空 → 不算换维，回落仅换时间
         new_dims: tuple[str, ...] = ()
-        m = _FOLLOWUP_DIM_RE.search(text)
+        m = self._rules.zh_followup_dim_re.search(text)
         if m:
             new_dims = self._dim_hits(m.group(1), "zh")
             if new_dims and prev.filters:
@@ -576,11 +827,11 @@ class Planner:
     def _followup_en(self, question: str, prev: Plan) -> Plan | ClarificationRequest | None:
         """英文指代追问：what about X / how about X / by X instead（与中文同构）。"""
         text = question.strip().strip("？?。!！，, ")
-        m = _EN_FOLLOWUP_WHAT_RE.search(text)
+        m = self._rules.en_followup_what_re.search(text)
         if m:
             inner = m.group(1).strip()
         else:
-            m = _EN_FOLLOWUP_INSTEAD_RE.search(text)
+            m = self._rules.en_followup_instead_re.search(text)
             if not m or not m.group(1).strip():
                 return None
             inner = m.group(1).strip()
@@ -590,7 +841,7 @@ class Planner:
             return time
         # 维度片段：换维壳短语内做维度字段子串匹配（多命中全取）
         new_dims: tuple[str, ...] = ()
-        mg = _EN_GROUP_RE.search(inner)
+        mg = self._rules.en_group_re.search(inner)
         if mg:
             new_dims = self._dim_hits(mg.group(1), "en")
             if new_dims and prev.filters:
@@ -639,7 +890,7 @@ class Planner:
         """
         if locale == "zh":
             return dict(self.model.metric_synonyms)
-        extra = _locale_synonyms(locale, "metric_synonyms")
+        extra = self._rules.en_metric_synonyms
         return {
             name: syns + extra.get(name, ()) for name, syns in self.model.metric_synonyms.items()
         }
@@ -648,7 +899,7 @@ class Planner:
         """维度字段同义词集（与 _metric_synsets 同构）。"""
         if locale == "zh":
             return dict(self.model.dimension_synonyms)
-        extra = _locale_synonyms(locale, "dimension_synonyms")
+        extra = self._rules.en_dimension_synonyms
         return {
             name: syns + extra.get(name, ()) for name, syns in self.model.dimension_synonyms.items()
         }
@@ -721,7 +972,7 @@ class Planner:
         """
         if locale == "en":
             return self._parse_time_en(question)
-        scanned = _scan_time_spans(question, "zh")
+        scanned = _scan_time_spans(question, "zh", self._rules)
         if isinstance(scanned, ClarificationRequest):
             return scanned
         return scanned[0].spec if scanned else None
@@ -734,7 +985,7 @@ class Planner:
         `_scan_time_spans` 后取首个命中（首个收集 span = 旧 if-chain 首个
         非 None 返回，逐字等价）。
         """
-        scanned = _scan_time_spans(question, "en")
+        scanned = _scan_time_spans(question, "en", self._rules)
         if isinstance(scanned, ClarificationRequest):
             return scanned
         return scanned[0].spec if scanned else None
@@ -743,15 +994,15 @@ class Planner:
         """显式分组结构内的维度表字段匹配（zh：按X统计/分组；en：by/grouped by）。"""
         dims: tuple[str, ...] = ()
         if locale == "en":
-            m = _EN_GROUP_RE.search(question)
+            m = self._rules.en_group_re.search(question)
             if m:
                 dims = self._dim_hits(m.group(1), "en")
             # TopN 后短语提维度（"top 3 categories by sales" → categories）
-            m = _EN_TOP_N_DIM_RE.search(question)
+            m = self._rules.en_top_n_dim_re.search(question)
             if m:
                 dims = tuple(dict.fromkeys(dims + self._dim_hits(m.group(1), "en")))
             return dims
-        m = _GROUP_RE.search(question)
+        m = self._rules.zh_group_re.search(question)
         if not m:
             return ()
         return self._dim_hits(m.group(1), "zh")
@@ -800,13 +1051,16 @@ class Planner:
         if locale == "en":
             return self._parse_filters_en(question, metric, notices)
         filters: list[Filter] = []
-        m = _THRESHOLD_GT_RE.search(question)
+        m = self._rules.zh_threshold_gt_re.search(question)
         if m:
             filters.append(Filter(metric, ">", self._cn_number(m.group(1), m.group(2))))
-        m = _THRESHOLD_LT_RE.search(question)
+        m = self._rules.zh_threshold_lt_re.search(question)
         if m:
             filters.append(Filter(metric, "<", self._cn_number(m.group(1), m.group(2))))
-        for prefix_re, op in ((_EQ_FILTER_RE, "="), (_EXC_FILTER_RE, "!=")):
+        for prefix_re, op in (
+            (self._rules.zh_eq_filter_re, "="),
+            (self._rules.zh_exc_filter_re, "!="),
+        ):
             m = prefix_re.search(question)
             if not m:
                 continue
@@ -850,8 +1104,8 @@ class Planner:
         """
         filters: list[Filter] = []
         for regex, op, unit_map in (
-            (_EN_THRESHOLD_GT_RE, ">", _EN_UNIT),
-            (_EN_THRESHOLD_LT_RE, "<", _EN_UNIT),
+            (self._rules.en_threshold_gt_re, ">", self._rules.en_units),
+            (self._rules.en_threshold_lt_re, "<", self._rules.en_units),
         ):
             m = regex.search(question)
             if m:
@@ -863,7 +1117,10 @@ class Planner:
                         int(threshold_value) if threshold_value.is_integer() else threshold_value,
                     )
                 )
-        for prefix_re, op in ((_EN_ONLY_RE, "="), (_EN_EXCL_RE, "!=")):
+        for prefix_re, op in (
+            (self._rules.en_include_re, "="),
+            (self._rules.en_exclude_re, "!="),
+        ):
             m = prefix_re.search(question)
             if not m:
                 continue
@@ -964,10 +1221,9 @@ class Planner:
         _, field, syn, pos = best
         return field, phrase[pos + len(syn) :].strip(), pos > 0
 
-    @staticmethod
-    def _cn_number(num: str, unit: str | None) -> int | float:
+    def _cn_number(self, num: str, unit: str | None) -> int | float:
         """ "1000 万" → 10000000；有小数保留 float（1.5 亿 → 150000000.0 规约 int）。"""
-        value = float(num) * (_CN_UNIT[unit] if unit else 1)
+        value = float(num) * (self._rules.zh_cn_units[unit] if unit else 1)
         return int(value) if value.is_integer() else value
 
     def _parse_top_n(
@@ -977,7 +1233,7 @@ class Planner:
 
         未命中则默认 limit=100。
         """
-        regex = _EN_TOP_N_RE if locale == "en" else _TOP_N_RE
+        regex = self._rules.en_top_n_re if locale == "en" else self._rules.zh_top_n_re
         m = regex.search(question)
         if not m:
             return (), 100

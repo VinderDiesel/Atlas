@@ -5,11 +5,10 @@
  * claims 契约全部来自该响应——**矩阵不硬编码**（§3.5），按当前域过滤（域唯一
  * 事实源是 App，与工作台的 model 选择同源）。
  *
- * 双通道激活身份（token 只存内存，刷新即失——§3.5 约束 3 的刻意不对称）：
+ * 双通道激活身份（§3.5 约束 3 放宽：演示模式 sessionStorage 刷新保留）：
  * ① 粘贴通道（引导 / 回退）：`make token ROLE=… CONTEXT='<json>'` 签发后粘贴。
  *    治理端点需 Bearer，**未认证时取不到 policies**（2026-09-16 实测 401）→
- *    首次激活与刷新后必须先粘贴一次；设计页 §3.5 的「刷新后点一次角色」据此
- *    收窄为「刷新后重粘贴」，偏差登记见 dev-plan §2.7 回执；
+ *    首次激活必须先粘贴一次；刷新后 sessionStorage 自动恢复（关闭标签页即清除）；
  * ② 签发通道（dev-only）：POST /__dev/sign（vite middleware 调 sign_token，
  *    与 make token 逐字同构）——仅 `make ui-dev` 下存在；不可用/失败时降级为
  *    「复制 make 命令 + 粘贴」，不伪造第二套签发逻辑。
@@ -19,8 +18,8 @@
  *   已认证态常驻显示 ROLE_SWITCH_NOTICE（不得静默新建会话）；
  * - 约束 2：列表 claims 帮助文本在含列表输入时恒显（LIST_CLAIM_HELP——说明
  *   CLI 的 --role-ctx 不解析列表值，本面板是便捷入口）；
- * - 约束 3：token 只经 onActivate 回调进 App 内存态；本组件零持久化
- *   （__tests__/no-persist.test.ts 全量扫描兜底）。
+ * - 约束 3：演示模式 sessionStorage 持久化（关闭标签页即清除）；私有模式
+ *   OIDC 会话走 HttpOnly Cookie，不经此通道。
  */
 import { Alert, Button, Divider, Input, Popover, Space, Tooltip, Typography } from "antd";
 import { Fragment, useEffect, useState, type ReactNode } from "react";
@@ -230,6 +229,8 @@ export default function RoleSwitcher({ identity, domain, onActivate }: Props) {
             {fields.scalars.map((key) => (
               <Input
                 key={key}
+                name={key}
+                autoComplete="off"
                 size="small"
                 addonBefore={key}
                 placeholder={`必填（${key}）`}
@@ -242,6 +243,8 @@ export default function RoleSwitcher({ identity, domain, onActivate }: Props) {
             {fields.lists.map((key) => (
               <Input
                 key={key}
+                name={key}
+                autoComplete="off"
                 size="small"
                 addonBefore={key}
                 placeholder="多个值用逗号分隔（签发为 JSON 数组）"
@@ -299,7 +302,7 @@ export default function RoleSwitcher({ identity, domain, onActivate }: Props) {
           .join(" · ");
 
   const content = (
-    <div style={{ width: 480, maxHeight: "70vh", overflowY: "auto" }}>
+    <div style={{ width: 480, maxWidth: "calc(100vw - 32px)", maxHeight: "70vh", overflowY: "auto", overscrollBehavior: "contain" }}>
       <Space direction="vertical" size="small" style={{ width: "100%" }}>
         {identity === null ? (
           <Text type="secondary">
@@ -319,6 +322,8 @@ export default function RoleSwitcher({ identity, domain, onActivate }: Props) {
         <Text strong>① 粘贴激活（引导 / 回退）</Text>
         <Space.Compact style={{ width: "100%" }}>
           <Input.Password
+            name="token"
+            autoComplete="current-password"
             placeholder="粘贴 token（make token ROLE=… 的输出）"
             value={pasteValue}
             onChange={(e) => {
@@ -332,8 +337,8 @@ export default function RoleSwitcher({ identity, domain, onActivate }: Props) {
         </Space.Compact>
         {pasteError !== null && <Text type="danger">{pasteError}</Text>}
         <Text type="secondary">
-          未认证时治理端点 401、取不到角色清单 → 首次激活与刷新后需先签发一次
-          （token 只存内存，刷新即失——设计如此）：
+          未认证时治理端点 401、取不到角色清单 → 首次激活需先签发一次；
+          激活后 sessionStorage 保留身份（刷新不丢失，关闭标签页即清除）：
         </Text>
         <CopyBlock command={makeTokenCommand("hq_admin", {})} />
         <Divider style={{ margin: "4px 0" }} />

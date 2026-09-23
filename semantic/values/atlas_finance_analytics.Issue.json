@@ -2,8 +2,8 @@
   "model": "atlas_finance_analytics",
   "field": "Issue",
   "status": "registered",
-  "snapshot_sha": "7c966e9",
-  "generated_at": "2026-09-16T12:01:51+08:00",
+  "snapshot_sha": "1e2e557",
+  "generated_at": "2026-09-22T11:21:49+08:00",
   "bound_dataset": "dim_security",
   "source_table": "atlas.dwd.dim_security",
   "source_column": "Issue",
@@ -35,5 +35,5 @@
     }
   ],
   "aliases": {},
-  "note": "值域派生自锁定快照 7c966e9 的 atlas.dwd.dim_security.Issue；DISTINCT 实测 5 个非空取值、NULL 行数 0。"
+  "note": "值域派生自锁定快照 1e2e557 的 atlas.dwd.dim_security.Issue；DISTINCT 实测 5 个非空取值、NULL 行数 0。"
 }

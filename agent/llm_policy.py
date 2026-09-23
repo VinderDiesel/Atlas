@@ -13,6 +13,17 @@
 后端线格式统一为 OpenAI 兼容 `chat/completions`（①），本模块只决定「用不用、用哪个、
 能不能」，实际调用在 `Generator` / `narrative`（可移植子集由调用方约束）。
 
+引擎类型维度（ADR-0030 ①，加性扩展）
+-------------------------------------
+ADR-0029 ① 的「统一线格式」是其**推翻条件**已列明的前提：Jev System One 的
+判别线格式（Choice/Score/Noul）客观不落在 `chat/completions` 子集内。为此本模块
+加一个**与 `Backend` 正交**的 `EngineKind` 维度——`Backend` 答「数据发去哪」
+（受敏感度划界约束，红线不变），`EngineKind` 答「用什么格式说话」。因此：
+
+- Jev（`Backend.JEV`）**继承 CLOUD 的全部出境约束**，不被当作自托管豁免；
+- `narrative`（result-bearing）**无条件禁入 Jev**，由本模块硬保证（见下方分支）；
+- 默认 `engine_kind=chat_completions`，既有调用方零感知、行为逐字不变。
+
     cfg = LlmConfig.from_env()
     decision = resolve_llm_backend("narrative", role_caps, cfg, self_hosted_ok=probe_alive(cfg))
     if decision.action is LlmAction.USE_BACKEND: ...
@@ -28,11 +39,28 @@ _CLOUD_ROUTE_DEFAULT = "cloud"
 
 
 class Backend(StrEnum):
-    """物理后端形态。`NONE` = 不走 LLM（确定性路径）。"""
+    """物理后端形态。`NONE` = 不走 LLM（确定性路径）。
+
+    `JEV`（ADR-0030 ②）= Jev System One 托管端点。它**继承 CLOUD 的全部出境
+    约束**（仅有托管 API、无本地部署、未公开权重 → 数据离开自有系统），
+    绝不被当作自托管豁免；`narrative`（result-bearing）无条件禁止路由到它。
+    """
 
     CLOUD = "cloud"
     SELF_HOSTED = "self_hosted"
+    JEV = "jev"
     NONE = "none"
+
+
+class EngineKind(StrEnum):
+    """线格式（引擎类型）维度——与 `Backend`（数据去向）**正交**（ADR-0030 ①）。
+
+    数据去向由 `Backend` 回答、受敏感度划界约束；用什么线格式说话由本枚举回答。
+    二者正交意味着：换引擎类型**不放松**任何出境红线（ADR-0029 ② 原样继承）。
+    """
+
+    CHAT_COMPLETIONS = "chat_completions"  # OpenAI 兼容可移植子集（ADR-0029 ①，默认）
+    SYSTEM_ONE = "system_one"  # Jev 判别原语 Choice/Score/Noul（ADR-0030 ③）
 
 
 class LlmAction(StrEnum):
@@ -72,6 +100,12 @@ class LlmConfig:
     route: BackendEndpoint | None = None
     self_hosted: BackendEndpoint | None = None
     route_backend: Backend = Backend.CLOUD
+    # Jev System One 端点（ADR-0030 ③）。仅承载 schema-only 判断，无默认值
+    # （未配置即 `None` → 决策回落 DISABLED，不触网）。
+    jev: BackendEndpoint | None = None
+    # 引擎类型开关（ADR-0030 ④）。**默认 CHAT_COMPLETIONS**：既有调用方
+    # 零感知，`llm=off` 与默认值下行为逐字不变（ADR-0029 验证方式首条）。
+    engine_kind: EngineKind = EngineKind.CHAT_COMPLETIONS
 
     @classmethod
     def with_route(cls, base_url: str, model_name: str, api_key: str = "") -> LlmConfig:
@@ -87,11 +121,21 @@ class LlmConfig:
         )
 
     @classmethod
+    def with_jev(cls, base_url: str, model_name: str, api_key: str = "") -> LlmConfig:
+        """构造启用 System One 引擎（仅配 Jev 端点）的 config（测试便捷）。"""
+        return cls(
+            jev=BackendEndpoint(base_url, model_name, api_key),
+            engine_kind=EngineKind.SYSTEM_ONE,
+        )
+
+    @classmethod
     def from_env(cls) -> LlmConfig:
         """从环境变量装配（AGENTS.md §13：密钥只走 env，绝不硬编码）。
 
         云路由复用既有 `OPENAI_*`（`Generator` 同源）；自托管走 `ATLAS_SELFHOSTED_*`；
-        `ATLAS_LLM_ROUTE_BACKEND` 选 schema-only 路由用云还是自托管（默认云）。
+        `ATLAS_LLM_ROUTE_BACKEND` 选 schema-only 路由用云还是自托管（默认云）；
+        `ATLAS_JEV_*` 配 Jev 端点，`ATLAS_ENGINE_KIND` 切引擎类型（ADR-0030 ③④，
+        默认 chat_completions——既有调用方零感知）。
         """
 
         def _endpoint(
@@ -113,8 +157,17 @@ class LlmConfig:
             "ATLAS_SELFHOSTED_API_KEY",
             "atlas-instruct",
         )
+        jev = _endpoint("ATLAS_JEV_BASE_URL", "ATLAS_JEV_MODEL_NAME", "ATLAS_JEV_API_KEY", "jev-1")
         rb = os.environ.get("ATLAS_LLM_ROUTE_BACKEND", _CLOUD_ROUTE_DEFAULT).strip().lower()
-        return cls(route=route, self_hosted=self_hosted, route_backend=Backend(rb))
+        # 未知引擎值 → ValueError（fail-fast，不静默退默认；配置错须尽早暴露）。
+        ek = os.environ.get("ATLAS_ENGINE_KIND", EngineKind.CHAT_COMPLETIONS.value).strip().lower()
+        return cls(
+            route=route,
+            self_hosted=self_hosted,
+            route_backend=Backend(rb),
+            jev=jev,
+            engine_kind=EngineKind(ek),
+        )
 
 
 @dataclass(frozen=True)
@@ -126,8 +179,11 @@ class BackendDecision:
     data_class: str
     backend: Backend = Backend.NONE
     endpoint: BackendEndpoint | None = None
-    tier: str = "none"  # 响应 narrative.tier 取此值：cloud|self_hosted|none
+    tier: str = "none"  # 响应 narrative.tier 取此值：cloud|self_hosted|jev|none
     reason_code: str | None = None
+    # 消费者据此选用哪个客户端协议（ADR-0030 ③）：CHAT_COMPLETIONS →
+    # `narrative.ChatClient` / `generator.ChatFn`；SYSTEM_ONE → `jev_engine.SystemOneClient`。
+    engine_kind: EngineKind = EngineKind.CHAT_COMPLETIONS
 
 
 def data_class_for_intent(intent: LlmIntent) -> str:
@@ -175,6 +231,20 @@ def resolve_llm_backend(
         return BackendDecision(LlmAction.DENY, it.value, data_class, reason_code="role_denied")
 
     if it is LlmIntent.CANDIDATE_FALLBACK:
+        # schema-only 判断走 Jev System One 引擎（ADR-0030 ③④）：仅在
+        # `ATLAS_ENGINE_KIND=system_one` 且端点已配置时生效；未配置则回落
+        # CHAT_COMPLETIONS 原路径（**绝不因缺配置而 DISABLED** —— 那会把
+        # 「换引擎」变成「关能力」，违背可切换语义）。
+        if cfg.engine_kind is EngineKind.SYSTEM_ONE and cfg.jev is not None:
+            return BackendDecision(
+                LlmAction.USE_BACKEND,
+                it.value,
+                data_class,
+                backend=Backend.JEV,
+                endpoint=cfg.jev,
+                tier=Backend.JEV.value,
+                engine_kind=EngineKind.SYSTEM_ONE,
+            )
         if cfg.route is None:
             return BackendDecision(
                 LlmAction.DISABLED, it.value, data_class, reason_code="llm_not_configured"
@@ -189,7 +259,10 @@ def resolve_llm_backend(
             tier=cfg.route_backend.value,
         )
 
-    # NARRATIVE：result-bearing → 只允许自托管，云无条件排除（②/③）
+    # NARRATIVE：result-bearing → 只允许自托管，云无条件排除（②/③）。
+    # ADR-0030 ②：即便 engine_kind=system_one，本分支也**不读 cfg.jev**——
+    # Jev 仅托管、数据出境，result-bearing 一律禁入。这是本模块最重要的一条
+    # 硬保证，由 tests/test_llm_policy.py 的专项格钉死。
     if cfg.self_hosted is None or not self_hosted_ok:
         return BackendDecision(
             LlmAction.FALLBACK_TEMPLATE,

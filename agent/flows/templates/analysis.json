@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "flow_id": "atlas.analysis",
+  "revision": 1,
+  "entry": "analysis",
+  "budget": {
+    "model_calls": 4,
+    "node_attempts": 2,
+    "tool_calls": 3,
+    "sql_calls": 4,
+    "run_seconds": 180,
+    "model_input_tokens": 2048,
+    "model_output_tokens": 512,
+    "model_total_tokens": 10240
+  },
+  "nodes": [
+    {
+      "node_id": "analysis",
+      "node_type": "analysis",
+      "type_version": 1,
+      "implementation_id": "atlas.analysis.four_step",
+      "config_ref": null,
+      "input_contract": "AnalysisPlan",
+      "output_contract": "AnalysisResult"
+    },
+    {
+      "node_id": "explain",
+      "node_type": "explain",
+      "type_version": 1,
+      "implementation_id": "atlas.explain.template",
+      "config_ref": null,
+      "input_contract": "AnalysisResult",
+      "output_contract": "Explanation"
+    },
+    {
+      "node_id": "clarify",
+      "node_type": "clarify",
+      "type_version": 1,
+      "implementation_id": "atlas.clarify.rules",
+      "config_ref": null,
+      "input_contract": "Clarification|ReasonCode",
+      "output_contract": "ClarificationTurn"
+    },
+    {
+      "node_id": "handoff",
+      "node_type": "handoff",
+      "type_version": 1,
+      "implementation_id": "atlas.handoff.template",
+      "config_ref": null,
+      "input_contract": "ReasonCode|Unmatched",
+      "output_contract": "HandoffTurn"
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "analysis",
+      "to_node": "explain",
+      "condition": {"op": "equals", "values": ["ok"]}
+    },
+    {
+      "from_node": "analysis",
+      "to_node": "clarify",
+      "condition": {"op": "equals", "values": ["clarify"]}
+    },
+    {
+      "from_node": "analysis",
+      "to_node": "handoff",
+      "condition": {"op": "in", "values": ["unmatched", "blocked", "error"]}
+    }
+  ]
+}

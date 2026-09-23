@@ -47,10 +47,11 @@ from agent.compiler import (
 from agent.factory import SnapshotUnavailable, create_live_agent
 from agent.generator import Generator
 from agent.planner import ClarificationRequest, Planner
+from agent.runtime.connectors.doris import execute_sql
+from agent.runtime.context import budget_from_snapshot
 from agent.security.sql_guard import Budget, BudgetExceeded, Policy, UnsafeQuery, enforce
 from agent.state import TurnResult
 from data.identity import RuntimeSnapshot, resolve_runtime_snapshot
-from eval.runner import build_budget, execute_sql
 from serving.auth import AuthError, resolve_claims
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -197,7 +198,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
 
 
 def _load_budget() -> tuple[Budget, RuntimeSnapshot]:
-    """锁定快照表白名单预算（口径与 eval/runner.build_budget / metrics_verify 一致）。
+    """锁定快照表白名单预算（共享实现 agent/runtime/context.budget_from_snapshot）。
 
     返回 (预算, 快照解析结果)：query 的数字必须能说清绑在哪份快照上（ADR-0019
     决策 ① 的第 3 级回退让「非 HEAD 绑定」成为可达状态，代价 ③ 的唯一约束是回显）。
@@ -210,7 +211,7 @@ def _load_budget() -> tuple[Budget, RuntimeSnapshot]:
         snapshot = resolve_runtime_snapshot()
     except SnapshotUnavailable as exc:
         raise SystemExit(f"[error] {exc}") from None
-    return build_budget(snapshot.meta), snapshot
+    return budget_from_snapshot(snapshot.meta), snapshot
 
 
 def _parse_role_ctx(s: str | None) -> dict[str, str]:

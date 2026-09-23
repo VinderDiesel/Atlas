@@ -58,6 +58,10 @@
 - SPA 静态面（P0b，ADR-0018 决策 ②⑤）：`frontend/dist/index.html` 存在时才挂
   catch-all（**必须注册在两个 router 之后**，否则吞掉 /api/v1 的 404）；dist 缺失
   跳过并打 warning——fresh clone 未构建前端时 API 照常可用（条件挂载）。
+- 认证面（ADR-0031 D02/D13，/api/v1/auth/*）：serving/control/routes.build_auth_router
+  构造后装配——OIDC BFF 私有登录（Cookie 会话 + CSRF + 同源 Origin）；未配置/
+  配置不全 503 配置阻塞（不伪装登录成功）；旧 Bearer 端点零改动（其余业务/治理
+  面仍走 require_bearer，两条认证链不混用）。
 - ④a SSE 流式面（ADR-0028 决策 ④·执行模型 A compute-then-stream）：`/analyze/stream`
   复用 `/analyze` 同一执行路径跑完 `agent.analyze()`（SQL 已全部经 Guard、锁已释放）→
   把已算好的分步产物按 `docs/design/agui-event-mapping.md` §2/§4 词表**回放**为
@@ -69,6 +73,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import urllib.request
 from collections.abc import Callable, Iterator
@@ -78,7 +83,7 @@ from decimal import Decimal
 from enum import Enum
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -115,8 +120,16 @@ from data.identity import (
 from observability.otel import record_llm_narrative
 from serving.audit import AuditLog
 from serving.auth import BearerClaims, caps_for_role
+from serving.control.auth import load_control_grants
+from serving.control.oidc import OidcBff, OidcSettings
+from serving.control.router import ControlServices, build_control_router
+from serving.control.routes import build_auth_router
 from serving.governance import build_governance_router
 from serving.ratelimit import RateLimiter
+
+if TYPE_CHECKING:
+    from serving.control.auth import Principal
+    from serving.control.contracts import RunRecord, RunRequest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -658,6 +671,131 @@ def _attach_spa(app: FastAPI, dist: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _default_oidc_factory() -> Callable[[], OidcBff | None]:
+    """惰性 OIDC BFF 单例工厂（ADR-0031 D02）：首次访问才解析 env，之后缓存。
+
+    - 全空 → None（演示模式；路由投影 503 oidc_not_configured，前端据此显示角色切换）
+    - 部分配置 → OidcConfigError（路由投影 503 oidc_config_incomplete）
+    - 全配 → OidcBff 单例——pending/session/JWKS 缓存必须在同一实例上（多实例会
+      让回调找不到 state）；grants 从 ATLAS_CONTROL_GRANTS 读，未配置 = 全体零
+      能力（fail-closed，可登录不可动作）。
+
+    只缓存成功解析（含演示模式 None）；配置错误不缓存——每次请求如实 503，修正
+    env 重启即恢复，不把一次失败永久钉死（单进程模型，ADR-0031 D01）。
+    """
+    holder: dict[str, OidcBff | None] = {}
+
+    def factory() -> OidcBff | None:
+        if "bff" in holder:
+            return holder["bff"]
+        settings = OidcSettings.from_env()
+        bff = None if settings is None else OidcBff(settings, grants=load_control_grants())
+        holder["bff"] = bff
+        return bff
+
+    return factory
+
+
+def _control_db_path() -> Path:
+    """控制库路径：ATLAS_CONTROL_DB 显式指定 > 仓库 serving/state/control.sqlite。
+
+    与 checkpoint 库（ATLAS_CHECKPOINT_DB）同纪律：路径可配；默认落 serving/state
+    （私有状态目录，权限 0700/0600 由 ControlStore 强制）。控制库缺失即现建，
+    不是错误——首建只是一个空库加已应用的迁移。
+    """
+    raw = os.environ.get("ATLAS_CONTROL_DB", "").strip()
+    return Path(raw) if raw else REPO_ROOT / "serving" / "state" / "control.sqlite"
+
+
+def _bundle_root_path() -> Path:
+    """发布制品根路径：ATLAS_BUNDLE_ROOT 显式指定 > 仓库 serving/state/bundles。
+
+    与 _control_db_path 同纪律：制品按内容寻址落盘（不可变、不可覆写），默认落
+    私有状态目录（gitignored）；路径可配以便容器卷挂载。
+    """
+    raw = os.environ.get("ATLAS_BUNDLE_ROOT", "").strip()
+    return Path(raw) if raw else REPO_ROOT / "serving" / "state" / "bundles"
+
+
+def _default_control_factory(audit: AuditLog | None = None) -> Callable[[], ControlServices]:
+    """惰性控制面单例（ADR-0031 D07/D13）：首个 /runs 请求才建库与运行服务。
+
+    与 _default_oidc_factory 同纪律：create_app 不触碰磁盘（未配置控制面的测试与
+    部署照常启动）。装配内容：ControlStore（迁移）+ 单业务队列 ThreadTaskRunner
+    + 启动恢复（封存遗留 queued/running、不重跑，D07）+ 部署授予表（fail-closed，
+    未配置 = 全体零能力）+ 反馈服务 + 发布服务（制品根 ATLAS_BUNDLE_ROOT；导入
+    门禁与 CAS 激活见 serving.control.releases）+ 捕获授权审计接缝（D13：写业务
+    审计 JSONL，kind=capture_authorized；审计被禁用或写失败 → 拒绝捕获，fail closed）。
+
+    运行代理按部署 scope 域懒建：`create_live_agent(..., event_sink=StoreEventSink,
+    persist_session=False)`——事件写真控制库（D07②），会话上下文是进程内存 15
+    分钟窗口（D07），不读 ATLAS_CHECKPOINT_DB、不落盘。
+    """
+    audit_log = audit if audit is not None else AuditLog()
+    holder: dict[str, ControlServices] = {}
+
+    def factory() -> ControlServices:
+        if "services" not in holder:
+            from serving.control.deployments import DeploymentService
+            from serving.control.drafts import DraftService
+            from serving.control.events import StoreEventSink
+            from serving.control.feedback import FeedbackService
+            from serving.control.releases import ReleaseService
+            from serving.control.runs import RunAgent, RunService, ThreadTaskRunner
+            from serving.control.sources import SourceService
+            from serving.control.store import ControlStore
+
+            store = ControlStore(_control_db_path())
+            store.migrate()
+
+            def _live_run_agent(record: RunRecord) -> RunAgent:
+                from agent.runtime.identity import snapshot_identity
+
+                agent = create_live_agent(
+                    model_path=DOMAIN_MODEL_PATHS[record.scope],
+                    event_sink=StoreEventSink(store),
+                    persist_session=False,
+                )
+                identity = (
+                    snapshot_identity(agent.snapshot) if agent.snapshot is not None else None
+                )
+                return RunAgent(agent=agent, data_identity=identity)
+
+            def _audit_capture(principal: Principal, request: RunRequest) -> None:
+                """D13 捕获授权审计：审计被禁用同样拒绝（fail-closed，不静默放行）。"""
+                if not audit_log.enabled:
+                    raise RuntimeError("强制审计已关闭：显式捕获拒绝执行（fail-closed）")
+                audit_log.record(
+                    endpoint=f"{API_PREFIX}/runs",
+                    claims=principal.user_context,
+                    kind="capture_authorized",
+                    bucket="business",
+                )
+
+            runs = RunService(
+                store,
+                agent_resolver=_live_run_agent,
+                runner=ThreadTaskRunner(),
+                capture_audit=_audit_capture,
+            )
+            runs.recover_interrupted()
+            holder["services"] = ControlServices(
+                store=store,
+                runs=runs,
+                feedback=FeedbackService(store),
+                sources=SourceService(store),
+                deployments=DeploymentService(store),
+                drafts=DraftService(store),
+                releases=ReleaseService(
+                    store, bundle_root=_bundle_root_path(), repo_root=REPO_ROOT
+                ),
+                grants=load_control_grants(),
+            )
+        return holder["services"]
+
+    return factory
+
+
 def create_app(
     agent_factory: Callable[[str], DataAgent] | None = None,
     *,
@@ -667,6 +805,8 @@ def create_app(
     llm_config: LlmConfig | None = None,
     self_hosted_probe: Callable[[LlmConfig], bool] | None = None,
     narrative_client_factory: Callable[[BackendEndpoint], ChatClient] | None = None,
+    oidc_bff_factory: Callable[[], OidcBff | None] | None = None,
+    control_services_factory: Callable[[], ControlServices] | None = None,
 ) -> FastAPI:
     """构造 API 应用（URL 契约 v2，ADR-0022）。
 
@@ -680,6 +820,14 @@ def create_app(
     小窗口 RateLimiter（不碰真实 .env 与仓库目录）；缺省按 env 构造——审计默认开
     可关（ATLAS_AUDIT_DISABLED）；业务桶 60/60、治理桶 240/60（均为配置占位，不是
     实测容量边界；见 serving/audit.py 与 serving/ratelimit.py）。
+
+    oidc_bff_factory 注入点：测试传受控 BFF（httpx2.MockTransport，不触网）；
+    缺省 _default_oidc_factory（惰性单例按 env 解析：全空 = 演示模式 → auth 面
+    503 配置阻塞；全配 = 私有 OIDC）。认证面端点不触 agent/DB，与业务面隔离。
+
+    control_services_factory 注入点：测试传受控控制面（tmp 控制库 + 同步任务
+    执行器 + 假授予表，不碰真实 .env 与仓库状态）；缺省 _default_control_factory
+    （惰性单例：首个 /runs 请求才建控制库、装配运行服务并做启动恢复）。
     """
 
     def _live_agent(model_name: str) -> DataAgent:
@@ -1168,6 +1316,18 @@ def create_app(
             require_model=_model_name,
         )
     )
+    # 认证面 router（ADR-0031 D02/D13 /auth/*）：同受 SPA 约束——必须在本行之前的
+    # 已有 include 之后、catch-all 之前（catch-all 会吞掉 /auth 的 JSON 404）
+    auth_factory = oidc_bff_factory if oidc_bff_factory is not None else _default_oidc_factory()
+    app.include_router(build_auth_router(auth_factory, prefix=f"{API_PREFIX}/auth"))
+    # 运行面 router（ADR-0031 D07/D13 /runs）：与 auth 面同受 SPA 约束——必须在
+    # 已有 include 之后、catch-all 之前。控制面惰性装配（首个 /runs 请求才建库）。
+    control_factory = (
+        control_services_factory
+        if control_services_factory is not None
+        else _default_control_factory(audit_log)
+    )
+    app.include_router(build_control_router(control_factory, prefix=API_PREFIX))
 
     # SPA 静态面（P0b，ADR-0018 决策 ②⑤）：条件挂载——**必须在上面两条
     # include_router 之后**，否则 catch-all 吞掉 /api/v1 的 404（决策 ②）。

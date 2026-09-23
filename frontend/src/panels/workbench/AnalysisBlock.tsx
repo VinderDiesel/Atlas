@@ -15,10 +15,11 @@
  * 复用既有件：`SqlPreview`（步 SQL）、`DataTable`（步数据）、`lib/honesty.truncationState`
  * （渲染上限）、`lib/sha.shortSha`（快照标注）。不引入图表管道（C 决定）。
  */
-import { Alert, Card, Space, Table, Tag, Typography } from "antd";
+import { Alert, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 
 import type { AnalysisItem, AnalysisPayload, AnalysisStep } from "../../api/types";
+import Section from "../../components/Section";
 import { truncationState } from "../../lib/honesty";
 import { shortSha } from "../../lib/sha";
 
@@ -36,13 +37,12 @@ function ContributionBar({ item }: { item: AnalysisItem }): JSX.Element {
   const negative = Number(item.delta) < 0;
   return (
     <Space size={8} align="center">
-      <div style={{ width: 160, background: "#f0f0f0", borderRadius: 2 }}>
+      <div className="atlas-contrib-track">
         <div
-          style={{
-            width: `${width}%`,
-            height: 12,
-            background: negative ? "#cf1322" : "#389e0d",
-          }}
+          className={`atlas-contrib-fill ${
+            negative ? "atlas-contrib-fill--neg" : "atlas-contrib-fill--pos"
+          }`}
+          style={{ width: `${width}%` }}
         />
       </div>
       {/* 显示后端原字符串，不做二次格式化/重新舍入（N1） */}
@@ -86,15 +86,7 @@ export default function AnalysisBlock({ analysis }: Props): JSX.Element {
   const isOk = status === "ok" && analysis.totals !== null;
 
   return (
-    <Card
-      size="small"
-      title={
-        <Space wrap>
-          <span>变化贡献分解</span>
-          <Tag color={isOk ? "green" : "orange"}>status={status}</Tag>
-        </Space>
-      }
-    >
+    <Section title="变化贡献分解" meta={`status=${status}`}>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {/* headline：身份 + 两期区间 */}
         <Typography.Text>
@@ -135,31 +127,27 @@ export default function AnalysisBlock({ analysis }: Props): JSX.Element {
         {/* steps：按后端角色序逐条（失败步只标终态） */}
         <Collapseish steps={analysis.steps} />
       </Space>
-    </Card>
+    </Section>
   );
 }
 
-/** steps 折叠区（标题含角色名，供三态测试定位）。 */
+/** steps 折叠区（标题含角色名，供三态测试定位；扁平条目而非卡中卡——层级噪音只留一层）。 */
 function Collapseish({ steps }: { steps: AnalysisStep[] }): JSX.Element {
   return (
     <Space direction="vertical" size="small" style={{ width: "100%" }}>
       <Typography.Text strong>分析步骤（{steps.length}）</Typography.Text>
-      {steps.map((step, i) => (
-        <Card
-          key={`${step.role}-${String(i)}`}
-          size="small"
-          type="inner"
-          title={
-            <Space>
+      <div className="atlas-steps">
+        {steps.map((step, i) => (
+          <div key={`${step.role}-${String(i)}`} className="atlas-step">
+            <div className="atlas-step__head">
               <span>{step.role}</span>
               <Tag color={step.kind === "answer" ? "blue" : "red"}>{step.kind}</Tag>
               <Typography.Text type="secondary">{step.latency_ms}ms</Typography.Text>
-            </Space>
-          }
-        >
-          <StepDetail step={step} />
-        </Card>
-      ))}
+            </div>
+            <StepDetail step={step} />
+          </div>
+        ))}
+      </div>
     </Space>
   );
 }

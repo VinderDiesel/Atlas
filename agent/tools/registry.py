@@ -6,8 +6,9 @@ execute_readonly 四件套（Day 45 以 MCP 风格暴露，本层是参数校验
 - **确定性**：全部工具不经过 LLM；同一入参 → 同一输出（数据来自语义层 YAML
   与 Compiler/Guard，均确定性组件）。
 - **执行必须过 Guard（N3 红线）**：execute_readonly 收到的是不可信入参（未来
-  由 LLM/MCP 调用方提供），内部先 enforce（只读 + 函数黑名单 + 表白名单 +
-  LIMIT 注入）再执行；被拒信息不含被拒 SQL（与 agent/graph.py 口径一致）。
+  由 LLM/MCP 调用方提供），委托共享执行内核（`agent/runtime/execution.
+  execute_guarded_sql`：只读 + 函数黑名单 + 表白名单 + LIMIT 注入）再执行；
+  被拒信息不含被拒 SQL（与 agent/graph.py 口径一致）。
 - **参数校验在真身处**：Day 45 强调"工具描述不可信，需参数校验"——描述由
   暴露层生成（可能被诱导/伪造），本层以白名单键 + 类型 + 取值域校验兜底，
   未知键一律拒绝（不静默忽略，防拼写漂移）。
@@ -27,13 +28,14 @@ execute_readonly 四件套（Day 45 以 MCP 风格暴露，本层是参数校验
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from agent.compiler import Compiler, Filter, OrderSpec, Plan, SemanticModel, TimeSpec
-from agent.security.sql_guard import Budget, BudgetExceeded, UnsafeQuery, enforce
+from agent.runtime.context import RunContext
+from agent.runtime.execution import execute_guarded_sql
+from agent.security.sql_guard import Budget
 
 # 执行器同构约定（与 eval/runner.execute_sql / agent/graph.py 一致）
 Executor = Callable[[str], tuple[list[tuple[Any, ...]], list[str]]]
@@ -299,7 +301,7 @@ class DeterministicTools:
     # -- 执行（N3：先 Guard 后执行，被拒信息不携带 SQL） -------------------
 
     def execute_readonly(self, sql: str) -> dict[str, Any]:
-        """只读执行：Guard(enforce) 通过后调用注入的执行器。
+        """只读执行：委托共享执行内核（Guard → 执行），与旧行为等价。
 
         参数
         ----
@@ -317,25 +319,26 @@ class DeterministicTools:
         """
         if not isinstance(sql, str) or not sql.strip():
             raise ToolError("参数校验失败：sql 必须是非空字符串")
-        try:
-            guarded, _ = enforce(sql, budget=self.budget)
-        except (UnsafeQuery, BudgetExceeded) as exc:
-            raise ToolError(f"只读校验拒绝（{type(exc).__name__}）：{exc}") from exc
-        started = time.perf_counter()
-        try:
-            rows, columns = self.executor(guarded)
-        except Exception as exc:  # noqa: BLE001 - 执行故障要完整转述
-            raise ToolError(f"执行失败（{type(exc).__name__}）：{exc}") from exc
-        latency_ms = round((time.perf_counter() - started) * 1000, 1)
+        result = execute_guarded_sql(
+            sql, RunContext(budget=self.budget, executor=self.executor)
+        )
+        if result.kind != "ok":
+            label = "只读校验拒绝" if result.kind == "blocked" else "执行失败"
+            failure = result.block_reason if result.kind == "blocked" else result.error
+            message = failure or "未知失败"
+            # 内核消息形态为「{类型}: {原因}」（与原实现逐字一致）；无该形态时原样透传
+            kind_name, sep, detail = message.partition(": ")
+            raise ToolError(f"{label}（{kind_name}）：{detail}" if sep else f"{label}：{message}")
+        assert result.sql is not None and result.latency_ms is not None  # ok 路径恒有
         return self._logged(
             "execute_readonly",
-            {"sql": guarded},
+            {"sql": result.sql},
             {
-                "sql": guarded,
-                "rows": [list(r) for r in rows],
-                "columns": list(columns),
-                "row_count": len(rows),
-                "latency_ms": latency_ms,
+                "sql": result.sql,
+                "rows": [list(r) for r in result.rows],
+                "columns": list(result.columns),
+                "row_count": result.row_count,
+                "latency_ms": result.latency_ms,
             },
         )
 

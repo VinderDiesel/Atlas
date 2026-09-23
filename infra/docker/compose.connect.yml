@@ -1,0 +1,59 @@
+# Atlas 最小发行配置（ADR-0031 T13）
+#
+# 用途：连接到已有基础设施（外部 Doris/PostgreSQL）的轻量部署。
+# 与根目录 docker-compose.yml 的区别：
+#   - 不启动本地 Doris/PostgreSQL/MinIO（假设已存在）
+#   - 所有秘密从环境变量读取（无默认值，N9）
+#   - 适合已部署数据仓库的团队接入 Atlas API
+#
+# 使用方式：
+#   1. 复制 .env.example 为 .env 并填写真实值
+#   2. docker compose -f infra/docker/compose.connect.yml up -d
+#
+# ⚠️ 本文件不含默认秘密——所有 ATLAS_*_SECRET/DORIS_PASSWORD 必须由部署者提供
+
+services:
+  # ============================================================
+  # Atlas API（最小发行）
+  # ============================================================
+  atlas-api:
+    build:
+      context: ../../..
+      dockerfile: infra/docker/api/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+    container_name: atlas-api-connect
+    environment:
+      # 认证秘密（必须显式提供，无默认）
+      ATLAS_JWT_SECRET: ${ATLAS_JWT_SECRET:?请设置 ATLAS_JWT_SECRET}
+      # 数据源连接（指向外部 Doris）
+      DORIS_HOST: ${DORIS_HOST:?请设置 DORIS_HOST}
+      DORIS_PORT: ${DORIS_PORT:-9030}
+      DORIS_USER: ${DORIS_USER:?请设置 DORIS_USER}
+      DORIS_PASSWORD: ${DORIS_PASSWORD:?请设置 DORIS_PASSWORD}
+      # 快照绑定（可选，留空按 HEAD 自动解析）
+      ATLAS_SNAPSHOT_SHA: ${ATLAS_SNAPSHOT_SHA:-}
+      # 会话 checkpoint（可选，留空 = 会话随重启消失）
+      ATLAS_CHECKPOINT_DB: ${ATLAS_CHECKPOINT_DB:-}
+      # 控制库路径（容器内落盘）
+      ATLAS_CONTROL_DB: ${ATLAS_CONTROL_DB:-/data/control.sqlite}
+    ports:
+      - "${ATLAS_PORT:-8300}:8300"
+    volumes:
+      # 控制库持久化（命名卷，`make down` 不删）
+      - atlas-control:/data
+      # 审计日志持久化
+      - atlas-audit:/var/log/atlas
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8300/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  atlas-control:
+    name: atlas-control-connect
+  atlas-audit:
+    name: atlas-audit-connect

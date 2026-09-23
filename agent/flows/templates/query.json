@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "flow_id": "atlas.query",
+  "revision": 1,
+  "entry": "rule_plan",
+  "budget": {
+    "model_calls": 4,
+    "node_attempts": 2,
+    "tool_calls": 3,
+    "sql_calls": 4,
+    "run_seconds": 180,
+    "model_input_tokens": 2048,
+    "model_output_tokens": 512,
+    "model_total_tokens": 10240
+  },
+  "nodes": [
+    {
+      "node_id": "rule_plan",
+      "node_type": "rule_plan",
+      "type_version": 1,
+      "implementation_id": "atlas.planner.rules",
+      "config_ref": null,
+      "input_contract": "QuestionContext",
+      "output_contract": "PlanCandidate|Clarification|Unmatched"
+    },
+    {
+      "node_id": "retrieve",
+      "node_type": "retrieve",
+      "type_version": 1,
+      "implementation_id": "atlas.retrieval.bm25",
+      "config_ref": null,
+      "input_contract": "RetrievalRequest",
+      "output_contract": "CandidateSet"
+    },
+    {
+      "node_id": "bind_plan",
+      "node_type": "bind_plan",
+      "type_version": 1,
+      "implementation_id": "atlas.generator.validated_candidate",
+      "config_ref": null,
+      "input_contract": "SemanticIntent+CandidateSet",
+      "output_contract": "PlanCandidate|Clarification"
+    },
+    {
+      "node_id": "execute_plan",
+      "node_type": "execute_plan",
+      "type_version": 1,
+      "implementation_id": "atlas.execution.protected",
+      "config_ref": null,
+      "input_contract": "PlanCandidate",
+      "output_contract": "ExecutionResult"
+    },
+    {
+      "node_id": "explain",
+      "node_type": "explain",
+      "type_version": 1,
+      "implementation_id": "atlas.explain.template",
+      "config_ref": null,
+      "input_contract": "ExecutionResult",
+      "output_contract": "Explanation"
+    },
+    {
+      "node_id": "clarify",
+      "node_type": "clarify",
+      "type_version": 1,
+      "implementation_id": "atlas.clarify.rules",
+      "config_ref": null,
+      "input_contract": "Clarification|ReasonCode",
+      "output_contract": "ClarificationTurn"
+    },
+    {
+      "node_id": "handoff",
+      "node_type": "handoff",
+      "type_version": 1,
+      "implementation_id": "atlas.handoff.template",
+      "config_ref": null,
+      "input_contract": "ReasonCode|Unmatched",
+      "output_contract": "HandoffTurn"
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "rule_plan",
+      "to_node": "execute_plan",
+      "condition": {"op": "equals", "values": ["ok"]}
+    },
+    {
+      "from_node": "rule_plan",
+      "to_node": "clarify",
+      "condition": {"op": "equals", "values": ["clarify"]}
+    },
+    {
+      "from_node": "rule_plan",
+      "to_node": "retrieve",
+      "condition": {"op": "equals", "values": ["unmatched"]}
+    },
+    {
+      "from_node": "rule_plan",
+      "to_node": "handoff",
+      "condition": {"op": "in", "values": ["blocked", "error"]}
+    },
+    {
+      "from_node": "retrieve",
+      "to_node": "bind_plan",
+      "condition": {"op": "equals", "values": ["ok"]}
+    },
+    {
+      "from_node": "retrieve",
+      "to_node": "handoff",
+      "condition": {"op": "in", "values": ["clarify", "unmatched", "blocked", "error"]}
+    },
+    {
+      "from_node": "bind_plan",
+      "to_node": "execute_plan",
+      "condition": {"op": "equals", "values": ["ok"]}
+    },
+    {
+      "from_node": "bind_plan",
+      "to_node": "clarify",
+      "condition": {"op": "equals", "values": ["clarify"]}
+    },
+    {
+      "from_node": "bind_plan",
+      "to_node": "handoff",
+      "condition": {"op": "in", "values": ["unmatched", "blocked", "error"]}
+    },
+    {
+      "from_node": "execute_plan",
+      "to_node": "explain",
+      "condition": {"op": "equals", "values": ["ok"]}
+    },
+    {
+      "from_node": "execute_plan",
+      "to_node": "handoff",
+      "condition": {"op": "in", "values": ["clarify", "unmatched", "blocked", "error"]}
+    }
+  ]
+}

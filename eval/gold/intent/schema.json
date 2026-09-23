@@ -1,0 +1,218 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "atlas:eval/gold/intent/schema.json",
+  "title": "Atlas 检索前意图评测样本契约（ADR-0031 D09 / T10）",
+  "description": "eval/gold/intent/*.json 的结构契约。人工标注最小差异对：同一 pair_id 内两条样本只差一个变量（包含/排除、金额/笔数、分组/筛选、上月/去年、明确/歧义）。annotation 是模拟模型输出的意图声明（mention 文本必须逐字出现在 question 且唯一）；expected 是 normalize→retrieve→bind 全链路的确定性期望（候选/计划/澄清），绑定与检索同预算（K=5、原句+扩展 ≤2）。split 按来源族冻结：同 source_family 必须同 split；本族 finance-manual-v1 全为 test（仅评测，不进训练）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "pair_id",
+    "split",
+    "source_family",
+    "question",
+    "reference_time",
+    "timezone",
+    "annotation",
+    "expected"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^intent-[0-9]{2}$",
+      "description": "样本标识，必须与文件名（去 .json 后缀）一致"
+    },
+    "pair_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "最小差异对标识（include-exclude / amount-count / group-filter / month-year / definite-ambiguous）"
+    },
+    "split": {
+      "enum": ["dev", "test"],
+      "description": "按 source_family 冻结；本族全为 test（评测集，不用于训练）"
+    },
+    "source_family": {
+      "type": "string",
+      "minLength": 1,
+      "description": "来源族标识：同族样本不得跨 split"
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "description": "触发本样本的完整自然语言问句（显式、可复现）"
+    },
+    "reference_time": {
+      "type": "string",
+      "minLength": 1,
+      "description": "固定时钟（带时区 ISO 8601）"
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "description": "IANA 时区名"
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric_mentions", "groups", "filters", "time_mentions"],
+      "description": "模拟模型输出的意图声明（评测输入）；每个 mention 文本必须逐字取自 question 且唯一（评测脚本定位证据）",
+      "properties": {
+        "metric_mentions": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "groups": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "filters": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/annotationFilter"}
+        },
+        "time_mentions": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidates_include", "reason_code", "unresolved_slots"],
+      "description": "全链路确定性期望（normalize→retrieve→bind，与 eval/workbench_intent 同一预算）",
+      "properties": {
+        "candidates_include": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "必须出现在检索 top-K（K=5）候选内的指标（Recall 口径）"
+        },
+        "reason_code": {
+          "enum": ["bound", "clarification_required", "no_candidates"]
+        },
+        "unresolved_slots": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "plan": {
+          "anyOf": [{"$ref": "#/definitions/plan"}, {"type": "null"}],
+          "description": "reason_code=bound 时必填 Plan 投影；澄清样本必须显式 null"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "expected": {
+            "properties": {"reason_code": {"const": "bound"}},
+            "required": ["reason_code"]
+          }
+        },
+        "required": ["expected"]
+      },
+      "then": {
+        "properties": {
+          "expected": {
+            "properties": {"plan": {"type": "object"}},
+            "required": ["plan"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "expected": {
+            "properties": {"reason_code": {"enum": ["clarification_required", "no_candidates"]}},
+            "required": ["reason_code"]
+          }
+        },
+        "required": ["expected"]
+      },
+      "then": {
+        "properties": {
+          "expected": {
+            "properties": {"plan": {"type": "null"}},
+            "required": ["plan"]
+          }
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "annotationFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "op", "values"],
+      "properties": {
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "字段提及文本（逐字取自 question）"
+        },
+        "op": {
+          "enum": ["eq", "neq", "in", "not_in", "gt", "gte", "lt", "lte"]
+        },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "dimensions", "time", "filters", "order_by", "limit"],
+      "description": "agent.compiler.Plan 的 JSON 投影（bind 层全字段）",
+      "properties": {
+        "metric": {"type": "string", "minLength": 1},
+        "dimensions": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "time": {
+          "anyOf": [{"$ref": "#/definitions/timeSpec"}, {"type": "null"}]
+        },
+        "filters": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/planFilter"}
+        },
+        "order_by": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/orderSpec"}
+        },
+        "limit": {"type": "integer", "minimum": 1}
+      }
+    },
+    "timeSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["granularity", "value"],
+      "properties": {
+        "granularity": {"enum": ["year", "quarter", "month", "date"]},
+        "value": {"type": ["string", "integer"]}
+      }
+    },
+    "planFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["column", "op", "value"],
+      "properties": {
+        "column": {"type": "string", "minLength": 1},
+        "op": {"enum": ["=", "!=", "<", "<=", ">", ">="]},
+        "value": {}
+      }
+    },
+    "orderSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["column", "desc"],
+      "properties": {
+        "column": {"type": "string", "minLength": 1},
+        "desc": {"type": "boolean"}
+      }
+    }
+  }
+}

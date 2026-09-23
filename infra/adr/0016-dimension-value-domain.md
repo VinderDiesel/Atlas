@@ -42,7 +42,7 @@ filter 要求精确值，但 planner 对维度值没有任何值域注册。已�
 的**编译器绑定列**（`find_field` 首匹配），从当前锁定快照执行 `SELECT DISTINCT`
 生成 `semantic/values/<model>.<field>.json`。
 
-- 前置 `data/snapshot.py --check`（数据指纹与已锁快照不一致 → 拒绝生成）。
+- 采集前后复核锁定快照指纹（数据指纹不一致 → 拒绝生成）。初版委托 `data/snapshot.py --check`；2026-09-22 修复支持显式已锁快照，见下文实施补充。
 - 每条 SQL 过 `sql_guard.enforce`（N3 红线）+ Guard 预算（表白名单 = 锁定快照内的
   表，与 `make eval` 同一个 `build_budget` 口径）。
 - 大基数（`distinct > --max-cardinality`，默认 200）的列记 `status: skipped`，
@@ -117,6 +117,24 @@ planner 值域校验按 compiler 实际绑定列做，不凭直觉跨表。
   前缀匹配 / 模糊匹配扩展，本批不纳入。
 
 ---
+
+## 实施补充：隔离工作区重采样（2026-09-22）
+
+M0 开发前发现派生值域仍绑定 `7c966e9`，最新锁定快照为 `1e2e557`。
+用户授权只读重采样，不修改 Snapshot、Gold set、Metric 定义或业务数据库。
+
+- `data.value_profile.generate`/CLI 新增 `snapshot_sha`/`--snapshot-sha` 与
+  `raw_dir`/`--raw-dir`；默认继续使用 `git_short_sha()`，不自动选择最新快照。
+- 显式身份只接受 7–40 位小写十六进制；必须存在对应普通 meta 文件，不接受符号链接。
+- 复用 `eval.analysis_eval.verify_snapshot_fingerprint` 的数据指纹口径，真实测量经
+  `data.snapshot.build_meta(raw_dir=...)`；显式原始目录不存在时拒绝。
+- 前后均复核指纹，且 meta 内容必须与采集前一致；所有列和人工别名校验成功后才写入。
+  画像文件不接受符号链接；数据库中断、悬空别名或指纹失败不会留下部分刷新的文件。
+  多文件落盘不是文件系统事务，写盘阶段失败仍需复核并重新生成。
+- 实际 dry-run 与生成均完成：21 列中注册 10、跳过 11；生成后 `make lint` 通过。
+  全部文件只有快照身份、生成时间及说明中的身份变化，值本体、计数、别名未变。
+- 回归覆盖 `tests/test_value_profile_generation.py`；本次不改下述历史验收口径，也不
+  宣称执行了新的 EX/Plan Acc 评测。工作树 HEAD 无同名快照，旧 `make eval` 仍未运行。
 
 ## 验收
 

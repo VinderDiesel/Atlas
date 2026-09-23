@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -120,9 +121,13 @@ class FakeGenerator:
         self._plans = list(plans or [])
         self._refusals = refusals
         self.calls: list[str] = []
+        self.candidates_seen: list[tuple[str, ...] | None] = []
 
-    def generate(self, question: str, k: int = 5) -> GenerationResult:
+    def generate(
+        self, question: str, k: int = 5, *, candidates: Sequence[str] | None = None
+    ) -> GenerationResult:
         self.calls.append(question)
+        self.candidates_seen.append(None if candidates is None else tuple(candidates))
         if self._refusals > 0:
             self._refusals -= 1
             return GenerationResult(
@@ -436,6 +441,8 @@ class TestCandidatePath(unittest.TestCase):
         self.assertEqual(r.kind, "answer")
         self.assertEqual(len(gen.calls), 2, "编译失败应触发一次重生成")
         self.assertEqual(len(executor.calls), 1)
+        # T10d：重试沿用同一轮 retrieve 候选清单（不二次检索）
+        self.assertEqual(gen.candidates_seen, [("commission_revenue",), ("commission_revenue",)])
 
 
 class TestHandoff(unittest.TestCase):

@@ -26,7 +26,9 @@ export default function SnapshotBadge({ health, error }: Props) {
     );
   }
   if (health === null) {
-    return <Tag>快照状态加载中…</Tag>;
+    return (
+      <Tag aria-live="polite">快照状态加载中…</Tag>
+    );
   }
   const badge = snapshotBadge(health);
   return (

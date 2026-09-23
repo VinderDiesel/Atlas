@@ -9,9 +9,10 @@
  * - **零重算 / 不扩写**（N1）：只渲染后端原样 `text`，前端不拼接、不再算、不改写数字。
  * - `narrative` 缺失（off / 未请求）时组件渲染 null，不占位、不推断。
  */
-import { Alert, Card, Space, Tag, Typography } from "antd";
+import { Alert, Space, Typography } from "antd";
 
 import type { NarrativeBlock as NarrativePayload } from "../../api/types";
+import Section from "../../components/Section";
 
 interface Props {
   narrative: NarrativePayload | undefined;
@@ -26,34 +27,32 @@ export default function NarrativeBlock({ narrative }: Props) {
   if (!shipped) {
     // 降级 / 未接地：确定性模板，如实标注，不伪装成生成文本（③）。
     return (
-      <Alert
-        type="info"
-        showIcon
-        message="参考摘要（确定性模板，非模型生成）"
-        description={
-          <Space direction="vertical" size={0}>
-            <Typography.Text>{narrative.text}</Typography.Text>
-            <Typography.Text type="secondary">
-              reason_code={narrative.reason_code ?? "未知"} · tier={narrative.tier}
-            </Typography.Text>
-          </Space>
-        }
-      />
+      <div
+        style={{
+          borderLeft: `3px solid var(--atlas-accent, #f5b56e)`,
+          paddingLeft: 12,
+        }}
+      >
+        <Alert
+          type="info"
+          showIcon
+          message="参考摘要（确定性模板，非模型生成）"
+          description={
+            <Space direction="vertical" size={0}>
+              <Typography.Text>{narrative.text}</Typography.Text>
+              <Typography.Text type="secondary">
+                reason_code={narrative.reason_code ?? "未知"} · tier={narrative.tier}
+              </Typography.Text>
+            </Space>
+          }
+        />
+      </div>
     );
   }
 
   // 接地发货：自托管模型生成的补充叙述，带溯源，声明不构成因果（①②）。
   return (
-    <Card
-      size="small"
-      title={
-        <Space wrap>
-          <span>模型补充叙述</span>
-          <Tag color="blue">tier={narrative.tier}</Tag>
-          <Tag>model={narrative.model}</Tag>
-        </Space>
-      }
-    >
+    <Section title="模型补充叙述" meta={`tier=${narrative.tier} · model=${narrative.model}`}>
       <Space direction="vertical" size={0}>
         {/* 后端原样文本，前端不重算、不改写数字（N1） */}
         <Typography.Paragraph style={{ marginBottom: 0 }}>
@@ -63,6 +62,6 @@ export default function NarrativeBlock({ narrative }: Props) {
           数值已接地于本次查询结果；为定性补充，不构成业务因果解释。
         </Typography.Text>
       </Space>
-    </Card>
+    </Section>
   );
 }

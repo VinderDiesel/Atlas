@@ -13,7 +13,7 @@
  * 折线语义（chart.py）：按行序连线，不排序不插值；NULL 点保留为空
  * （connectNulls=false，缺口如实）。
  */
-import { Alert, Space, Table, Typography } from "antd";
+import { Alert, Space, Table, Typography, theme } from "antd";
 import {
   Bar,
   BarChart,
@@ -30,9 +30,6 @@ import type { ChartBarSpec, ChartLineSpec, ChartSpec, ChartTableSpec } from "../
 import { chartSeries, tableFallbackLines } from "../../lib/chart";
 
 const { Text } = Typography;
-
-/** 图表描边主色（AntD 主色，与顶栏视觉一致）。 */
-const SERIES_COLOR = "#1677ff";
 
 function footerNote(spec: { x?: string; y?: string[]; sql_sha256: string }): string {
   const parts: string[] = [];
@@ -55,34 +52,39 @@ function footerNote(spec: { x?: string; y?: string[]; sql_sha256: string }): str
  * 路径、两轴刻度为空、图面只剩网格）。
  */
 function SeriesChart({ spec }: { spec: ChartBarSpec | ChartLineSpec }) {
+  const { token } = theme.useToken();
+  const seriesColor = token.colorPrimary;
   const { points } = chartSeries(spec);
+  const chartLabel = spec.type === "line" ? "折线图" : "柱状图";
   return (
     <Space direction="vertical" size="small" style={{ width: "100%" }}>
       {spec.note !== undefined && (
         <Alert type="info" showIcon message={spec.note} style={{ margin: 0 }} />
       )}
-      <ResponsiveContainer width="100%" height={320}>
-        {spec.type === "line" ? (
-          <LineChart data={points}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="x" />
-            {/* 宽 90：亿级刻度（9 位数字）超出 YAxis 默认 60px 会被裁
-                （2026-09-16 P3 走查实测："100000000" 显示为 "0000000"） */}
-            <YAxis width={90} />
-            <Tooltip />
-            {/* 不插值（chart.py：按行序连线）；NULL 留缺口不补 0 */}
-            <Line type="linear" dataKey="y" stroke={SERIES_COLOR} connectNulls={false} />
-          </LineChart>
-        ) : (
-          <BarChart data={points}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="x" />
-            <YAxis width={90} />
-            <Tooltip />
-            <Bar dataKey="y" fill={SERIES_COLOR} />
-          </BarChart>
-        )}
-      </ResponsiveContainer>
+      <div aria-label={`${chartLabel}：${spec.x ?? ""} vs ${spec.y?.join(", ") ?? ""}`}>
+        <ResponsiveContainer width="100%" height={360}>
+          {spec.type === "line" ? (
+            <LineChart data={points}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="x" />
+              {/* 宽 90：亿级刻度（9 位数字）超出 YAxis 默认 60px 会被裁
+                  （2026-09-16 P3 走查实测："100000000" 显示为 "0000000"） */}
+              <YAxis width={90} />
+              <Tooltip />
+              {/* 不插值（chart.py：按行序连线）；NULL 留缺口不补 0 */}
+              <Line type="linear" dataKey="y" stroke={seriesColor} connectNulls={false} />
+            </LineChart>
+          ) : (
+            <BarChart data={points}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="x" />
+              <YAxis width={90} />
+              <Tooltip />
+              <Bar dataKey="y" fill={seriesColor} />
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
       <Text type="secondary">{footerNote(spec)}</Text>
     </Space>
   );

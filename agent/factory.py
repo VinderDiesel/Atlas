@@ -29,6 +29,7 @@ from data.identity import SnapshotUnavailable as SnapshotUnavailable
 if TYPE_CHECKING:  # 仅类型层：运行时依赖仍按下面的延迟 import 纪律走（决策 ②）
     from agent.compiler import SemanticModel
     from agent.security.sql_guard import Budget
+    from serving.control.events import EventSink
 
 
 def checkpoint_saver_from_env() -> SqliteSaver | None:
@@ -91,7 +92,12 @@ def _require_tables_in_snapshot(
         )
 
 
-def create_live_agent(model_path: Path | None = None) -> DataAgent:
+def create_live_agent(
+    model_path: Path | None = None,
+    *,
+    event_sink: EventSink | None = None,
+    persist_session: bool = True,
+) -> DataAgent:
     """真实会话 Agent：真 Doris 执行器 + 运行时解析快照的预算与 meta。
 
     快照绑定走 `resolve_runtime_snapshot()`（ADR-0019 决策 ①）：显式
@@ -108,6 +114,13 @@ def create_live_agent(model_path: Path | None = None) -> DataAgent:
         校验需要读模型的 datasets，因此 None 分支也在此处显式构造默认模型——
         交给 `DataAgent` 内部 `model or SemanticModel()` 兜底会让 CLI 的 ask 路径
         绕过校验（`model_path` 恰好是 None 的那条路径）。
+    event_sink : 真实事件接缝（ADR-0031 D07②，T05b）——None = 无事件（CLI/评测
+        旧行为）；`/runs` 面传 `StoreEventSink(control_store)`，运行上下文仍由
+        每次 invoke 的 run_context 传入（图实例可被多 run 复用）。
+    persist_session : 会话轨迹是否读 `ATLAS_CHECKPOINT_DB` 落盘（ADR-0031 D07）。
+        True（默认）= 既有语义（见下方「会话持久化」）；False = 跳过 env，
+        使用进程内 `MemorySaver`——`/runs` 面的会话上下文是 15 分钟内存窗口，
+        重启不恢复（D07），不得静默落盘。
 
     Raises
     ------
@@ -123,10 +136,11 @@ def create_live_agent(model_path: Path | None = None) -> DataAgent:
     一处，CLI 与 HTTP 因此同语义——它们是同一个工厂（ADR-0012 理由 1「共源」）。
     """
     from agent.compiler import SemanticModel
-    from eval.runner import build_budget, execute_sql
+    from agent.runtime.connectors.doris import execute_sql
+    from agent.runtime.context import budget_from_snapshot
 
     snapshot = resolve_runtime_snapshot()
-    budget = build_budget(snapshot.meta)
+    budget = budget_from_snapshot(snapshot.meta)
     model = SemanticModel(model_path) if model_path is not None else SemanticModel()
     _require_tables_in_snapshot(model, budget, snapshot)
     # 传整个 snapshot（不是 snapshot.meta）：/ask 要回显 source 与 bound_to_head，
@@ -137,7 +151,8 @@ def create_live_agent(model_path: Path | None = None) -> DataAgent:
         executor=execute_sql,
         budget=budget,
         snapshot=snapshot,
-        checkpointer=checkpoint_saver_from_env(),
+        checkpointer=checkpoint_saver_from_env() if persist_session else None,
+        event_sink=event_sink,
     )
     # ADR-0026 T02 checklist ④：读取匹配 (snapshot_sha, semantic_sha256) 的资格
     # 产物挂到分析入口。缺失/过期/哈希漂移只产出 available=False 的事实，

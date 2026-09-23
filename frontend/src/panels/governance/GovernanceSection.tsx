@@ -5,13 +5,13 @@
  * 并**可展开路径列表**——不得只在 hover tooltip 里给（0022 决策 ⑤ 的理由：
  * 治理面的诚实性要求数据可溯源到唯一事实源，而不是「服务端说的」）。
  */
-import { Button, Space, Spin, Tag, Typography } from "antd";
+import { Button, Space, Spin, Typography } from "antd";
 import { useState, type ReactNode } from "react";
 
 import type { Envelope } from "../../api/types";
 import ErrorNote from "../../components/ErrorNote";
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 
 /** 单条集合的装载态（由 GovernanceLayout 逐条持有；钻取由各自子页/组件自取）。 */
 export type CollectionState<T> =
@@ -44,32 +44,32 @@ interface ShellProps {
 export function SectionShell({ title, count, sources, children }: ShellProps) {
   const [showSources, setShowSources] = useState(false);
   return (
-    <Space direction="vertical" size="small" style={{ width: "100%" }}>
-      <Space wrap align="center" size={8}>
-        <Title level={5} style={{ margin: 0 }}>
-          {title}
-        </Title>
-        {count !== null && <Tag>{`共 ${count} 条`}</Tag>}
+    <section className="atlas-section" aria-label={title}>
+      <div className="atlas-section__head">
+        <h2 className="atlas-section__title">{title}</h2>
+        {count !== null && <span className="atlas-section__meta">{`共 ${count} 条`}</span>}
         {sources !== null && (
-          <>
-            <Text type="secondary">{`数据来自 ${sources.length} 个 Git 文件`}</Text>
-            <Button type="link" size="small" onClick={() => setShowSources((open) => !open)}>
-              {showSources ? "收起来源" : "展开来源"}
-            </Button>
-          </>
+          <span className="atlas-section__meta">{`数据来自 ${sources.length} 个 Git 文件`}</span>
         )}
-      </Space>
-      {showSources && sources !== null && (
-        <ul style={{ margin: 0, paddingLeft: 20 }}>
-          {sources.map((path) => (
-            <li key={path}>
-              <Text code>{path}</Text>
-            </li>
-          ))}
-        </ul>
-      )}
-      {children}
-    </Space>
+        {sources !== null && (
+          <Button type="link" size="small" onClick={() => setShowSources((open) => !open)}>
+            {showSources ? "收起来源" : "展开来源"}
+          </Button>
+        )}
+      </div>
+      <div className="atlas-section__body">
+        {showSources && sources !== null && (
+          <ul className="atlas-source-list">
+            {sources.map((path) => (
+              <li key={path}>
+                <Text code>{path}</Text>
+              </li>
+            ))}
+          </ul>
+        )}
+        {children}
+      </div>
+    </section>
   );
 }
 

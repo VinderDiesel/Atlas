@@ -25,4 +25,26 @@ describe("App（入口壳冒烟）", () => {
       ),
     ).toContain("Atlas 控制台");
   });
+
+  it("/runs 路由渲染运行历史（未认证态如实提示）", () => {
+    const html = renderToString(
+      <MemoryRouter initialEntries={["/runs"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(html).toContain("运行历史");
+    expect(html).toContain("尚未登录");
+  });
+
+  it("/setup 路由渲染数据源+语义模型两面板（未认证态如实提示）", () => {
+    const html = renderToString(
+      <MemoryRouter initialEntries={["/setup"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(html).toContain("数据源");
+    expect(html).toContain("连接数据源");
+    expect(html).toContain("语义模型");
+    expect(html).toContain("尚未登录");
+  });
 });

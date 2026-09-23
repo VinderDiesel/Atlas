@@ -18,7 +18,6 @@ export default function DataTable({ columns, rows, renderedRows }: Props) {
   if (columns.length === 0) {
     return <Typography.Text type="secondary">结果无列（rows 与 columns 均为空）。</Typography.Text>;
   }
-  // 列键用位序（c0/c1/…）：列名可能在结果集中重复（别名撞车），以名字为键会静默丢列
   const data = rows.slice(0, renderedRows).map((row, index) => {
     const record: Record<string, unknown> = { __key: String(index) };
     columns.forEach((_, ci) => {
@@ -26,17 +25,31 @@ export default function DataTable({ columns, rows, renderedRows }: Props) {
     });
     return record;
   });
+  // 数值列检测：非空值中 ≥60% 为 number 即判为数值列（右对齐 + tabular-nums）
+  const numericCols = new Set<number>();
+  columns.forEach((_, ci) => {
+    const vals = data.map((row) => row[`c${ci}`]).filter((v) => v !== null && v !== "NULL");
+    if (vals.length > 0 && vals.filter((v) => typeof v === "number").length / vals.length >= 0.6) {
+      numericCols.add(ci);
+    }
+  });
   return (
     <Table
       size="small"
       rowKey="__key"
       pagination={false}
+      aria-label="查询结果数据表"
       scroll={{ x: "max-content", y: 480 }}
+      rowClassName={(_, index) => ((index ?? 0) % 2 === 1 ? "atlas-row-stripe" : "")}
       columns={columns.map((name, ci) => ({
         title: name,
         dataIndex: `c${ci}`,
         key: `c${ci}`,
         ellipsis: true,
+        align: numericCols.has(ci) ? "right" : "left",
+        onCell: numericCols.has(ci)
+          ? () => ({ style: { fontVariantNumeric: "tabular-nums" } })
+          : undefined,
         render: (value: unknown) => (value === null ? "NULL" : String(value)),
       }))}
       dataSource={data}

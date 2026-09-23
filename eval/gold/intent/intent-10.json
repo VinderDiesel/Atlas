@@ -1,0 +1,21 @@
+{
+  "id": "intent-10",
+  "pair_id": "definite-ambiguous",
+  "split": "test",
+  "source_family": "finance-manual-v1",
+  "question": "2013 年第二季度佣金收入和交易笔数分别是多少？",
+  "reference_time": "2013-07-15T10:00:00+08:00",
+  "timezone": "Asia/Shanghai",
+  "annotation": {
+    "metric_mentions": ["佣金收入", "交易笔数"],
+    "groups": [],
+    "filters": [],
+    "time_mentions": ["2013 年第二季度"]
+  },
+  "expected": {
+    "candidates_include": ["commission_revenue", "trade_count"],
+    "reason_code": "clarification_required",
+    "unresolved_slots": ["metric", "time.0"],
+    "plan": null
+  }
+}

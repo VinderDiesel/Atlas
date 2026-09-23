@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "report_type": "workbench_intent",
+  "created_at": "2026-09-23T02:00:03.138696Z",
+  "code_sha": "ec53f7d",
+  "engine": "llm",
+  "status": "ok",
+  "prompt_version": "0.1.0",
+  "samples_digest": "0063d570ff21ef5b1b68e15302ab25a982908300c241cae0867c4e8e3bc351c6",
+  "catalog_digest": "a3ba5e2b708bcf578dc27b3587ca8050bef6ae0a4e2cc77290ffda586e345be4",
+  "budget": {
+    "final_k": 5,
+    "max_candidates_per_query": 5,
+    "max_retrieval_expansions": 2,
+    "bind_same_budget": true,
+    "default_limit": 100
+  },
+  "summary": {
+    "total": 10,
+    "retrieval_recall": "9/10",
+    "plan_accuracy": "8/9",
+    "clarify_accuracy": "1/1",
+    "total_tokens": 11080
+  },
+  "samples": [
+    {
+      "id": "intent-01",
+      "question": "只看分支 IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD 的 2013 年佣金收入是多少？",
+      "candidates": [
+        "commission_revenue",
+        "commission_rate",
+        "average_commission_per_trade"
+      ],
+      "reason_code": "bound",
+      "unresolved_slots": [],
+      "plan": {
+        "metric": "commission_revenue",
+        "dimensions": [],
+        "time": {
+          "granularity": "year",
+          "value": 2013
+        },
+        "filters": [
+          {
+            "column": "Branch",
+            "op": "=",
+            "value": "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"
+          }
+        ],
+        "order_by": [],
+        "limit": 100
+      },
+      "recall_ok": true,
+      "plan_ok": true,
+      "clarify_ok": null,
+      "latency_ms": 6349.4,
+      "usage": {
+        "prompt_tokens": 862,
+        "completion_tokens": 277
+      },
+      "error": null
+    },
+    {
+      "id": "intent-02",
+      "question": "排除分支 IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD 后，2013 年的佣金收入是多少？",
+      "candidates": [
+        "commission_revenue",
+        "commission_rate",
+        "average_commission_per_trade"
+      ],
+      "reason_code": "bound",
+      "unresolved_slots": [],
+      "plan": {
+        "metric": "commission_revenue",
+        "dimensions": [],
+        "time": {
+          "granularity": "year",
+          "value": 2013
+        },
+        "filters": [
+          {
+            "column": "Branch",
+            "op": "!=",
+            "value": "IEMJHuQgCPDHCwwJkgQQeaqGvzMcVD"
+          }
+        ],
+        "order_by": [],
+        "limit": 100
+      },
+      "recall_ok": true,
+      "plan_ok": true,
+      "clarify_ok": null,
+      "latency_ms": 4594.9,
+      "usage": {
+        "prompt_tokens": 862,
+        "completion_tokens": 365
+      },
+      "error": null
+    },
+    {
+      "id": "intent-03",
+      "question": "2013 年第二季度的总交易额是多少？",
+      "candidates": [
+        "total_trade_value",
+        "average_trade_value",
+        "total_trade_tax",
+        "trade_count",
+        "active_account_count"
+      ],
+      "reason_code": "bound",
+      "unresolved_slots": [],
+      "plan": {
+        "metric": "total_trade_value",
+        "dimensions": [],
+        "time": {
+          "granularity": "quarter",
+          "value": "2013Q2"
+        },
+        "filters": [],
+        "order_by": [],
+        "limit": 100
+      },
+      "recall_ok": true,
+      "plan_ok": true,
+      "clarify_ok": null,
+      "latency_ms": 9101.5,
+      "usage": {
+        "prompt_tokens": 842,
+        "completion_tokens": 726
+      },
+      "error": null
+    },
+    {
+      "id": "intent-04",
+      "question": "2013 年第二季度的交易笔数是多少？",
+      "candidates": [],
+      "reason_code": "",
+      "unresolved_slots": [],
+      "plan": null,
+      "recall_ok": false,
+      "plan_ok": false,
+      "clarify_ok": null,
+      "latency_ms": 9180.5,
+      "usage": {},
+      "error": "IntentSampleError: 输出非合法 JSON：Expecting value: line 1 column 1 (char 0)"
+    },
+    {
+      "id": "intent-05",
+      "question": "2013 年第二季度各交易所的佣金收入是多少？",
+      "candidates": [
+        "commission_revenue",
+        "commission_rate",
+        "average_commission_per_trade",
+        "total_trade_tax",
+        "trade_count"
+      ],
+      "reason_code": "bound",
+      "unresolved_slots": [],
+      "plan": {
+        "metric": "commission_revenue",
+        "dimensions": [
+          "ExchangeID"
+        ],
+        "time": {
+          "granularity": "quarter",
+          "value": "2013Q2"
+        },
+        "filters": [],
+        "order_by": [],
+        "limit": 100
+      },
+      "recall_ok": true,
+      "plan_ok": true,
+      "clarify_ok": null,
+      "latency_ms": 9496.6,
+      "usage": {
+        "prompt_tokens": 843,
+        "completion_tokens": 699
+      },
+      "error": null
+    },
+    {
+      "id": "intent-06",
+      "question": "2013 年第二季度交易所 NASDAQ 的佣金收入是多少？",
+      "candidates": [
+        "commission_revenue",
+        "commission_rate",
+        "average_commission_per_trade",
+        "total_trade_tax",
+        "trade_count"
+      ],
+      "reason_code": "bound",
+      "unresolved_slots": [],
+      "plan": {
+        "metric": "commission_revenue",
+        "dimensions": [],
+        "time": {
+          "granularity": "quarter",
+          "value": "2013Q2"
+        },
+        "filters": [
+          {
+            "column": "ExchangeID",
+            "op": "=",
+            "value": "NASDAQ"
+          }
+        ],
+        "order_by": [],
+        "limit": 100
+      },
+      "recall_ok": true,
+      "plan_ok": true,
+      "clarify_ok": null,
+      "latency_ms": 6096.5,
+      "usage": {
+        "prompt_tokens": 845,
+        "completion_tokens": 477
+      },
+      "error": null
+    },
+    {
+      "id": "intent-07",
+      "question": "上个月佣金收入是多少？",
+      "candidates": [
+        "commission_revenue",
+        "commission_rate",
+        "average_commission_per_trade"
+      ],
+      "reason_code": "bound",
+      "unresolved_slots": [],
+      "plan": {
+        "metric": "commission_revenue",
+        "dimensions": [],
+        "time": {
+          "granularity": "month",
+          "value": 201306
+        },
+        "filters": [],
+        "order_by": [],
+        "limit": 100
+      },
+      "recall_ok": true,
+      "plan_ok": true,
+      "clarify_ok": null,
+      "latency_ms": 3310.6,
+      "usage": {
+        "prompt_tokens": 836,
+        "completion_tokens": 184
+      },
+      "error": null
+    },
+    {
+      "id": "intent-08",
+      "question": "去年佣金收入是多少？",
+      "candidates": [
+        "commission_revenue",
+        "commission_rate",
+        "average_commission_per_trade"
+      ],
+      "reason_code": "bound",
+      "unresolved_slots": [],
+      "plan": {
+        "metric": "commission_revenue",
+        "dimensions": [],
+        "time": {
+          "granularity": "year",
+          "value": 2012
+        },
+        "filters": [],
+        "order_by": [],
+        "limit": 100
+      },
+      "recall_ok": true,
+      "plan_ok": true,
+      "clarify_ok": null,
+      "latency_ms": 2207.2,
+      "usage": {
+        "prompt_tokens": 835,
+        "completion_tokens": 105
+      },
+      "error": null
+    },
+    {
+      "id": "intent-09",
+      "question": "2013 年第二季度佣金收入是多少？",
+      "candidates": [
+        "commission_revenue",
+        "commission_rate",
+        "average_commission_per_trade"
+      ],
+      "reason_code": "bound",
+      "unresolved_slots": [],
+      "plan": {
+        "metric": "commission_revenue",
+        "dimensions": [],
+        "time": {
+          "granularity": "quarter",
+          "value": "2013Q2"
+        },
+        "filters": [],
+        "order_by": [],
+        "limit": 100
+      },
+      "recall_ok": true,
+      "plan_ok": true,
+      "clarify_ok": null,
+      "latency_ms": 4447.1,
+      "usage": {
+        "prompt_tokens": 840,
+        "completion_tokens": 349
+      },
+      "error": null
+    },
+    {
+      "id": "intent-10",
+      "question": "2013 年第二季度佣金收入和交易笔数分别是多少？",
+      "candidates": [
+        "trade_count",
+        "commission_revenue",
+        "average_commission_per_trade",
+        "commission_rate",
+        "average_trade_value"
+      ],
+      "reason_code": "clarification_required",
+      "unresolved_slots": [
+        "metric",
+        "time.0"
+      ],
+      "plan": null,
+      "recall_ok": true,
+      "plan_ok": null,
+      "clarify_ok": true,
+      "latency_ms": 3848.4,
+      "usage": {
+        "prompt_tokens": 844,
+        "completion_tokens": 289
+      },
+      "error": null
+    }
+  ],
+  "notes": [
+    "engine=llm：真实模型输出意图 JSON（agent/prompts/intent.yaml）→ 同一确定性链路；token 实测自 usage（不做 USD 估算，避免伪精确）。",
+    "Recall 与 Plan/澄清 Acc 分开报告（不与 EX 混合）；EX（SQL 执行）not_run：本评测不触碰数据源。",
+    "绑定与检索同预算：K=5、每表达 top-5 经 RRF、原话+扩展≤2、default_limit=100。"
+  ]
+}

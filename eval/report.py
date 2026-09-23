@@ -20,11 +20,13 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from eval.runner import git_short_sha
+from eval.workbench_baseline import BaselineReport
 
 REPORTS_DIR = Path(__file__).resolve().parent / "reports"
 FAILURES_DIR = Path(__file__).resolve().parent / "failures"
@@ -387,6 +389,38 @@ def _section_meta(sha: str) -> list[str]:
     return lines
 
 
+def render_workbench_baseline(report: BaselineReport) -> str:
+    """将 T01 清单渲染为独立章节；不混入旧 EX 汇总或推断当前质量。
+
+    参数为已校验报告，返回 Markdown；不读取其他报告或访问业务源。
+    """
+    lines = [
+        "# 工作台证据基线（清单，不是效果评测）",
+        "",
+        f"代码：`{report.code_sha}`；工作树摘要：`{report.worktree_digest}`。",
+        "本次未执行业务评测；历史证据仅供追溯，数据指纹未现场复核。",
+        "",
+        "| 策略 | 状态 |",
+        "|---|---|",
+        *(f"| {item.strategy} | {item.status} |" for item in report.strategies),
+        "",
+        "## 历史证据身份",
+        "",
+        "| source | code_sha | digest |",
+        "|---|---|---|",
+        *(
+            f"| `{item.path}` | `{item.code_sha}` | `{item.digest}` |"
+            for item in report.historical_evidence
+        ),
+        "",
+        "## 清单问题",
+        "",
+        *(f"- `{item.path}`：{item.reason}" for item in report.issues),
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """生成 EVAL_REPORT.md（写 stdout）。
 
@@ -399,7 +433,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="强制聚合最新一次/最近 N 次评测报告（跨 sha，避免 headline 报告为空）",
     )
+    parser.add_argument("--workbench-report", type=Path, help="单独渲染 T01 清单，不混入效果汇总")
     args = parser.parse_args(argv)
+    if args.workbench_report is not None:
+        if args.latest:
+            parser.error("--workbench-report 不能与 --latest 混用")
+        baseline = BaselineReport.model_validate_json(
+            args.workbench_report.read_text(encoding="utf-8")
+        )
+        sys.stdout.write(render_workbench_baseline(baseline))
+        return 0
 
     sha = git_short_sha()
     lines: list[str] = [
