@@ -84,6 +84,8 @@ def iter_payloads(path: Path) -> Iterator[tuple[str, dict[str, Any], str | None]
     """
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     for model in doc.get("semantic_model", []):
+        if not isinstance(model, dict):
+            continue
         model_name = model.get("name", "<unnamed>")
         for ext in model.get("custom_extensions", []):
             data = _json_payload(ext)
@@ -148,6 +150,8 @@ def _collect_model_fields(path: Path) -> tuple[set[str], set[str]]:
     fields: set[str] = set()
     time_fields: set[str] = set()
     for model in doc.get("semantic_model", []):
+        if not isinstance(model, dict):
+            continue
         for ds in model.get("datasets", []):
             for f in ds.get("fields", []):
                 name = f.get("name")

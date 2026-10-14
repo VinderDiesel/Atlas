@@ -763,3 +763,229 @@ checkpoint，仍为进程内态的是限流桶、审计写与 SQLite 单写者�
 3. **§3.3 六条渲染义务的 vitest 纯函数断言**：诚实性标志位一旦被前端"忘记"展示，
    `lib/honesty.ts` 的用例即红——把诚实性从"人工走查"变成"机器门槛"，这是本页
    相对 0018 判据 10 的实质收窄。
+
+---
+
+## 9. 视觉与体验细化（2026-09-23 走查；批 V1/V2/V3 提案）
+
+### 9.0 本节性质、裁定边界与证据时效
+
+**性质**：本节属"UI 分解与呈现"（同 §2 口径：面板划分与视觉规范归本页，**改本页不改 ADR**）。P1~P3 各面板的**功能**已交付并有验收记录，本节只处理**它们看起来与用起来的样子**——这是一批尚未被设计过的内容：现状是 AntD 默认组件 + 品牌色的直出。
+
+**本节不改的不变量**（逐条照旧，任何 V 批次都不得触碰）：
+
+- §3.3 六条诚实性渲染义务、`lib/honesty.ts` 的判定唯一入口；
+- 0022 决策 ⑥：治理页挂载即发 8 条并发，**不得合并或懒加载**（V2 的导航改造只动壳，不动 `useCollection` 八个调用）；
+- 0028 决策 ③：治理面只读，不新增任何写控件；
+- N1：**前端不重算、不改写任何数字**——含"顺手加千分位""顺手补百分比"一律禁止（§9.1.2 的等宽右对齐是排版，不是格式化）；
+- 0020 决策（token 只存内存）/ 0018 零遥测：不新增持久化与上报。
+
+**本节只登记、不拍板**（需 ADR 或对应 ADR 追加落地注记）：
+
+| 项 | 归属 | 处置 |
+|---|---|---|
+| 新增任何 npm 依赖（含 a11y 断言库） | 0018 决策 ①/推翻条件 4 + 0023 | 本节只给验收方式，**不选型** |
+| 字体自托管（把 woff2 入库或进镜像） | 0023 决策 ⑦ 扫描域（§6.4 已挂同一问题） | 先跑 `make license-check` 判定，再决定 §9.6 走哪条分支 |
+| 契约字段新增（如 §6.5 的 `limit_applied`） | 0022 | 本节不碰，沿 §6.5 |
+
+**证据时效（三条，读本节前必读）**：
+
+1. **2026-09-23 实机走查**（本节唯一的"当前实现"证据）：`cd frontend && npm run dev -- --port 5177`（即 `make ui-dev` 的 vite 环节；后端未起），视口 1181×670 与 390×844 两档、深/浅两主题，走 `/ask`、`/sessions`、`/governance/models`（未认证态）。控制台实测仅 1 条业务 404（health 代理目标 `127.0.0.1:8000` 实测返回他人项目的 `{"detail":"Not Found"}`），**无 React/AntD 警告**。截图未入库；若要作验收证据，须按 0018 落地注记的格式补图。
+2. **有数据状态未实测**：`/ask` 的 answer 全链、治理 8 子页的实数据形态，本节只能引用 `docs/screenshots/` 的 2026-09-16 走查图——**那批图早于 2026-09-22 的双主题提交 `af2f8a9`**，其中"深色顶栏 + 浅色内容"的混合外观**不得用于判断当前实现**（当前实机两主题各自自洽）。凡涉及主题的判断一律以第 1 条为准。
+3. **行号基准**：本节 `file:line` 以 HEAD `cc3b3ef`（2026-09-23）为准；行号漂移时以函数/组件名为锚。
+
+### 9.1 设计方向（决策）：审计凭证（Audit Receipt）
+
+**决策**：控制台的视觉母题定为**财务凭证/对账单**——每一次回答都是"一张可核对的凭证"：结论在上、证据在下、落款在右下。理由：本产品的差异化是**可信**（快照绑定、Guard、行级策略、截断声明都是"可核对性"），而凭证正是"可核对"的通用视觉语言；它同时能容纳"表格密集 + 术语密集"的现状，不需要伪装成对话式产品。
+
+三条差异化特征（这是要被人记住的部分）：
+
+1. **编号槽（gutter）**：凭证正文区左侧留 28px 固定槽，放 ①②③…；与 `lib/order.ts` 的 `ANSWER_SECTIONS` 次序一一对应（次序仍是该唯一事实源，槽位只是它的视觉投影）；
+2. **装订线（spine）**：贯穿凭证左缘的 1px 发丝线连接所有区块，末节收口于落款——视觉上"装订成册"，而非散落的卡片；
+3. **落款（colophon）**：右下角一行等宽小字 = 快照（短 sha）+ 绑定态 + 身份/策略 + 时间，全部取后端原串（§9.4.2）。
+
+**禁止项**（避免为炫技破坏"可信"）：滚动视差、渐变光晕、非必要的图标拟物、以及任何"让数字看起来更好看"的格式化（N1）。
+
+#### 9.1.1 色彩语义收敛
+
+现状问题：`accent`（琥珀）同时承担 warning 与"品牌点缀"，`primary`（青）同时是链接、选中、图表线、按钮——语义漂移后，用户无法从颜色判断"这条信息要不要紧"。
+
+| Token | 唯一语义 | 只许出现在 | 禁止扩展 |
+|---|---|---|---|
+| `--atlas-primary` `#6ee7f5`（浅色 `#0891b2`） | **可行动 / 已验证** | 主按钮、选中态、链接、图表主序列 | 不得再表示"警告"或"失败" |
+| `--atlas-accent` `#f5b56e`（浅色 `#d97706`） | **需注意 / 降级 / 未绑定** | 降级叙述左边条、`dry`/`bound_to_head=false` 类标签、截断提示 | 一屏不超过 2 处（超出说明该合并为一条说明） |
+| `--atlas-danger` | **拒绝 / 失败**（终态） | `blocked`/`error` 分支、健康检查失败 | 不得用于"未绑定""降级"这类**非失败**态 |
+| `--atlas-success` | **已完成 / 正向** | 贡献条正向、成功提示 | — |
+| `--atlas-muted` | 说明性文字 | 次要说明（见 §9.6 字号下限） | 不得用于**结论性**数字 |
+
+判定口径：新组件里出现的每一处颜色，都要能回答"它属于上表哪一行"；答不出即视为违规（V1 的 code review 清单项）。
+
+#### 9.1.2 排版与字号（决策）
+
+| 角色 | 字体 | 字号/行高 | 备注 |
+|---|---|---|---|
+| 页标题（顶栏 h1） | UI 栈 | 20 / 1.4 / 600 | 现状保持 |
+| 区块标题（`Title level={5}`） | UI 栈 | 15 / 1.4 / 600 | 与正文拉开 1 级即可，不用 16+ |
+| 正文 | UI 栈 | 14 / 1.6 | |
+| 说明（`type="secondary"`） | UI 栈 | **13 / 1.6**（下限） | 现状多为 12px 长句 → 上移一档 |
+| 字段标签 | UI 栈 | 12 / 1.5 / `letter-spacing: 0.02em` | 全角中文标签不加字距 |
+| 标识符与数字 | JetBrains Mono | 13 | sha / session_id / 字段名 / 指标名；数字列 `tabular-nums` |
+| 代码块（SQL/JSON） | JetBrains Mono | 13 / 1.5 | 现状保持 |
+
+**字体栈（决策）**：UI 栈在现有 `"Outfit", system-ui` 之后**必须补 CJK 栈**——`"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif`。实测依据：Outfit 无中文字形，中文当前实际落在系统字体上，品牌排版只在数字与英文上生效；不补栈时不同平台的中文观感不可控。
+
+**数字纪律（重申 N1）**：等宽 + 右对齐 + `tabular-nums` 是允许的；**千分位、单位换算、二次舍入一律禁止**——数值语义只在后端。
+
+#### 9.1.3 动效（决策）
+
+只保留两类，且总量封顶：
+
+1. **凭证入场**：沿用 `global.css` 的 `fadeSlideIn`（300ms/ease-out），但把 `animationDelay` 由 `index * 80ms` 改为 `index * 40ms` 且**总时长封顶 240ms**（`AskWorkbench.tsx:224-232` 现状 6 段 = 400ms 尾段等待，审计场景偏慢）；
+2. **微交互**：复制成功提示（已有）、按钮 `hover` 亮度（已有）、卡片 `hover` 位移（已有）。
+
+**上限**：单次交互的动画总时长 ≤ 300ms；`prefers-reduced-motion` 的全局关停（`global.css:156-164`）任何批次都不得移除。
+
+### 9.2 布局栅格（决策）
+
+**现状实测（三套宽度）**：`/ask` 与 `/sessions` 是 `maxWidth: 1080` 居中（`AskWorkbench.tsx:333`、`SessionPanel.tsx:48`），`/governance` 无上限即 100% 全宽（`GovernanceLayout.tsx:209`）——大屏上像两个不同产品，reports 表格（7 列）横跨全屏后行长难扫。
+
+**决策**：三页共用同一内容容器常量，落在一个新文件 `styles/layout.ts`（或 `global.css` 的 `--atlas-content-max`）：
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| 内容宽 | **1120px**（原 1080 → 1120，给治理表格多 40px） | 居中，`margin: 0 auto` |
+| 页边距 | ≥768px：24px；<768px：12px | 现状 24/12 保持 |
+| 区块间距 | 16px（AntD `size="middle"`） | 现状保持 |
+| 凭证内部格距 | 8px 基准（内边距 16） | 新组件专用 |
+
+**不提前做**：宽表 breakout（超出内容宽的"出血"容器）**现在不做**——AGENTS.md §10 第 5 条。仅当某表列数 ≥ 8 且人工实测确有挤压时，再开 `--atlas-content-wide`。
+
+**结构断言（V2 新增测试）**：内容宽常量只有一个来源，三页从它读取（现状是三处魔法数字）。
+
+### 9.3 导航（决策）
+
+#### 9.3.1 治理区改左侧二级导航（Sider）
+
+**现状机制（代码推导，待带 token 实机复核）**：`GovernanceLayout.tsx:240-260` 是"`<Tabs>{build 5 页}</Tabs>` + `<Divider>治理控制面（control）</Divider>` + `<Tabs>{control 3 页}</Tabs>`"。由于 Tab 的内容区在该组件内部，推出两个几何后果：① 处于 build 页时，control 那条 strip 与分隔线落在**页面内容下方**（要滚到底才能切组）；② 处于 control 页时，上面的 build strip 的 `activeKey` 不在其 items 中，AntD 不点亮任何 tab、内容区为空——一条"死条"。另有三重冗余标注：组前缀"构建 · /控制 · "、分隔线文案、以及两行 strip 本身。
+
+**决策**：治理区改为**左侧二级导航 + 右侧内容**（AntD `Layout.Sider` + `Menu`，或等价的左栏列表）：
+
+- 8 子页在一个左栏里分两组（组标题用 `type="group"` 的 Menu 分组，不再需要分隔线与标签前缀）；
+- 路由**零改动**（`/governance/:section` 8 个 key 不变，`GOV_SECTIONS` 仍是唯一清单；旧链接不 404）；
+- `useCollection` 八条调用**逐字不变**（8 并发不变量，§9.0）；
+- `dashOr`/`formatBytes`/`SectionShell` 等共用件不动。
+
+**为什么不选"单行 8 tab"**：8 项在 1120px 内容宽下已接近溢出（2026-09-16 走查图里 7 项就已经出现 `…` 溢出菜单），窄屏必然退化为滚动 tab；且 0031 T06 会再加控制面（runs/feedback），横向 strip 没有余量。左栏是唯一能同时容纳"分组 + 增量"的形态。
+
+**与 0031 的协调点**：T06 新增 `panels/runs/` 并改 `frontend/src/App.tsx`（顶栏与端点清单）。本节的 Sider 改造只落在 `panels/governance/`，与 T06 不冲突；若 T06 先落地，控制面一级入口的归属（顶栏 vs 治理左栏）以 T06 的裁定为准，本节随动。
+
+#### 9.3.2 顶栏与移动端
+
+**现状实测**：390×844 下，顶栏三项导航（工作台/会话/治理）被 AntD Menu 折叠成 `…`——窄屏既看不到当前位置也无法导航（主题切换与角色按钮仍在）。
+
+**决策**：<768px 时，顶栏只保留"当前页名 + 菜单按钮"，点开后用 `Drawer` 列出三项（含当前项高亮）；≥768px 保持现状。顶栏其余元素（logo 文案、快照徽标、主题切换、角色）不动。
+
+**当前项可见性**：`App.tsx:101-103` 的 `selectedKey` 逻辑保留（`/governance` 前缀归并已实现）。
+
+### 9.4 组件规范（决策）
+
+新增三件（挂在既有纪律下：组件只接收 props、不 fetch、判定留在 `lib/`；§4.1）：
+
+| 文件 | 职责 |
+|---|---|
+| `panels/workbench/AnswerReceipt.tsx` | 把 `ANSWER_SECTIONS` 的六段包成一张凭证（编号槽 + 装订线 + 落款） |
+| `components/ProvenanceStrip.tsx` | 溯源条（唯一渲染点，见下） |
+| `panels/governance/GovernanceNav.tsx` | §9.3.1 的左栏 |
+
+#### 9.4.1 凭证卡（AnswerReceipt）
+
+版式：CSS Grid 两列（`28px` 编号槽 + `1fr` 内容），左上为口径摘要行（指标 + 维度 + 时间），中部为六段正文，底部为落款。**渲染次序仍由 `ANSWER_SECTIONS` 驱动**（本页 §6.1 与 0018 ⑦ 的次序不变量），组件只提供外壳与槽位——`order.test.ts` 的断言不动。
+
+边界情形（必须与现状同构）：`explanation === null`、`chart === null`（不占位）、`row_count === 0`、未知 `kind`（原样 JSON）——外壳不得让这些情形"看起来像有内容"。
+
+#### 9.4.2 溯源条（ProvenanceStrip）：一屏一次
+
+**现状问题（实测）**：同一事实分散重复——快照短 sha 出现在顶栏徽标、`counts` 行、图表 footer、分析 headline 四处；"出口 SQL 摘要"同时在表格脚注与图表脚注出现。用户要自己判断"哪个 sha 才是本次结论绑定的"。
+
+**决策**：抽 `ProvenanceStrip`，**同一屏内主溯源信息只渲染一次**（凭证落款）；徽标（顶栏）与 footer 保留但只放**全局上下文**（head 绑定态），不再重复本次结论的 sha。字段序固定为：
+
+1. 数据版本（`snapshot_sha` 短 sha + `snapshot_bound_to_head`）；
+2. 链路（`explanation.path` · `engine`）；
+3. 身份与策略（角色 + `policy_effect`，未生效时如实写"未生效"）；
+4. 执行（`latency_ms`、`row_count`）；
+5. 出口 SQL 摘要（`sql_sha256` 短 sha）。
+
+**硬约束**：组件只做"取值 + 排版"，**不 import 任何计算/格式化函数**（唯一例外：`lib/sha.ts` 的既有 `shortSha`，且其文案已被 vitest 断言）；`undefined`/`null` 一律显式渲染占位（"（无）" / "（未绑定）"），不得省略整行——省略即等于隐瞒。
+
+#### 9.4.3 术语呈现纪律
+
+**现状**：后端字段名直接混进中文句子——`bound_to_head=false`、`path=deterministic · engine=deterministic`、`status=ok`、`reason_code=…`、`tier/model`（`AskWorkbench.tsx:205-212`、`NarrativeBlock.tsx:43`、`AnalysisBlock.tsx:102`、`ChartBlock.tsx:34-44`）。
+
+**决策**：**文本一字不改**（诚实性优先），只改**排版层**——术语与字段名统一用 mono chip（`<Text code>` 或 Tag）从句子中"拎出来"，中文只留连接词；chip 的 tooltip 给英文键名原文。
+
+**纪律**：改任何既有文案前，**先改 `lib/` 的判定与该 lib 的 vitest 断言**（`SnapshotBadge` 头注已有此先例），否则"改文案"会绕过 §3.3 的机器门槛。
+
+### 9.5 首屏、空态与未认证态（决策）
+
+| # | 现状（实测） | 决策 |
+|---|---|---|
+| 1 | `/ask` 空态为大片留白，无示例问题 | 加 3~4 个示例问题 chip，点击即填入并执行；交互复用 `AskWorkbench.tsx:268-275` 的 clarify candidates 按钮形态（同一组件语言） |
+| 2 | 未认证时 `/ask` 只有一行灰字指向顶栏（不可点），而 `make token` 命令块只在治理页/Popover 里 | 灰字改**可点 CTA**（点击即展开顶栏角色 Popover），并在 `/ask` 直接给出 `CopyBlock` 的 `make token` 命令（复用 `state/role.ts:makeTokenCommand`） |
+| 3 | `/sessions` 显示完整 36 位 UUID，其他页是 8 位短 id | 统一短 id + `title` 全量（同一 `shortSha` 口径） |
+| 4 | `/sessions` 首屏 = 4 行限制 Alert + 页脚 4 行灰字，语义重复约一半 | 合并为一条限制说明（非 Alert，见 §9.7）+ 一个"为什么"折叠 |
+| 5 | 未认证时治理整页被 Alert 替换（正确），但看不到"治理有 8 个子页" | 保留整页替换；在替换页里列出 8 个子页名（让用户知道有什么，不谎称数据） |
+
+### 9.6 主题与字体健壮性（V1 主体）
+
+| # | 问题 | 证据 | 修法 |
+|---|---|---|---|
+| 1 | **首帧主题闪变（FOWT）**：CSS 变量默认（`:root`）是深色，`data-theme` 在 `useEffect` 才写入（`ThemeProvider.tsx:44-54`），而 AntD 主题按 React state 立即生效 → 浅色偏好用户首帧是"深壳体 + 浅组件"的混合。机制上必然发生（未做逐帧实测） | `global.css:10-11`、`ThemeProvider.tsx:44-54` | `index.html` 内联 3 行脚本预置 `data-theme`（读 `localStorage["atlas-theme"]`）并同步 `theme-color` meta；`ThemeProvider` 首帧读同一来源 |
+| 2 | **令牌泄漏**：`ReportDrawer` 的 `pre` 硬编码 `rgba(0,0,0,0.03/0.06)`（`ReportDrawer.tsx:57-67`）——深色下等于没有面板（边框不可见、底色几乎无差别） | 该行 + `grep -rn "rgba(0, 0, 0" frontend/src` 复扫 | 换 `var(--atlas-code-bg)` / `var(--atlas-border)`；同一命令复扫 = 0 命中作为 V1 断言 |
+| 3 | **浅色下 Segmented 几乎不可见**（track = `colorBgLayout #f8fafc` 与页面同色、滑块 = 白）：实测浅色截图中"查询/分析"只剩两个词 | `tokens.ts:86-119` 未给 `Segmented` 令牌 | 给 `Segmented` 补组件令牌（`trackBg`/`itemSelectedBg`），浅色下 track 用 `--atlas-border` 淡化档 |
+| 4 | 浅色下主题切换图标与次要文字过淡 | 实测浅色截图 | 图标色给 `colorText`（非 secondary）；次要文字按 §9.1.2 提到 13px |
+| 5 | **字体不可达**：`index.html:7-9` 直连 `fonts.googleapis.com`（Outfit/JetBrains Mono） | 该行；本项目文档与远程均为中文环境（gitee） | **两分支，先过许可证门**：① 自托管 woff2（OFL 字体 + `make license-check` 判定，含 §6.4 的扫描域问题）；② 保留 CDN 则必须写 KL（"受限网络下字体回退系统字体、首屏多一次跨域阻塞请求"）——**不得**为绕开而删字体栈（删了等于放弃品牌排版） |
+| 6 | 浅色下徽标把 404 原文塞进 Tag（"快照不可用：Not Found"），窄屏挤占顶栏 | `SnapshotBadge.tsx:20-27`；390px 实测 | Tag 只放短状态（"快照不可用"），原文进 `title` 与 `SessionPanel` 的 `ErrorNote`（不违反零遥测：不吞错，只是不塞在徽标里） |
+
+### 9.7 可访问性（V1 不新增依赖的部分）
+
+**已达标、本批不得回退**：skip link、`:focus-visible`、`prefers-reduced-motion` 全局关停、答案区 `aria-live="polite"`、图标按钮有可访问名（`ThemeSwitcher.tsx:21`）、数值列右对齐 + `tabular-nums`、`NULL` 显式渲染。
+
+| # | 缺口（2026-09-23 实机 a11y 树实测） | 修法 |
+|---|---|---|
+| 1 | 工作台的域选择器（finance/retail）是 `combobox` 且**无可访问名称** | `aria-label="语义域（model）"`（治理页的同名控件同样处理） |
+| 2 | `/sessions` 首屏两条 `role="alert"`（assertive）同时播报，其中"限制说明"是**静态文档**、不该打断 | 限制说明改用非 alert 容器（`Card` + 信息图标，`role` 不设 assertive）；只有**运行期故障**（health 失败）保留 Alert |
+| 3 | 顶栏导航无 `nav` landmark（`menu` 落在 `banner` 内） | 顶栏菜单外面包 `<nav aria-label="主导航">`（AntD `Menu` 的 `role` 不动） |
+
+**待 ADR（不拍板）**：把 a11y 从"人工走查"变成机器门槛需要断言库（新依赖）——按 §9.0 的边界，本节只登记需求与验收方式（在 `__tests__/` 增一条渲染冒烟：可访问名齐全 + 无 axe 违规），**选型与许可证判定留待 0018 注记或新 ADR**。
+
+### 9.8 加载与性能（V3）
+
+**基线（实测）**：`frontend/dist/assets/` 只有 1 个 JS chunk = **1,511,397 B**（`index-CPdm9ChM.js`，mtime 2026-09-22 16:56；是否与 HEAD `cc3b3ef` 同源未验证）+ 1 个 CSS（5,167 B）——**无任何代码分割**，Recharts 与全部治理子页都进首屏。
+
+**决策**：
+
+1. 路由级 `React.lazy`（`/sessions`、`/governance/:section`），`/ask` 保首屏；
+2. Recharts 只在 chart 分支异步（`ChartBlock` 的 bar/line 分支动态 import），`table` 降级分支不加载图表库；
+3. `manualChunks` 把 antd / recharts 分开（缓存粒度）；
+4. 0031 T06 若引入 React Flow（计划中，0018 推翻条件已含前端库许可门），**必须先做本节 1~2 条**，否则首包继续叠加。
+
+**验收（硬门）**：`make ui-check` 的 build 输出中，入口 chunk 的 gzip 体积 ≤ 本节基线，且 chunk 数 > 1（数字以当次 build 输出为准，**不预设具体值**——N1）。
+
+### 9.9 逐批复验表
+
+| 批次 | 入口命令 | 关键复验断言 | 允许的失败形态 |
+|---|---|---|---|
+| **V1** 主题健壮性 + 文案纪律 + a11y 三点 | `sh -c 'make ui-check'` + 两主题实机走查 | tsc 0 error；vitest **15 文件/118 用例**（2026-09-23 基线）只增不改；`grep -rn "rgba(0, 0, 0" frontend/src` = 0；两主题各走 `/ask` `/sessions` `/governance` 无首帧混合、无可见对比度问题；`/ask` 未认证态出现可点 CTA | 字体自托管若许可证判定未过 → 该子项挂起并写 KL，其余子项照常收口 |
+| **V2** 栅格 + 导航 + 凭证卡/溯源条 | `make ui-check` + 手工走查（同 §9.0 的视口/主题矩阵）+ 新增结构断言 | 三页共用同一内容宽常量（新断言）；治理 Sider 后 8 子页全可达、URL 不变、旧链接不 404（复用 `tests/test_spa_static.py` 的深层路径断言方式）；`useCollection` 调用数 `grep -cE "= useCollection<"` 仍 = **8**；凭证卡不改变 `ANSWER_SECTIONS` 次序（`order.test.ts` 零改动）；溯源条全字段来自 payload | §9.3.1 的"待复核"项若实机证明两组 Tabs 无几何漂移 → Sider 降级为可选，登记回执后可不做 |
+| **V3** 懒加载 + a11y 自动化 | `make ui-check`（对比当次 build 输出） | 入口 chunk gzip ≤ 基线且 chunk 数 > 1；a11y 冒烟断言落地（**前置**：依赖许可判定） | a11y 库许可判定未过 → 该项挂起，V1 的三点人工修复不受影响 |
+
+**共用验收纪律**：每批收口必须在 0018 落地注记追加"批次注记"（含命令、结果、失败/跳过数），**截图入库**（`docs/screenshots/`）后才算 DONE——沿 P1~P3 的既有格式。
+
+> **另注（测试环境噪音，非运行期问题）**：`npm run test` 在 jsdom 下会打印 React 的 `useLayoutEffect does nothing on the server` 警告（来源是 `App.tsx` 经 `MemoryRouter` 渲染的测试路径，2026-09-23 实测）。它不影响 V 批次断言；若要清理，属测试夹具改动，**不得**为消警告去改运行期组件结构。
+
+### 9.10 什么情况下应该推翻本节
+
+1. **若 0031 T06 先于 V2 落地**并带出控制面（runs/feedback/历史目录）的一级入口 → §9.3.1 的左栏需按 T06 的导航裁定重排（本节只保留"治理 8 子页在左栏"这一条，分组归属随 T06）；
+2. **若字体自托管判定含非 permissive 组件**（或 woff2 入库触发 0023 的扫描域争议）→ 走 CDN 分支 + KL，§9.6 第 5 条按分支 ② 收口；
+3. **若浅色主题被废止**（0018 推翻条件）→ §9.1.1 的浅色列、§9.6 的第 3/4 条作废，其余不受影响；
+4. **若"审计凭证"方向被用户否决** → 只废 §9.1 与 §9.4.1 的版式决策，§9.2/§9.3/§9.6/§9.8 是独立可保留项（它们解决的是不一致与不可达，与视觉方向无关）。

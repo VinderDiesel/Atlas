@@ -92,6 +92,7 @@ from agent.feedback import (
     submit_feedback,
 )
 from agent.generator import GenerationResult, Generator, validate_plan_json
+from agent.node_io import extract_node_io
 from agent.planner import ClarificationRequest, Planner
 from agent.runtime.context import RunContext
 from agent.runtime.execution import execute_plan
@@ -588,29 +589,39 @@ def build_graph(
         }
 
     # -- 条件路由 -----------------------------------------------------------
-    def route_after_plan(state: TurnState) -> str:
+    def route_after_plan(state: TurnState) -> dict[str, str]:
         # ambiguous / relative_time：planner 已直出完整反问，跳过 clarify 终端
         if isinstance(state.get("clarification"), ClarificationRequest):
-            return "end"
+            return {"to": "end", "reason": "planner 已输出反问，直接结束"}
         if state.get("unmatched"):
-            return "retrieve" if allow_candidate else "clarify"
-        return "execute"  # Planner 命中，确定性链
+            if allow_candidate:
+                return {"to": "retrieve", "reason": "存在未匹配术语，进入检索候选"}
+            return {"to": "clarify", "reason": "存在未匹配术语且不允许候选，进入澄清"}
+        return {"to": "execute", "reason": "planner 命中权威指标，走确定性执行链"}
 
-    def route_after_retrieve(state: TurnState) -> str:
-        return "generate" if state.get("candidates") else "handoff"
+    def route_after_retrieve(state: TurnState) -> dict[str, str]:
+        if state.get("candidates"):
+            return {"to": "generate", "reason": "检索到候选指标，进入生成 SQL"}
+        return {"to": "handoff", "reason": "未检索到候选指标，转人工交接"}
 
-    def route_after_generate(state: TurnState) -> str:
+    def route_after_generate(state: TurnState) -> dict[str, str]:
         # 本轮 generate 成功必写 plan（plan 节点已冲刷上轮残留）；无 plan = refusal
-        return "validate" if isinstance(state.get("plan"), Plan) else "clarify"
+        if isinstance(state.get("plan"), Plan):
+            return {"to": "validate", "reason": "生成成功，进入 SQL 校验"}
+        return {"to": "clarify", "reason": "生成失败或拒绝，进入澄清"}
 
-    def route_after_validate(state: TurnState) -> str:
+    def route_after_validate(state: TurnState) -> dict[str, str]:
         # 图无回环：validate 内已消费重试（≤2 次 generate），失败直接落 clarify
-        return "execute" if state.get("validated") else "clarify"
+        if state.get("validated"):
+            return {"to": "execute", "reason": "SQL 校验通过，进入执行"}
+        return {"to": "clarify", "reason": "SQL 校验未通过，进入澄清"}
 
-    def route_after_execute(state: TurnState) -> str:
-        if state.get("block_reason") or state.get("error"):
-            return "end"
-        return "explain"
+    def route_after_execute(state: TurnState) -> dict[str, str]:
+        if state.get("block_reason"):
+            return {"to": "end", "reason": f"执行被拦截：{state['block_reason']}"}
+        if state.get("error"):
+            return {"to": "end", "reason": f"执行出错：{state['error']}"}
+        return {"to": "explain", "reason": "执行成功，进入结果解释"}
 
     # -- 事件接缝（ADR-0031 D07②③，T05b）-----------------------------------
     # sink=None 或 invoke 未带运行上下文（旧调用/CLI/评测）→ 一切按旧路径直通：
@@ -679,6 +690,9 @@ def build_graph(
         config 注解必须是 `RunnableConfig`（不带 `| None`）：langgraph 按字面量白
         名单校验注解形式，`from __future__ import annotations` 下 `RunnableConfig
         | None` 是字符串且不在白名单 → 既不注入 config 又发 UserWarning。
+
+        node_io 快照（Phase 1 可视化）：NODE_STARTED 携带输入快照，NODE_FINISHED
+        携带输出快照；提取失败不阻塞节点执行（suppress 包裹）。
         """
 
         def traced(state: TurnState, config: RunnableConfig) -> dict[str, Any]:
@@ -686,7 +700,16 @@ def build_graph(
             if run is None:
                 return node(state, config) if with_config else node(state)
             node_run_id = uuid4().hex
-            _emit(run, "NODE_STARTED", node_id=node_id, node_run_id=node_run_id)
+            # node_io 输入快照（提取失败不阻塞）
+            start_payload: dict[str, JsonValue] | None = None
+            with suppress(Exception):
+                input_io = extract_node_io(node_id, dict(state), kind="input")
+                if input_io:
+                    start_payload = {"node_io": input_io}  # type: ignore[dict-item]
+            _emit(
+                run, "NODE_STARTED",
+                node_id=node_id, node_run_id=node_run_id, payload=start_payload,
+            )
             run_token = _ACTIVE_RUN.set(run)
             node_token = _ACTIVE_NODE.set((node_id, node_run_id))
             try:
@@ -700,22 +723,38 @@ def build_graph(
             finally:
                 _ACTIVE_NODE.reset(node_token)
                 _ACTIVE_RUN.reset(run_token)
-            _emit(run, "NODE_FINISHED", node_id=node_id, node_run_id=node_run_id)
+            # node_io 输出快照（合并 state + out，提取失败不阻塞）
+            finish_payload: dict[str, JsonValue] | None = None
+            with suppress(Exception):
+                merged = {**state, **out}
+                output_io = extract_node_io(node_id, merged, kind="output")
+                if output_io:
+                    finish_payload = {"node_io": output_io}  # type: ignore[dict-item]
+            _emit(
+                run, "NODE_FINISHED",
+                node_id=node_id, node_run_id=node_run_id, payload=finish_payload,
+            )
             return out
 
         return traced
 
-    def _route_traced(node_id: str, route: Callable[..., str]) -> Callable[..., str]:
+    def _route_traced(node_id: str, route: Callable[..., dict[str, str]]) -> Callable[..., str]:
         """边接缝：记录确定的分支裁决（EDGE_TAKEN）；写失败同样 fail closed。
 
         同 _node_traced：config 注解用 `RunnableConfig`（langgraph 白名单形式）。
+        路由函数返回 {to, reason}，此处提取 to 作为 LangGraph 边目标，reason 写入事件。
         """
 
         def traced(state: TurnState, config: RunnableConfig) -> str:
-            target = route(state)
+            decision = route(state)
+            target = decision["to"] if isinstance(decision, dict) else decision
+            reason = decision.get("reason") if isinstance(decision, dict) else None
             run = _event_run(config) if event_sink is not None else None
             if run is not None:
-                _emit(run, "EDGE_TAKEN", node_id=node_id, payload={"to": target})
+                payload: dict[str, Any] = {"to": target}
+                if reason:
+                    payload["reason"] = reason
+                _emit(run, "EDGE_TAKEN", node_id=node_id, payload=payload)
             return target
 
         return traced

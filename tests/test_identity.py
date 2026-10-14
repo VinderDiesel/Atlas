@@ -55,7 +55,11 @@ _SNAPSHOT_PATH_RE = re.compile(
 # 属评测/验收链路（N6 要求绑死快照，正是它们该写死 sha 的理由），不受 5(b) 约束。
 _ALLOWED_FIXED_SNAPSHOT = frozenset({"eval/api_acceptance.py", "eval/e2e_acceptance.py"})
 
-_SKIP_DIR_PARTS = (".venv", "__pycache__", "node_modules", ".git")
+# 排除：虚拟环境 / 缓存 / 容器内依赖目录 / git 工作树扩展目录。.worktrees/ 是
+# gitignored 的开发工具面——主仓库为测试运行根时，嵌套工作树会以源码副本形态
+# 命中结构断言（合并日首次在主仓库跑全量：5(a)/5(b) 各 1 例误报）；CI 无该
+# 目录，判据面不受影响，故排除而非收窄断言。
+_SKIP_DIR_PARTS = (".venv", "__pycache__", "node_modules", ".git", ".worktrees")
 
 
 def _rel(p: Path) -> str:

@@ -1,0 +1,25 @@
+{
+  "eval": "concept-alignment",
+  "stage": "stats-only",
+  "created_at": "2026-10-14T15:25:27+08:00",
+  "sha": "b96ee5f",
+  "stats": {
+    "samples_total": 106,
+    "samples_annotated": 86,
+    "terms_total": 162,
+    "terms_by_role": {
+      "dimension": 33,
+      "entity": 20,
+      "event": 30,
+      "measure": 62,
+      "time": 17
+    },
+    "concepts_distinct": 11,
+    "registry_coverage": {
+      "in_registry": 11,
+      "not_in_registry": 0,
+      "missing": []
+    }
+  },
+  "notes": "matcher 未实现（M1-T5）；本产物仅标注统计，不含一致率（N1/N2）。"
+}

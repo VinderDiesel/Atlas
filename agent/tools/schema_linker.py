@@ -28,6 +28,10 @@
 - **默认全链确定性**：同一问句 → 同一输出（Bm25Index 参数固定 k1/b、词典序重排）。
   注入 `chooser`（ADR-0030 ⑤）后阶段 3 引入判别式建议：**仅在置信度达阈值时**
   提前选中项，且判别失败/低置信一律退回确定性序——默认不注入时行为逐字不变。
+- 注入 `concept_index`（ADR-0032 ③ 检索缝）后**仅阶段 2 打分查询词**扩展为
+  原问句 + 概念闭包术语（自身 + 后代 + 祖先 1 层，S1+S2+S3 全源、match_type
+  不过滤）；阶段 1 图粗筛、阶段 3 重排与 `SchemaLinkResult.question` 仍是原问句
+  ——只扩展检索查询词、不注入对象。无索引（None）时行为逐字不变。
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent.compiler import SemanticModel
+from agent.concept_index import ConceptIndex, concept_terms, detect_locale, match_terms
 from retrieval.bm25 import Bm25Index
 from retrieval.graph_store import SemanticGraph
 from retrieval.metric_docs import MetricDoc, build_metric_docs
@@ -62,6 +67,7 @@ class SchemaLinker:
         model: SemanticModel,
         popularity: dict[str, int] | None = None,
         chooser: MetricChooser | None = None,
+        concept_index: ConceptIndex | None = None,
     ) -> None:
         """构造链接器。
 
@@ -72,8 +78,12 @@ class SchemaLinker:
         chooser    : 可选判别引擎（ADR-0030 ⑤，如 `JevEngine`）。传 `None`
                      （默认）时阶段 3 与 ADR-0030 之前**逐字一致**；注入后仅在
                      高置信判别时提前选中项，异常/低置信退回确定性词典序。
+        concept_index : 可选概念索引（ADR-0032 ③ 检索缝）。传 `None`（默认）时
+                     全链与引入概念层前**逐字一致**（无索引 = 旁路，契约）；
+                     注入后仅阶段 2 打分查询词追加概念闭包术语。
         """
         self._model = model
+        self._concept_index = concept_index
         self._graph = SemanticGraph(model)
         self._docs = {d.doc_id: d.text for d in build_metric_docs(model)}
         self._reranker = MetaReranker(model, popularity, chooser=chooser)
@@ -96,15 +106,18 @@ class SchemaLinker:
         dims = tuple(self._graph.detect_dimensions(question))
         kept = self._graph.filter_candidates(list(self._all_metrics), list(dims))
 
-        # 阶段 2：在受限候选域内打分（子索引保证 idf 属于该域；空查询词返回空）
+        # 阶段 2：在受限候选域内打分（子索引保证 idf 属于该域；空查询词返回空）。
+        # 概念层注入时查询词扩展为 原问句 + 闭包术语（ADR-0032 ③ 检索缝）
         if not kept:
             return SchemaLinkResult(question, (), dims, (), (), (), ())
+        query = self._augment(question)
         if engine == "fuse":
-            ranked, scores = self._search_fuse(question, kept)
+            ranked, scores = self._search_fuse(query, kept)
         else:
-            ranked, scores = self._search_bm25(question, kept)
+            ranked, scores = self._search_bm25(query, kept)
 
-        # 阶段 3：元数据重排（词法序分层，见 rerank.py 口径）
+        # 阶段 3：元数据重排（词法序分层，见 rerank.py 口径）。问句仍传原句：
+        # 同义词置信度信号语义是「问句直接用了指标名」，机器追加术语不计入
         final = tuple(self._reranker.rerank(ranked, question)[:k])
         topk = final[:k]
         tables_top1 = self._expand_tables(topk[:1])
@@ -120,6 +133,30 @@ class SchemaLinker:
         )
 
     # -- 内部实现 ----------------------------------------------------------
+
+    def _augment(self, question: str) -> str:
+        """概念术语扩展（ADR-0032 ③ 检索缝）：命中术语 → 概念闭包 → 追加未见术语。
+
+        只扩展**检索查询词**（阶段 2 打分），不注入对象；输出 = 原问句 +
+        空格连接的新术语（闭包按索引文件序，确定序）；无索引/无命中/无新
+        术语时原样返回（旁路不变量）。
+        """
+        index = self._concept_index
+        if index is None:
+            return question
+        locale = detect_locale(question)
+        hits = match_terms(index, question, locale)
+        if not hits:
+            return question
+        concepts = tuple(dict.fromkeys(hit.concept for hit in hits))
+        extras = [
+            term
+            for term in concept_terms(index, concepts, locale, ancestors=1)
+            if term not in question
+        ]
+        if not extras:
+            return question
+        return question + " " + " ".join(extras)
 
     def _search_bm25(
         self, question: str, kept: list[str]

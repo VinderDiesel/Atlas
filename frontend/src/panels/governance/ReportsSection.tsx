@@ -17,6 +17,7 @@ import { Button, Collapse, Space, Table, Tag, Typography } from "antd";
 import { useState } from "react";
 
 import type { ReportsItem } from "../../api/types";
+import StarBadge from "../../components/StarBadge";
 import { dryNote, partitionReports } from "../../lib/honesty";
 import { shortSha } from "../../lib/sha";
 
@@ -82,10 +83,16 @@ function MainReportsTable({
           dataIndex: "dry",
           render: (value: boolean | null | undefined, row: ReportsItem) => {
             const note = dryNote({ structured: row.structured, pattern: row.pattern, dry: value });
-            return note === null ? (
-              dashOr(value)
-            ) : (
-              <Tag color="orange">{note}</Tag>
+            if (note === null) {
+              return dashOr(value);
+            }
+            return (
+              <Space direction="vertical" size={0}>
+                <StarBadge status="dry" />
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {note}
+                </Text>
+              </Space>
             );
           },
         },

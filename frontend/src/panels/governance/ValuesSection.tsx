@@ -158,7 +158,10 @@ export default function ValuesSection({ state, token }: Props) {
                     label: (
                       <Space size={8}>
                         <span>已覆盖</span>
-                        <Tag color="green">{covered.length}</Tag>
+                        <span className="star-badge star-badge--active">
+                          <span className="star-badge__dot" aria-hidden="true" />
+                          <span className="star-badge__label atlas-mono">{covered.length}</span>
+                        </span>
                       </Space>
                     ),
                     children: (
@@ -170,7 +173,10 @@ export default function ValuesSection({ state, token }: Props) {
                     label: (
                       <Space size={8}>
                         <span>已跳过</span>
-                        <Tag color="orange">{skipped.length}</Tag>
+                        <span className="star-badge star-badge--draft">
+                          <span className="star-badge__dot" aria-hidden="true" />
+                          <span className="star-badge__label atlas-mono">{skipped.length}</span>
+                        </span>
                       </Space>
                     ),
                     children: (

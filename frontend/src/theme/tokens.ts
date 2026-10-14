@@ -11,24 +11,27 @@ import type { ThemeConfig } from "antd";
 
 // ── 品牌色 ──────────────────────────────────────────────
 
-/** 深色主题品牌色（与推广视觉体系统一）。 */
+/** 深色主题品牌色（深空 4 层 + 语义色）。 */
 export const BRAND = {
   bg: "#0c1220",
   surface: "#131d2e",
+  elevated: "#1a2538", // 新增：抬起层（悬浮/抽屉）
   border: "#1e2d42",
-  primary: "#6ee7f5",
-  accent: "#f5b56e",
+  primary: "#6ee7f5", // 青色 - 数据/已验证
+  accent: "#f5b56e", // 琥珀色 - 注意/人工
   text: "#e2e8f0",
   muted: "#8b98a9",
   success: "#34d399",
   danger: "#f87171",
+  handoff: "#a78bfa", // 新增：紫罗兰 - 转人工
   codeBg: "#0a0f1a",
 } as const;
 
-/** 浅色主题品牌色（对比度调整以满足 WCAG AA）。 */
+/** 浅色主题品牌色（对比度满足 WCAG AA）。 */
 export const BRAND_LIGHT = {
   bg: "#f8fafc",
   surface: "#ffffff",
+  elevated: "#f1f5f9",
   border: "#e2e8f0",
   primary: "#0891b2",
   accent: "#d97706",
@@ -36,6 +39,7 @@ export const BRAND_LIGHT = {
   muted: "#64748b",
   success: "#059669",
   danger: "#dc2626",
+  handoff: "#7c3aed",
   codeBg: "#f1f5f9",
 } as const;
 

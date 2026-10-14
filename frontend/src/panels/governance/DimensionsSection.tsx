@@ -8,6 +8,7 @@
 import { Table, Tag, Typography } from "antd";
 
 import type { DimensionsItem } from "../../api/types";
+import StarBadge from "../../components/StarBadge";
 
 import { dashOr, SectionData, type CollectionState } from "./GovernanceSection";
 
@@ -15,16 +16,6 @@ const { Text } = Typography;
 
 interface Props {
   state: CollectionState<DimensionsItem>;
-}
-
-function statusColor(value: string): string {
-  if (value === "registered") {
-    return "green";
-  }
-  if (value === "skipped") {
-    return "orange";
-  }
-  return "default";
 }
 
 export default function DimensionsSection({ state }: Props) {
@@ -65,7 +56,7 @@ export default function DimensionsSection({ state }: Props) {
             {
               title: "值域注册状态（value_domain）",
               dataIndex: "value_domain",
-              render: (value: string) => <Tag color={statusColor(dashOr(value))}>{value}</Tag>,
+              render: (value: string) => <StarBadge status={dashOr(value)} />,
             },
           ]}
         />

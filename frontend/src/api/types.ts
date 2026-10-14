@@ -654,6 +654,13 @@ export interface RunSummary {
   updated_at: string;
 }
 
+/** POST /runs 的 202 收据（D13）：只回身份与发布绑定，不回正文。 */
+export interface RunReceipt {
+  run_id: string;
+  status: RunStatus;
+  release_id: string | null;
+}
+
 /** 内容不可用时的安全摘要（D07）：保留结果种类枚举，不伪造答案。 */
 export interface RunTraceSummary {
   result_kind: ResultKind | null;

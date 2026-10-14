@@ -295,6 +295,28 @@ class ControlStore:
             ).fetchone()
         return None if row is None else self._deployment_from_row(row)
 
+    def delete_deployment(self, deployment_id: str) -> bool:
+        """删除部署（仅允许 draft 状态，即 active_release_id 为 NULL）；返回是否删除成功。
+
+        Raises
+        ------
+        ReleaseConflict
+            部署有活动发布，不允许删除（需先回退）。
+        """
+        with self._connection(write=True) as conn:
+            # 先检查是否有活动发布
+            row = conn.execute(
+                "SELECT active_release_id FROM deployments WHERE deployment_id = ?",
+                (deployment_id,),
+            ).fetchone()
+            if row is None:
+                return False  # 部署不存在
+            if row[0] is not None:
+                raise ReleaseConflict("部署有活动发布，请先回退再删除")
+            # 删除部署
+            conn.execute("DELETE FROM deployments WHERE deployment_id = ?", (deployment_id,))
+            return True
+
     def list_deployments(self) -> list[DeploymentRecord]:
         """全部部署（按 deployment_id 排序稳定）；无部署返回空表。"""
         with self._connection() as conn:
@@ -911,6 +933,35 @@ class ControlStore:
         """返回运行事实；不存在抛 KeyError（调用方先做对象授权，404 口径）。"""
         with self._connection() as conn:
             return self._run(conn, run_id)
+
+    def delete_run(self, run_id: str) -> bool:
+        """删除运行记录及其关联数据；返回是否删除成功（不存在返回 False）。
+
+        删除顺序（外键依赖）：feedback → artifacts → run_events → runs。
+        run_events 有 BEFORE DELETE 触发器保护，需先禁用；replay_of 自引用
+        需先置 NULL。
+        """
+        with self._connection(write=True) as conn:
+            # 检查是否存在
+            existing = conn.execute("SELECT run_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+            if existing is None:
+                return False
+            # 清理 replay_of 自引用（其他运行可能引用本运行）
+            conn.execute("UPDATE runs SET replay_of = NULL WHERE replay_of = ?", (run_id,))
+            # 删除关联数据（按外键依赖顺序）
+            conn.execute("DELETE FROM feedback WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM artifacts WHERE run_id = ?", (run_id,))
+            # run_events 有 BEFORE DELETE 触发器，需先禁用
+            conn.execute("DROP TRIGGER IF EXISTS immutable_run_event_delete")
+            conn.execute("DELETE FROM run_events WHERE run_id = ?", (run_id,))
+            # 恢复触发器
+            conn.execute(
+                "CREATE TRIGGER immutable_run_event_delete BEFORE DELETE ON run_events "
+                "BEGIN SELECT RAISE(ABORT, 'immutable run event'); END"
+            )
+            # 删除运行记录
+            conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+            return True
 
     def list_runs(self, *, owner: Owner, limit: int = 50) -> list[RunRecord]:
         """本人运行（新→旧）；关键词/游标分页经 list_runs_filtered（T06）。"""

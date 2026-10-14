@@ -226,13 +226,13 @@ while governance stays 200 when the snapshot is missing). `engine=stub` default.
   before Guard / governance 8-collection sweep A8 / `/plan/execute` real chain A9).
 
 ```bash
-make serve    # uvicorn 127.0.0.1:8000 (single process)
+make serve    # uvicorn 127.0.0.1:8020 (single process)
 curl -H "Authorization: Bearer $(make token)" \
-  http://127.0.0.1:8000/api/v1/plan -d '{"question":"What were total sales in 1999?","model":"retail"}'
+  http://127.0.0.1:8020/api/v1/plan -d '{"question":"What were total sales in 1999?","model":"retail"}'
 
 # Multi-step analysis (ADR-0026): absolute dual periods + explicit dimension
 curl -H "Authorization: Bearer $(make token)" \
-  http://127.0.0.1:8000/api/v1/analyze \
+  http://127.0.0.1:8020/api/v1/analyze \
   -d '{"question":"分析 2013Q4 相对 2013Q3 的佣金收入按分支的变化贡献"}'
 ```
 

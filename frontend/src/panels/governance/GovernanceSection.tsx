@@ -40,6 +40,23 @@ interface ShellProps {
   children: ReactNode;
 }
 
+/**
+ * 来源路径列表（sources 展开区唯一渲染出口）：星图视觉——每条来源一个
+ * 星体节点 + 连接线，路径**原文**展示（Git 事实源，不缩写、不翻译）。
+ */
+export function SourceList({ sources }: { sources: string[] }) {
+  return (
+    <ul className="atlas-source-list">
+      {sources.map((path) => (
+        <li key={path} className="atlas-source-list__item">
+          <span className="atlas-source-list__node" aria-hidden="true" />
+          <Text code>{path}</Text>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** 章节外壳：标题 + 条数 + 「数据来自 N 个 Git 文件」（可展开 → 路径列表）。 */
 export function SectionShell({ title, count, sources, children }: ShellProps) {
   const [showSources, setShowSources] = useState(false);
@@ -47,9 +64,19 @@ export function SectionShell({ title, count, sources, children }: ShellProps) {
     <section className="atlas-section" aria-label={title}>
       <div className="atlas-section__head">
         <h2 className="atlas-section__title">{title}</h2>
-        {count !== null && <span className="atlas-section__meta">{`共 ${count} 条`}</span>}
+        {count !== null && (
+          <span className="atlas-section__meta">
+            {`共 `}
+            <span className="atlas-mono">{count}</span>
+            {` 条`}
+          </span>
+        )}
         {sources !== null && (
-          <span className="atlas-section__meta">{`数据来自 ${sources.length} 个 Git 文件`}</span>
+          <span className="atlas-section__meta">
+            {`数据来自 `}
+            <span className="atlas-mono">{sources.length}</span>
+            {` 个 Git 文件`}
+          </span>
         )}
         {sources !== null && (
           <Button type="link" size="small" onClick={() => setShowSources((open) => !open)}>
@@ -58,15 +85,7 @@ export function SectionShell({ title, count, sources, children }: ShellProps) {
         )}
       </div>
       <div className="atlas-section__body">
-        {showSources && sources !== null && (
-          <ul className="atlas-source-list">
-            {sources.map((path) => (
-              <li key={path}>
-                <Text code>{path}</Text>
-              </li>
-            ))}
-          </ul>
-        )}
+        {showSources && sources !== null && <SourceList sources={sources} />}
         {children}
       </div>
     </section>

@@ -1,0 +1,164 @@
+{
+  "eval": "paraphrase-robustness",
+  "created_at": "2026-10-14T15:11:12+08:00",
+  "domain": "finance",
+  "summary": {
+    "total": 13,
+    "plan_acc": "9/13",
+    "drop_rate": "30.77%",
+    "by_base": {
+      "gold-101": {
+        "plan_acc": "5/6",
+        "drop_rate": "16.67%"
+      },
+      "gold-146": {
+        "plan_acc": "2/3",
+        "drop_rate": "33.33%"
+      },
+      "gold-comm": {
+        "plan_acc": "2/4",
+        "drop_rate": "50.00%"
+      }
+    }
+  },
+  "samples": [
+    {
+      "id": "pp-101-1",
+      "base": "gold-101",
+      "question": "2013 年第二季度成交额是多少？",
+      "intended_metric": "total_trade_value",
+      "plan_ok": true,
+      "parsed_metric": "total_trade_value",
+      "parsed_dimensions": [],
+      "parsed_time": "2013Q2"
+    },
+    {
+      "id": "pp-101-2",
+      "base": "gold-101",
+      "question": "2013 年第二季度的成交金额多少？",
+      "intended_metric": "total_trade_value",
+      "plan_ok": true,
+      "parsed_metric": "total_trade_value",
+      "parsed_dimensions": [],
+      "parsed_time": "2013Q2"
+    },
+    {
+      "id": "pp-101-3",
+      "base": "gold-101",
+      "question": "2013 Q2 总交易额是多少？",
+      "intended_metric": "total_trade_value",
+      "plan_ok": true,
+      "parsed_metric": "total_trade_value",
+      "parsed_dimensions": [],
+      "parsed_time": "2013Q2"
+    },
+    {
+      "id": "pp-101-4",
+      "base": "gold-101",
+      "question": "请统计 2013 年第二季度的交易额",
+      "intended_metric": "total_trade_value",
+      "plan_ok": true,
+      "parsed_metric": "total_trade_value",
+      "parsed_dimensions": [],
+      "parsed_time": "2013Q2"
+    },
+    {
+      "id": "pp-101-5",
+      "base": "gold-101",
+      "question": "2013 年第二季度股票买卖总金额",
+      "intended_metric": "total_trade_value",
+      "plan_ok": false,
+      "clarify": true,
+      "reasons": [
+        "无法确定指标口径（问句未命中任何指标同义词）"
+      ]
+    },
+    {
+      "id": "pp-101-6",
+      "base": "gold-101",
+      "question": "把 2013 年第二季度的成交额算一下",
+      "intended_metric": "total_trade_value",
+      "plan_ok": true,
+      "parsed_metric": "total_trade_value",
+      "parsed_dimensions": [],
+      "parsed_time": "2013Q2"
+    },
+    {
+      "id": "pp-comm-1",
+      "base": "gold-comm",
+      "question": "2013 年第二季度佣金收入是多少？",
+      "intended_metric": "commission_revenue",
+      "plan_ok": true,
+      "parsed_metric": "commission_revenue",
+      "parsed_dimensions": [],
+      "parsed_time": "2013Q2"
+    },
+    {
+      "id": "pp-comm-2",
+      "base": "gold-comm",
+      "question": "2013 年第二季度的手续费多少？",
+      "intended_metric": "commission_revenue",
+      "plan_ok": true,
+      "parsed_metric": "commission_revenue",
+      "parsed_dimensions": [],
+      "parsed_time": "2013Q2"
+    },
+    {
+      "id": "pp-comm-3",
+      "base": "gold-comm",
+      "question": "2013 年 Q2 经纪服务费",
+      "intended_metric": "commission_revenue",
+      "plan_ok": false,
+      "clarify": true,
+      "reasons": [
+        "无法确定指标口径（问句未命中任何指标同义词）"
+      ]
+    },
+    {
+      "id": "pp-comm-4",
+      "base": "gold-comm",
+      "question": "2013 年第二季度券商抽成",
+      "intended_metric": "commission_revenue",
+      "plan_ok": false,
+      "clarify": true,
+      "reasons": [
+        "无法确定指标口径（问句未命中任何指标同义词）"
+      ]
+    },
+    {
+      "id": "pp-dim-1",
+      "base": "gold-146",
+      "question": "按分支统计 2013 年总交易额",
+      "intended_metric": "total_trade_value",
+      "plan_ok": true,
+      "parsed_metric": "total_trade_value",
+      "parsed_dimensions": [
+        "Branch"
+      ],
+      "parsed_time": "2013"
+    },
+    {
+      "id": "pp-dim-2",
+      "base": "gold-146",
+      "question": "按营业部分组 2013 年成交额",
+      "intended_metric": "total_trade_value",
+      "plan_ok": true,
+      "parsed_metric": "total_trade_value",
+      "parsed_dimensions": [
+        "Branch"
+      ],
+      "parsed_time": "2013"
+    },
+    {
+      "id": "pp-dim-3",
+      "base": "gold-146",
+      "question": "2013 年各网点交易额",
+      "intended_metric": "total_trade_value",
+      "plan_ok": false,
+      "parsed_metric": "total_trade_value",
+      "parsed_dimensions": [],
+      "parsed_time": "2013"
+    }
+  ],
+  "notes": "口径：仅 Planner 层确定性解析；Plan Acc = metric/dimensions/time 与预期一致；drop_rate = 同意图改写中未通过 Plan Acc 的比例（含 OOV 口吻的真实泛化缺口）；不执行 SQL、不依赖 Doris；数字由本脚本产出。"
+}

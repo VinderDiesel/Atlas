@@ -5,7 +5,10 @@
 2. 报告齐全时，每行表格值的 source 列引用的文件必须真实存在；
 3. 缺失报告显示占位文案，不推断数值（AGENTS.md 9.3）；
 4. 报告绑定当前 git sha，只聚合当前 sha 的报告；
-5. blocked 行如实保留（不删除不美化，AGENTS.md）。
+5. blocked 行如实保留（不删除不美化，AGENTS.md）；
+6. §8 概念层一致率数字 = concept-<sha>.json 产物原文；头部数据快照引用 =
+   真实存在的最新 meta（不再硬编码 HEAD sha 假引用；ADR-0032 M1-T5）；
+7. §9 来源清单只列真实存在的文件（主报告缺失时不产生幻影条目；与规则 6 同批修复）。
 
 渲染在注入的 fixture 报告域内执行（setUpClass patch REPORTS_DIR/FAILURES_DIR）：
 不依赖仓库内「当前 sha 报告已出」的磁盘状态——CI 干净 checkout 无报告时
@@ -53,12 +56,22 @@ class _ReportFixture(unittest.TestCase):
         reports = root / "reports"
         reports.mkdir()
         (root / "failures").mkdir()  # §7：空 failures 域 → 渲染「无样本」声明行
+        snapshots = root / "snapshots"
+        snapshots.mkdir()
+        # 头部快照 fixture：aaa1111 新于 bbb2222 → 头部必须引用 aaa1111
+        (snapshots / "bbb2222.meta.json").write_text(
+            json.dumps({"created_at": "2026-01-01T00:00:00+08:00"}), encoding="utf-8"
+        )
+        (snapshots / "aaa1111.meta.json").write_text(
+            json.dumps({"created_at": "2026-10-01T00:00:00+08:00"}), encoding="utf-8"
+        )
         cls.reports = reports
         cls.sha = git_short_sha()
         cls._write_fixtures(reports)
         cls._patchers = [
             mock.patch.object(report_mod, "REPORTS_DIR", reports),
             mock.patch.object(report_mod, "FAILURES_DIR", root / "failures"),
+            mock.patch.object(report_mod, "SNAPSHOT_DIR", snapshots),
         ]
         for p in cls._patchers:
             p.start()
@@ -173,6 +186,19 @@ class _ReportFixture(unittest.TestCase):
             },
             f"polaris-rbac-{sha}.json": {"analyst_principal": "atlas_analyst"},
             f"metrics-verify-{sha}.json": {"status": "pass"},
+            f"concept-{sha}.json": {
+                "stage": "matcher",
+                "layer_enabled": True,
+                "created_at": "2026-09-03T10:00:00+08:00",
+                "consistency": {"hit": 5, "mismatch": 1, "miss": 0, "rate": "5/6"},
+                "stats": {
+                    "samples_annotated": 5,
+                    "terms_total": 6,
+                    "concepts_distinct": 4,
+                    "registry_coverage": {"not_in_registry": 0},
+                },
+                "notes": "三分口径：hit/mismatch/miss；rate = hit/标注总数（fixture 转述）。",
+            },
         }
         for name, data in payloads.items():
             (reports / name).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -204,6 +230,7 @@ class TestReportContract(_ReportFixture):
             report_mod._section_main("0" * 7),
             report_mod._section_compare("0" * 7),
             report_mod._section_baseline("0" * 7),
+            report_mod._section_concept("0" * 7),
         ):
             joined = "\n".join(section)
             self.assertIn("缺失", joined)
@@ -228,6 +255,73 @@ class TestReportContract(_ReportFixture):
         """对比表 blocked 行如实保留（不删除不美化，AGENTS.md）。"""
         out = _render()
         self.assertIn("blocked", out)
+
+
+class TestConceptSection(_ReportFixture):
+    """§8 概念层一致率（ADR-0032 M1-T5）：渲染值 = 产物原文机械转述。"""
+
+    def test_section_renders_artifact_values(self) -> None:
+        out = _render()
+        self.assertIn("## 8. 概念层一致率", out)
+        self.assertIn(f"`concept-{self.sha}.json`", out)
+        self.assertIn("| stage | matcher |", out)
+        self.assertIn("| layer_enabled | True |", out)
+        self.assertIn("| hit | 5 |", out)
+        self.assertIn("| rate | 5/6 |", out)
+
+    def test_meta_renumbered_to_9(self) -> None:
+        """来源清单重编号为 §9（概念节顶替 §8；2026-10-14 两处机械改）。"""
+        out = _render()
+        self.assertIn("## 9. 报告来源清单", out)
+        self.assertNotIn("## 8. 报告来源清单", out)
+
+    def test_layer_off_warning_rendered(self) -> None:
+        """layer_enabled=false → 渲染无层 0 命中基线声明（防误读为全错）。"""
+        payload = {
+            "stage": "matcher",
+            "layer_enabled": False,
+            "created_at": "2026-10-14T00:00:00+08:00",
+            "consistency": {"hit": 0, "mismatch": 0, "miss": 6, "rate": "0/6"},
+            "stats": {"registry_coverage": {"not_in_registry": 0}},
+            "notes": "无层全 miss（fixture）。",
+        }
+        with mock.patch.object(report_mod, "_load", return_value=payload):
+            joined = "\n".join(report_mod._section_concept("0" * 7))
+        self.assertIn("layer_enabled=false（无层）", joined)
+        self.assertIn("0 命中基线", joined)
+
+
+class TestSnapshotRef(_ReportFixture):
+    """头部数据快照引用：按 created_at 取最新真实 meta（诚实红线）。"""
+
+    def test_header_shows_latest_real_meta(self) -> None:
+        out = _render()
+        self.assertIn("aaa1111.meta.json", out)
+        self.assertNotIn("bbb2222", out)
+        self.assertNotIn(f"snapshots/{self.sha}.meta.json", out)
+
+    def test_missing_snapshots_placeholder(self) -> None:
+        with mock.patch.object(report_mod, "SNAPSHOT_DIR", REPORTS_DIR / "no-snapshots"):
+            ref = report_mod._snapshot_ref()
+        self.assertIn("缺失", ref)
+
+
+class TestMetaListing(_ReportFixture):
+    """§9 来源清单只列真实存在的文件（幻影条目 = 诚实性缺陷，2026-10-14 修）。"""
+
+    def test_main_report_omitted_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / f"concept-{'0' * 7}.json").write_text("{}", encoding="utf-8")
+            with mock.patch.object(report_mod, "REPORTS_DIR", root):
+                joined = "\n".join(report_mod._section_meta("0" * 7))
+        lines = joined.splitlines()
+        self.assertIn("concept-0000000.json", lines)
+        self.assertNotIn("0000000.json", lines)
+
+    def test_main_report_listed_when_present(self) -> None:
+        lines = "\n".join(report_mod._section_meta(self.sha)).splitlines()
+        self.assertIn(f"{self.sha}.json", lines)
 
 
 if __name__ == "__main__":

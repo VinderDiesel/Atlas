@@ -15,6 +15,7 @@ import { Collapse, Space, Table, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
 
 import type { PolicyItem, RoleItem } from "../../api/types";
+import StarBadge from "../../components/StarBadge";
 import { ROLE_UNREGISTERED_NOTICE } from "../../state/role";
 
 import { dashOr, SectionData, type CollectionState } from "./GovernanceSection";
@@ -48,10 +49,10 @@ function RoleTable({ roles }: { roles: RoleItem[] }) {
           dataIndex: "registered",
           render: (registered: boolean) =>
             registered ? (
-              <Tag color="green">已注册</Tag>
+              <StarBadge status="registered" />
             ) : (
               <Space direction="vertical" size={0}>
-                <Tag color="red">未注册</Tag>
+                <StarBadge status="unregistered" />
                 <Text type="danger">{ROLE_UNREGISTERED_NOTICE}</Text>
               </Space>
             ),

@@ -7,8 +7,8 @@ import type { ReactNode } from "react";
 interface Props {
   /** 区块标题（一句话说明这块是什么，如「源目录」）。 */
   title: string;
-  /** 标题行补充说明（可选，12px 次级色，如「每源最新修订」）。 */
-  meta?: string;
+  /** 标题行补充说明（可选，12px 次级色，如「每源最新修订」；也接受 ReactNode 放操作按钮）。 */
+  meta?: ReactNode;
   children: ReactNode;
 }
 

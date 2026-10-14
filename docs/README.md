@@ -12,6 +12,8 @@
 | `README.md`（仓库根） | 项目唯一事实源：架构 / 快速开始 / 验证勾选 / 评测 / 限制 | 所有读者 |
 | `release-notes-v0.1.md` | v0.1 发布说明（范围 / 复现 / 目录导览） | 发布读者 |
 | `GLOSSARY.md` | 术语表（Metric / Measure / Plan / Guard 等，禁止混用） | 协作者 |
+| [ADR-0031](../infra/adr/0031-trusted-query-workbench.md) | 可信问数产品闭环与受约束图编排决策；方向已确认，新增细则 proposed；已交付 T01–T06（M0）与 T07（M1 首任务），T08 起未启动 | 架构/产品/实施读者 |
+| [dev-plan-0031](design/dev-plan-0031-trusted-query-workbench.md) | 两轮需求覆盖、任务依赖、接口/文件范围、测试门禁与实施证据账本 | 实施读者 |
 | `baseline-compiler.md` | 确定性编译器基线分析（零 LLM 覆盖 48/48 对照） | 评测读者 |
 | `p1-acceptance.md` | P1 确定性主链验收（5 道 gates 明细） | 验证读者 |
 | `e2e-acceptance.md` | Data Agent 端到端验收（5+1 场景，含 handoff） | 验证读者 |

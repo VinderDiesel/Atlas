@@ -318,7 +318,7 @@ def test_origin_verification() -> None:
     """Cookie 写请求同源校验：缺失 Origin 或跨域 Origin 一律拒绝（fail-closed）。"""
     from serving.control.oidc import OidcSessionError, verify_origin
 
-    expected = "http://localhost:8000"
+    expected = "http://localhost:8020"
     verify_origin(expected, expected_origin=expected)
     for bad in (None, "", "https://evil.example.com", "http://localhost:8001"):
         with pytest.raises(OidcSessionError):

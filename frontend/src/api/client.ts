@@ -107,3 +107,8 @@ export function putJson<T>(
 export function getJson<T>(path: string, token: string | null = null): Promise<T> {
   return request<T>(path, { method: "GET" }, token);
 }
+
+/** DELETE JSON；返回响应体（典型为 { deleted: true, ... }）。 */
+export function deleteJson<T>(path: string, token: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" }, token);
+}

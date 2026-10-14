@@ -17,13 +17,19 @@
  */
 import type { ResultKind, RunEvent, RunNodeStatus, RunStatus } from "../api/types";
 
-/** 单节点视图（镜像 events.py:NodeView；seq 是列级证据，不换算时间）。 */
+/** 单节点视图（镜像 events.py:NodeView；seq 是列级证据，不换算时间）。
+ *
+ * input_io / output_io（Phase 1 可视化）：从 NODE_STARTED / NODE_FINISHED 事件
+ * payload.node_io 提取的节点输入/输出快照；旧事件（无 node_io）为 null。
+ */
 export interface RunNodeView {
   node_id: string;
   status: RunNodeStatus;
   node_run_id: string | null;
   started_seq: number | null;
   ended_seq: number | null;
+  input_io: Record<string, unknown> | null;
+  output_io: Record<string, unknown> | null;
 }
 
 /** 运行渲染态（图 + 时间线 + run 级状态同一事实源）。 */
@@ -38,6 +44,8 @@ export interface RunViewState {
   nodes: Record<string, RunNodeView>;
   /** 已走的边（EDGE_TAKEN，按到达序；`[from, to]`）。 */
   edges: Array<[string, string]>;
+  /** 路由决策（EDGE_TAKEN 的 reason；node_id → reason）。 */
+  routingDecisions: Record<string, string>;
   /** 按 seq 累积的已归约事件序列（时间线数据面；契约外事件不进入）。 */
   timeline: RunEvent[];
   /** STATE_SNAPSHOT 的安全摘要（result_kind）；未收为 null。 */
@@ -74,6 +82,15 @@ function asResultKind(value: unknown): ResultKind | null {
     : null;
 }
 
+/** 从事件 payload 提取 node_io 快照（Phase 1 可视化）；无 node_io 时返回 null。 */
+function extractNodeIo(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const nodeIo = payload["node_io"];
+  if (nodeIo && typeof nodeIo === "object" && !Array.isArray(nodeIo)) {
+    return nodeIo as Record<string, unknown>;
+  }
+  return null;
+}
+
 /**
  * 初态：定义模板节点全为 `not_reached`（不编造开始/结束时间）。
  *
@@ -88,6 +105,8 @@ export function emptyRunState(definedNodeIds: string[] = []): RunViewState {
       node_run_id: null,
       started_seq: null,
       ended_seq: null,
+      input_io: null,
+      output_io: null,
     };
   }
   return {
@@ -96,6 +115,7 @@ export function emptyRunState(definedNodeIds: string[] = []): RunViewState {
     lastSeq: 0,
     nodes,
     edges: [],
+    routingDecisions: {},
     timeline: [],
     resultKind: null,
     finished: false,
@@ -122,12 +142,15 @@ export function reduceRunEvent(state: RunViewState, event: RunEvent): RunViewSta
       if (node_id === null) {
         return { ...state, ...base };
       }
+      const inputIo = extractNodeIo(event.payload);
       const view: RunNodeView = {
         node_id,
         status: "running",
         node_run_id: event.node_run_id,
         started_seq: event.seq,
         ended_seq: null,
+        input_io: inputIo,
+        output_io: null,
       };
       return { ...state, ...base, nodes: { ...state.nodes, [node_id]: view } };
     }
@@ -151,15 +174,29 @@ export function reduceRunEvent(state: RunViewState, event: RunEvent): RunViewSta
         node_run_id: event.node_run_id ?? current?.node_run_id ?? null,
         started_seq: current?.started_seq ?? null,
         ended_seq: event.seq,
+        input_io: current?.input_io ?? null,
+        output_io: extractNodeIo(event.payload),
       };
       return { ...state, ...base, nodes: { ...state.nodes, [node_id]: view } };
     }
     case "EDGE_TAKEN": {
       const target = event.payload["to"];
+      const reason = event.payload["reason"];
       if (event.node_id === null || typeof target !== "string") {
         return { ...state, ...base };
       }
-      return { ...state, ...base, edges: [...state.edges, [event.node_id, target]] };
+      const next: RunViewState = {
+        ...state,
+        ...base,
+        edges: [...state.edges, [event.node_id, target]],
+      };
+      if (typeof reason === "string") {
+        next.routingDecisions = {
+          ...state.routingDecisions,
+          [event.node_id]: reason,
+        };
+      }
+      return next;
     }
     case "STATE_SNAPSHOT": {
       const kind = asResultKind(event.payload["result_kind"]);

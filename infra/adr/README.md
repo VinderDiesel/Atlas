@@ -35,3 +35,4 @@
 
 - [ADR-0031：可信问数产品闭环与受约束流程工作台](0031-trusted-query-workbench.md)：合并接入、语义发布、可视化编排、排查与节点训练两轮需求；方向已确认，新增实施细则为 proposed；已交付 T01–T06（M0）与 T07（M1 首任务），T08 起未启动。
 - [ADR-0031 开发任务表](../../docs/design/dev-plan-0031-trusted-query-workbench.md)：任务依赖、文件与接口、验收门禁和状态账本；实施状态以该表为准。
+- [ADR-0032：概念层接入运行时](0032-concept-layer-runtime.md)：本体概念索引接入检索/解析/解释三缝（构建期 AOT 编译、运行时零 rdflib、无索引时逐字不变）；设计已 accepted（2026-10-08 文档评审通过），实现未启动（M0–M4 计划）。

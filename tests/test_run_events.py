@@ -326,8 +326,46 @@ def test_same_event_stream_reduces_to_graph_and_timeline(tmp_path: Path) -> None
     assert reduction.nodes["execute"].node_run_id == execute_started.node_run_id
 
 
+def test_reduce_events_extracts_node_io_from_payloads(tmp_path: Path) -> None:
+    """reduce_events 从 NODE_STARTED/NODE_FINISHED payload 提取 node_io 到 NodeView。"""
+    from agent.graph import GRAPH_NODE_IDS
+    from serving.control.events import reduce_events
+    from tests.workbench_support import ExecutorSpy
+
+    store = _store(tmp_path)
+    run = _run(store)
+    spy = ExecutorSpy()
+    graph = _traced_graph(store, spy)
+    graph.invoke({"question": DETERMINISTIC_Q, "session_id": "session-1"}, config=_run_config(run))
+    events = store.list_events(run.run_id)
+    reduction = reduce_events(events, defined_node_ids=GRAPH_NODE_IDS)
+    # plan 是首节点，初始 state 仅有 question/session_id，input_io 为空 dict → None
+    # （spec 声明的 plan_override/last_plan/unmatched/turns 均不在初始 state 中）
+    assert reduction.nodes["plan"].input_io is None
+    # plan 节点应携带 output_io（包含 plan 结构/unmatched/reason）
+    plan_output = reduction.nodes["plan"].output_io
+    assert plan_output is not None
+    assert "plan" in plan_output
+    # execute 节点应携带 input_io 和 output_io
+    exec_input = reduction.nodes["execute"].input_io
+    assert exec_input is not None
+    assert "plan" in exec_input
+    assert "sql" in exec_input
+    exec_output = reduction.nodes["execute"].output_io
+    assert exec_output is not None
+    assert "sql" in exec_output
+    assert "row_count" in exec_output
+    # 未到达节点无 node_io
+    assert reduction.nodes["retrieve"].input_io is None
+    assert reduction.nodes["retrieve"].output_io is None
+
+
 def test_persisted_events_contain_no_question_sql_or_rows(tmp_path: Path) -> None:
-    """持久事件默认无正文：不含问句、SQL、结果值（脱敏摘要，D07）。"""
+    """持久事件默认无正文：不含问句、SQL、结果值（脱敏摘要，D07）。
+
+    node_io 通道（Phase 1 可视化）允许包含 plan 结构/sql/路由决策等调试数据，
+    但 rows 实际值仍不进入（仅 row_count）。
+    """
     import json
 
     from tests.workbench_support import ExecutorSpy
@@ -340,12 +378,24 @@ def test_persisted_events_contain_no_question_sql_or_rows(tmp_path: Path) -> Non
     graph.invoke({"question": DETERMINISTIC_Q, "session_id": "session-1"}, config=_run_config(run))
     assert spy.calls  # 真的执行过 SQL，否则下列断言是空洞的
     events = store.list_events(run.run_id)
-    raw = json.dumps([e.payload for e in events], ensure_ascii=False)
+    # 剔除 node_io 子对象后再做 D07 键面检查（node_io 允许包含 plan/sql 等调试结构）
+    payloads_without_node_io = []
+    for e in events:
+        p = dict(e.payload)
+        p.pop("node_io", None)
+        payloads_without_node_io.append(p)
+    raw = json.dumps(payloads_without_node_io, ensure_ascii=False)
     assert "佣金收入" not in raw
     assert "SELECT" not in raw and "FROM" not in raw
     assert "987654321" not in raw
-    for token in ("question", "sql", "rows", "prompt"):
-        assert f'"{token}"' not in raw  # 事件 payload 不出现正文/敏感键（值级缩面）
+    for token in ("question", "rows", "prompt"):
+        assert f'"{token}"' not in raw  # 非 node_io 通道不出现敏感键
+    # node_io 通道：rows 实际值不进入（仅 row_count）
+    node_io_raw = json.dumps(
+        [e.payload.get("node_io") for e in events if e.payload.get("node_io")],
+        ensure_ascii=False,
+    )
+    assert "987654321" not in node_io_raw  # 执行结果行值不进入 node_io
 
 
 def test_retried_generation_leaves_second_generate_trace(tmp_path: Path) -> None:

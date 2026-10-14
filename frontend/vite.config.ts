@@ -2,12 +2,12 @@
  * Vite 配置（dev proxy / 双档 target；ADR-0018 决策 ③）。
  *
  * ⚠️ 禁止把 target 写成 `localhost`（实测 2026-09-14，勿"顺手改正"）：
- * `localhost` 优先解析 IPv6 `::1`，而本机 `::1:8000` 是**他人项目**
- * （ccdp-ontology-api），uvicorn 绑的是 IPv4 `127.0.0.1:8000`——代理写 localhost
+ * `localhost` 优先解析 IPv6 `::1`，而本机 `::1:8020` 是**他人项目**
+ * （ccdp-ontology-api），uvicorn 绑的是 IPv4 `127.0.0.1:8020`——代理写 localhost
  * 会把请求送进另一个项目，症状是满屏 404 且极难归因。必须硬写 127.0.0.1。
  *
  * 双档成对切换（只改一个变量会造成前缀与目标不匹配）：
- * - 默认档（不设变量）：TARGET http://127.0.0.1:8000 + BASE /api/v1
+ * - 默认档（不设变量）：TARGET http://127.0.0.1:8020 + BASE /api/v1
  *   —— `make serve-dev`（宿主机新代码）；
  * - 对照档：ATLAS_API_TARGET=http://127.0.0.1:8010 + ATLAS_API_BASE=
  *   —— atlas-api 容器（旧代码），空前缀，仅旧契约对照用；转发时剥掉 /api/v1。
@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig, loadEnv, type Plugin } from "vite";
 
-const DEFAULT_TARGET = "http://127.0.0.1:8000";
+const DEFAULT_TARGET = "http://127.0.0.1:8020";
 const DEFAULT_BASE = "/api/v1";
 
 export default defineConfig(({ mode }) => {
@@ -39,6 +39,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [devSignPlugin()],
     server: {
+      port: 5174,
       proxy: {
         "/api/v1": {
           target,

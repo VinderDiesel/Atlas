@@ -1,0 +1,31 @@
+{
+  "task": "metric-retrieval-bm25",
+  "engine": "bm25",
+  "sha": "ad99a2b",
+  "corpus": {
+    "source": "atlas_finance.ossie.yaml",
+    "n_docs": 20
+  },
+  "queries": {
+    "source": "eval/gold gold-1xx ambiguous=false",
+    "n": 73
+  },
+  "params": {
+    "k1": 1.5,
+    "b": 0.75,
+    "tokenizer": "cjk-bigram+en-word"
+  },
+  "metrics": {
+    "recall_at_1": "69/73",
+    "recall_at_5": "72/73",
+    "fail_cases": 1
+  },
+  "fail_cases": [
+    {
+      "id": "gold-166",
+      "question": "How many trades were there in May 2014?",
+      "expected_metric": "trade_count",
+      "top5": []
+    }
+  ]
+}

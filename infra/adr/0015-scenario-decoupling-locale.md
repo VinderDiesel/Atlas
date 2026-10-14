@@ -183,3 +183,18 @@ ADR-0002 前的自研 DSL 定义与其 JSON Schema，README 记录"为什么归�
   是逐字段比对（见 `docs/design/adr-0015-pattern-lexicon-en.md` §4.1）；
 - 能证伪本决策的数据：任一同义词用例断言变化，或 dry summary 与 b933e20 出现非 EX
   维度差异——都说明搬运不是等价的，本批必须回退重做。
+
+---
+
+## 末端注记（2026-10-14，ADR-0032）
+
+ADR-0032《概念层接入运行时》在本文的 locale 词典族上扩展 **`concepts_<locale>.yml`
+子族**（概念级人工别名，S3）：键 = 概念短名（校验自 `data/fibo/iri_registry.json`），
+值为人工 curation 的术语列表；首个实例 `semantic/synonyms/concepts_zh_cn.yml`。
+它是概念层"新词汇"的唯一人工入口（机器派生 S1/S2 之外），属解析器形态层的措辞
+数据而非业务口径定义——与裁定 ③（幽灵处置）的"模型是业务资产、措辞形态是解析器
+实现"同一分层逻辑的延伸，不违反"权威源唯一"。
+
+**正文一字未改**；locale 隔离铁律（裁定 ①：按语言分轨、不跨 locale 合并）对概念
+别名同样成立——分文件承载、不并入另一语种匹配集；加载与校验纪律由 ADR-0032 的
+`agent/concept_index.py`（加载契约）与 `make lint` 第 7 节（概念索引 + 别名校验）承接。

@@ -1,4 +1,4 @@
-.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance license-check export plan compile ask query eval analysis-eval baseline compare paraphrase e2e demo retrieve rag-eval schema-link extract-meta train train-distill train-dryrun lora-infer report report-latest test adr adr-list rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify profile-values ui-check ui-dev ui-build serve-dev backup restore diagnostics acceptance
+.PHONY: help install up down seed seed-retail dwd lint lint-ossie lint-governance license-check ontology-build export plan compile ask query eval analysis-eval baseline compare paraphrase concept-eval e2e demo retrieve rag-eval schema-link extract-meta train train-distill train-dryrun lora-infer report report-latest test adr adr-list rls-verify rbac-verify rbac-verify-ensure metrics-verify p1-verify serve token api-verify profile-values ui-check ui-dev ui-build serve-dev backup restore diagnostics acceptance
 
 PYTHON       ?= .venv/bin/python
 
@@ -37,6 +37,7 @@ help:
 	@echo "  语义层（Apache Ossie）"
 	@echo "    make lint-ossie      用 Ossie 官方 schema 校验语义模型"
 	@echo "    make lint-governance 校验 Atlas 治理扩展（owner/lineage/policy）"
+	@echo "    make ontology-build  概念索引 AOT 构建（ADR-0032 M1-T1；CHECK=1 重建漂移比对）"
 	@echo "    make export          导出为 dbt MetricFlow YAML（证明非封闭）"
 	@echo ""
 	@echo "  查询链路"
@@ -49,6 +50,7 @@ help:
 	@echo "    make eval            跑黄金集（Plan Acc + EX，自动复核数据快照）"
 	@echo "    make analysis-eval   analysis 四步链黄金集评测（T09；需 ANALYSIS_SNAPSHOT_SHA）"
 	@echo "    make paraphrase      同义改写鲁棒性评测（Planner-only，不需 Doris）"
+	@echo "    make concept-eval    概念一致率评测（ADR-0032 M1-T5：标注统计 + matcher 三分）"
 	@echo "    make demo            端到端演示测试（双语 12 + RLS 身份 2，需 Doris + 锁定快照）"
 	@echo "    make rls-verify      行级权限回归（双域：finance 差异集 3；retail 州/品类档）"
 	@echo "    make e2e             Data Agent 端到端验收门禁：5 场景+handoff（Day 48）"
@@ -65,9 +67,9 @@ help:
 	@echo "    make rbac-verify     Polaris 对象级 RBAC 回归验证（需 .env）"
 	@echo "    make metrics-verify  新发布指标编译 + Doris 实测验证（Day 27）"
 	@echo "    make p1-verify       P1 端到端验收：gold-102 全链路 + Guard×10（Day 28）"
-	@echo "    make schema-link      schema linking 评测：指标 Recall@K + 表覆盖（Day 29）"
+	@echo "    make schema-link      schema linking 评测：指标 Recall@K + 表覆盖（Day 29；TAG= 隔离）"
 	@echo "    make test            单元 + 契约测试"
-	@echo "    make serve           启动 HTTP API（uvicorn 127.0.0.1:8000，单进程）"
+	@echo "    make serve           启动 HTTP API（uvicorn 127.0.0.1:8020，单进程）"
 	@echo "    make serve-dev       单进程同源启动 API + dist 静态面（先 make ui-build）"
 	@echo "    make ui-check        前端门槛：tsc + vitest + build（并入 pre-commit）"
 	@echo "    make ui-build        构建 frontend/dist（serve-dev / 容器镜像前置）"
@@ -188,7 +190,7 @@ ask:
 # token：签发本地测试 JWT（serving/auth.sign_token，需 .env ATLAS_JWT_SECRET）
 #   默认 ROLE=hq_admin；如 ROLE=branch_manager CONTEXT='{"branch": "east"}' 可覆盖
 serve:
-	uv run --env-file .env uvicorn serving.api:app --host 127.0.0.1 --port 8000
+	uv run --env-file .env uvicorn serving.api:app --host 127.0.0.1 --port 8020
 
 token:
 	uv run --env-file .env python -c "import json, sys; from serving.auth import sign_token; print(sign_token(sys.argv[1], json.loads(sys.argv[2])))" "$(or $(ROLE),hq_admin)" "$(or $(CONTEXT),{})"
@@ -242,6 +244,17 @@ profile-values:
 # 同义改写鲁棒性评测（High1）：Planner-only，不需 Doris；测量注册口径内改写掉落率
 paraphrase:
 	$(PYTHON) -m eval.paraphrase_eval
+
+# 概念一致率评测（ADR-0032 M1-T5 真版）：标注统计 + 确定性 matcher 三分（hit/mismatch/miss）；
+# 无层（ATLAS_CONCEPT_LAYER=off）全 miss = 0 命中基线；
+# not_in_registry 非零 = 停批条件（清单登记产物 missing）
+concept-eval:
+	$(PYTHON) -m eval.concept_eval
+
+# 概念索引 AOT 构建（ADR-0032 M1-T1）：FIBO 闭包解析仅构建期（rdflib 按需拉取，
+# 运行时零 rdflib）；产物入库提交；CHECK=1 重建并与产物比对（剔除 generated_at）
+ontology-build:
+	uv run --with rdflib==7.6.0 python data/fibo/build_concept_index.py $(if $(CHECK),--check)
 
 # 评测报告聚合（High4）：--latest 跨最新多 sha 聚合，避免 headline 报告为空
 report-latest:
@@ -352,11 +365,12 @@ p1-verify:
 	uv run --env-file .env python serving/p1_acceptance.py
 
 # ---- schema linking 评测（Day 29）----
-# schema-link：SchemaLinker 两阶段（图域粗筛→受限召回→元数据重排）在 44 条 gold
+# schema-link：SchemaLinker 两阶段（图域粗筛→受限召回→元数据重排）在 73 条 gold
 # 上的指标 Recall@K + 表覆盖，含同日 BM25 单路基线对照（agent/tools/schema_linker.py）
 # ENGINE=bm25 默认；ENGINE=fuse 需 atlas-milvus 在跑。产出 eval/reports/schema-link-<engine>-<sha>.json
+# TAG 追加产物名后缀（A/B 隔离，ADR-0032 M2-T2）；关臂 = ATLAS_CONCEPT_LAYER=off 环境变量
 schema-link:
-	uv run python -m eval.schema_link_eval --engine $(or $(ENGINE),bm25)
+	uv run python -m eval.schema_link_eval --engine $(or $(ENGINE),bm25) $(if $(TAG),--tag $(TAG))
 
 # SLUG 为文件名英文段（既有惯例 0016-dimension-value-domain.md）；纯中文标题无法
 # 自动推断 slug（不做翻译——译名会与人工命名漂移），故缺 slug 时由生成器响亮报错
@@ -390,7 +404,7 @@ ui-check:
 	@cd frontend && npm run test
 	@cd frontend && npm run build
 
-# ui-dev：vite dev server（HMR + dev proxy → 127.0.0.1:8000；禁 localhost 的实测
+# ui-dev：vite dev server（HMR + dev proxy → 127.0.0.1:8020；禁 localhost 的实测
 # 理由见 vite.config.ts 文件头注释）。API 由 `make serve` 另行启动。
 ui-dev:
 	@$(node_guard)
@@ -413,7 +427,7 @@ serve-dev:
 		echo "错误：frontend/dist/index.html 不存在——先执行 make ui-build" >&2; \
 		exit 1; \
 	}
-	uv run --env-file .env uvicorn serving.api:app --host 127.0.0.1 --port 8000
+	uv run --env-file .env uvicorn serving.api:app --host 127.0.0.1 --port 8020
 
 # ---- 运维入口（ADR-0031 D12/T13）----
 # backup：控制库备份（SQLite backup API，不直接复制 WAL）

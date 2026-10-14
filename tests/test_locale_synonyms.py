@@ -49,11 +49,7 @@ class TestNormalLoad(LoaderTestCase):
         """两节都归一化为 tuple 且保序；缺省节 → 空映射。"""
         self._write(
             "en_us",
-            "metric_synonyms:\n"
-            "  gmv:\n"
-            "    - gross merchandise value\n"
-            "    - gmv\n"
-            "    - sales\n",
+            "metric_synonyms:\n  gmv:\n    - gross merchandise value\n    - gmv\n    - sales\n",
         )
         loaded = load_locale_synonyms("en_us")
         self.assertEqual(
@@ -71,9 +67,7 @@ class TestNormalLoad(LoaderTestCase):
 
     def test_strips_whitespace(self) -> None:
         self._write("en_us", "metric_synonyms: {gmv: ['  sales  ']}")
-        self.assertEqual(
-            load_locale_synonyms("en_us")["metric_synonyms"]["gmv"], ("sales",)
-        )
+        self.assertEqual(load_locale_synonyms("en_us")["metric_synonyms"]["gmv"], ("sales",))
 
 
 class TestRejections(LoaderTestCase):
@@ -123,12 +117,15 @@ class TestRealRepoFiles(unittest.TestCase):
 
         synonyms/ 目录同时托管**形态词典**（`patterns_*.yml`，ADR-0015 §②，
         B3a/B3b），那部分由 tests/test_locale_patterns.py 的同名断言锁定；
-        本测试只管同义词表族（`<locale>.yml`）。
+        **概念级别名子族**（`concepts_*.yml`，ADR-0032 ② S3；ADR-0015 末端注记）
+        不经 `load_locale_synonyms`——构建期由 `data/fibo/build_concept_index.py`
+        读取并编译进概念索引产物，运行时走产物查表；其结构校验归 lint 第 7 节
+        （M1-T4 落）。本测试只管同义词表族（`<locale>.yml`）。
         """
         files = {
             p.name
             for p in compiler_mod.SYNONYMS_DIR.glob("*.yml")
-            if not p.name.startswith("patterns_")
+            if not p.name.startswith(("patterns_", "concepts_"))
         }
         self.assertEqual(files, set(compiler_mod._LOCALE_FILES.values()))
 

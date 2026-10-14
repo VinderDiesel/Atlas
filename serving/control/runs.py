@@ -504,6 +504,20 @@ class RunService:
             trace_summary=RunTraceSummary(result_kind=record.result_kind),
         )
 
+    def delete(self, *, principal: Principal, run_id: str) -> bool:
+        """删除运行记录及其关联事件；对象不可见抛 RunNotFound（404）。"""
+        try:
+            record = self._store.get_run(run_id)
+        except KeyError as exc:
+            raise RunNotFound(run_id) from exc
+        access = self._access(principal, record)
+        if access == "hidden":
+            raise RunNotFound(run_id)
+        # 清理内存状态
+        self._results.pop(run_id, None)
+        self._identities.pop(run_id, None)
+        return self._store.delete_run(run_id)
+
     # -- 历史目录（T06a：GET /runs、GET /sessions） ---------------------------
 
     def list_runs(

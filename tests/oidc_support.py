@@ -19,7 +19,7 @@ from joserfc.jwk import OctKey, RSAKey
 ISSUER = "https://idp.example.com"
 CLIENT_ID = "atlas-client"
 CLIENT_SECRET = "s3cret"
-REDIRECT_URI = "http://localhost:8000/api/v1/auth/callback"
+REDIRECT_URI = "http://localhost:8020/api/v1/auth/callback"
 AUDIENCE = "atlas-client"
 
 FULL_ENV = {

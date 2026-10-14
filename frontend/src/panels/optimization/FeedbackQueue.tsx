@@ -32,6 +32,8 @@ import {
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 
+import StarBadge from "../../components/StarBadge";
+
 const { Text } = Typography;
 
 /** 反馈状态 */
@@ -119,14 +121,7 @@ export const FeedbackQueuePanel: React.FC = () => {
       title: "判定",
       dataIndex: "verdict",
       key: "verdict",
-      render: (verdict: string) => {
-        const colorMap: Record<string, string> = {
-          up: "green",
-          down: "red",
-          corrected: "orange",
-        };
-        return <Tag color={colorMap[verdict] || "default"}>{verdict}</Tag>;
-      },
+      render: (verdict: string) => <StarBadge status={verdict} />,
     },
     {
       title: "归因节点",
@@ -139,19 +134,7 @@ export const FeedbackQueuePanel: React.FC = () => {
       title: "状态",
       dataIndex: "status",
       key: "status",
-      render: (status: FeedbackStatus) => {
-        const colorMap: Record<string, string> = {
-          pending_review: "orange",
-          approved: "green",
-          rejected: "red",
-        };
-        const labelMap: Record<string, string> = {
-          pending_review: "待审核",
-          approved: "已通过",
-          rejected: "已拒绝",
-        };
-        return <Tag color={colorMap[status]}>{labelMap[status]}</Tag>;
-      },
+      render: (status: FeedbackStatus) => <StarBadge status={status} />,
     },
     {
       title: "训练资格",
@@ -168,7 +151,7 @@ export const FeedbackQueuePanel: React.FC = () => {
       title: "提交时间",
       dataIndex: "created_at",
       key: "created_at",
-      render: (ts: string) => new Date(ts).toLocaleString("zh-CN"),
+      render: (ts: string) => <span className="atlas-mono">{new Date(ts).toLocaleString("zh-CN")}</span>,
     },
     {
       title: "操作",
@@ -212,7 +195,7 @@ export const FeedbackQueuePanel: React.FC = () => {
   ];
 
   return (
-    <div style={{ padding: 24 }}>
+    <div className="atlas-page">
       <Card title="反馈审核队列" style={{ marginBottom: 24 }}>
         <Alert
           message="审核队列显示所有待审核反馈；审核动作需要 reviewer 能力"

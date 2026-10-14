@@ -11,6 +11,8 @@
 import {
   ReactFlow,
   ReactFlowProvider,
+  MarkerType,
+  Position,
   type Edge,
   type Node,
   type NodeProps,
@@ -27,6 +29,10 @@ import { layoutRunGraph } from "./run-view-model";
 interface Props {
   /** 事件归约态（图与时间线同一事实源；组件不自行请求）。 */
   state: RunViewState;
+  /** 当前选中的节点 ID（Phase 1 可视化；null = 无选中）。 */
+  selectedNodeId?: string | null;
+  /** 节点点击回调（父组件用于展示 NodeInspector）。 */
+  onNodeClick?: (nodeId: string) => void;
 }
 
 const { Text } = Typography;
@@ -40,48 +46,54 @@ const NODE_STATUS_META: Record<RunNodeStatus, { label: string; color: string }> 
   skipped: { label: "跳过", color: "var(--atlas-accent)" },
 };
 
-type RunFlowNode = Node<{ label: string; status: RunNodeStatus }, "runNode">;
+type RunFlowNode = Node<{ label: string; status: RunNodeStatus; selected?: boolean }, "runNode">;
 
 function RunNodeCard({ data }: NodeProps<RunFlowNode>) {
   const meta = NODE_STATUS_META[data.status];
+  const isSelected = data.selected ?? false;
+  const cls = [
+    "atlas-run-node",
+    `atlas-run-node--${data.status}`,
+    isSelected ? "atlas-run-node--selected" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <div
-      style={{
-        minWidth: 72,
-        padding: "6px 10px",
-        borderRadius: 6,
-        border: `1.5px solid ${meta.color}`,
-        background: "var(--atlas-surface)",
-        textAlign: "center",
-      }}
-    >
-      <div style={{ fontWeight: 600 }}>{data.label}</div>
-      <div style={{ fontSize: 11, color: meta.color }}>{meta.label}</div>
+    <div className={cls}>
+      <div className="atlas-run-node__label">{data.label}</div>
+      <div className="atlas-run-node__status">{meta.label}</div>
     </div>
   );
 }
 
 const NODE_TYPES: NodeTypes = { runNode: RunNodeCard };
 
-export default function RunGraph({ state }: Props) {
+export default function RunGraph({ state, selectedNodeId, onNodeClick }: Props) {
   const layout = layoutRunGraph(state);
   const nodes: RunFlowNode[] = layout.nodes.map((node) => ({
     id: node.id,
     type: "runNode",
     position: node.position,
-    data: { label: node.label, status: node.status },
+    sourcePosition: Position.Right,
+    targetPosition: Position.Left,
+    data: { label: node.label, status: node.status, selected: node.id === selectedNodeId },
     draggable: false,
     connectable: false,
-    selectable: false,
+    selectable: true,
   }));
   const edges: Edge[] = layout.edges.map((edge) => ({
     id: edge.id,
     source: edge.source,
     target: edge.target,
     animated: edge.taken,
+    markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12 },
     style: edge.taken
-      ? { stroke: "var(--atlas-primary)", strokeWidth: 2 }
-      : { stroke: "var(--atlas-border)" },
+      ? {
+          stroke: "var(--atlas-primary)",
+          strokeWidth: 2.5,
+          filter: "drop-shadow(0 0 4px rgba(110, 231, 245, 0.5))",
+        }
+      : { stroke: "var(--atlas-border)", strokeWidth: 1 },
   }));
 
   return (
@@ -105,16 +117,21 @@ export default function RunGraph({ state }: Props) {
             nodeTypes={NODE_TYPES}
             nodesDraggable={false}
             nodesConnectable={false}
-            elementsSelectable={false}
+            elementsSelectable={true}
             fitView
             proOptions={{ hideAttribution: false }}
             style={{ width: "100%", height: "100%" }}
+            onNodeClick={(_event, node) => {
+              if (onNodeClick) {
+                onNodeClick(node.id);
+              }
+            }}
           />
         </ReactFlowProvider>
       </div>
       <Text type="secondary" style={{ fontSize: 12 }}>
-        节点/边是与 Agent 图定义同源的固定模板；未到达节点显示「未执行」（不编造
-        开始/结束时间），实际路径以事件流的 EDGE_TAKEN 为准。
+        点击节点查看输入/输出详情。节点/边是与 Agent 图定义同源的固定模板；未到达节点
+        显示「未执行」（不编造开始/结束时间），实际路径以事件流的 EDGE_TAKEN 为准。
       </Text>
     </Space>
   );

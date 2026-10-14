@@ -1,0 +1,32 @@
+{
+  "eval": "concept-alignment",
+  "stage": "matcher",
+  "created_at": "2026-10-14T16:49:24+08:00",
+  "sha": "213d5f8",
+  "layer_enabled": true,
+  "stats": {
+    "samples_total": 106,
+    "samples_annotated": 86,
+    "terms_total": 162,
+    "terms_by_role": {
+      "dimension": 33,
+      "entity": 20,
+      "event": 30,
+      "measure": 62,
+      "time": 17
+    },
+    "concepts_distinct": 11,
+    "registry_coverage": {
+      "in_registry": 11,
+      "not_in_registry": 0,
+      "missing": []
+    }
+  },
+  "consistency": {
+    "hit": 55,
+    "mismatch": 12,
+    "miss": 95,
+    "rate": "55/162"
+  },
+  "notes": "三分口径：hit=标注术语被概念层命中且概念一致；mismatch=命中但概念不一致；miss=未命中或标注概念不在索引。rate = hit/标注总数，不折算任何加权；layer_enabled=false（无层）时全部计 miss（0 命中基线，本体对照）。"
+}

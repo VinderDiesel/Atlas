@@ -222,78 +222,97 @@ export default function GovernanceLayout({ token, domain, onDomainChange }: Prop
     <div className="atlas-page">
       {PAGE_HEADER}
 
-      <Space wrap align="center" size={8}>
-        <Text strong>域（model）</Text>
-        <Select
-          size="small"
-          style={{ width: 110 }}
-          value={domain}
-          options={domainOptions}
-          onChange={(next) => {
-            if (next === "finance" || next === "retail") {
-              onDomainChange(next);
-            }
-          }}
-        />
-        <Divider type="vertical" />
-        <Text strong>locale</Text>
-        <Select
-          size="small"
-          style={{ width: 110 }}
-          value={locale}
-          options={LOCALES.map((value) => ({ value, label: value }))}
-          onChange={setLocale}
-        />
-      </Space>
+      <div className="atlas-console">
+        <Space wrap align="center" size={8} className="atlas-console__controls">
+          <Text strong>域（model）</Text>
+          <Select
+            size="small"
+            style={{ width: 110 }}
+            value={domain}
+            options={domainOptions}
+            onChange={(next) => {
+              if (next === "finance" || next === "retail") {
+                onDomainChange(next);
+              }
+            }}
+          />
+          <Divider type="vertical" />
+          <Text strong>locale</Text>
+          <Select
+            size="small"
+            style={{ width: 110 }}
+            value={locale}
+            options={LOCALES.map((value) => ({ value, label: value }))}
+            onChange={setLocale}
+          />
+        </Space>
 
-      <Collapse
-        ghost
-        size="small"
-        className="atlas-rules"
-        items={[
-          {
-            key: "rules",
-            label: "本页请求与只读边界（8 条挂载口径）",
-            children: (
-              <div className="atlas-rules__body">
-                <span>
-                  本页挂载即并发请求 8 条治理集合（models / metrics / dimensions / synonyms /
-                  values / policies / reports / snapshots）；子页切换不重拉。域与顶栏角色清单、
-                  工作台 model 是同一事实源；切换域重拉 metrics + dimensions（2 条），切换
-                  locale 重拉 synonyms（1 条）。
-                </span>
-                <span>
-                  治理面一律只读（ADR-0028 决策 ③）：所有数据经 getJson 取回，无写控件；
-                  语义定义编辑只经 proposal 链路（ADR-0027），不直写。
-                </span>
-              </div>
-            ),
-          },
-        ]}
-      />
+        <Collapse
+          ghost
+          size="small"
+          className="atlas-rules"
+          items={[
+            {
+              key: "rules",
+              label: "本页请求与只读边界（8 条挂载口径）",
+              children: (
+                <div className="atlas-rules__body">
+                  <span>
+                    本页挂载即并发请求 8 条治理集合（models / metrics / dimensions / synonyms /
+                    values / policies / reports / snapshots）；子页切换不重拉。域与顶栏角色清单、
+                    工作台 model 是同一事实源；切换域重拉 metrics + dimensions（2 条），切换
+                    locale 重拉 synonyms（1 条）。
+                  </span>
+                  <span>
+                    治理面一律只读（ADR-0028 决策 ③）：所有数据经 getJson 取回，无写控件；
+                    语义定义编辑只经 proposal 链路（ADR-0027），不直写。
+                  </span>
+                </div>
+              ),
+            },
+          ]}
+        />
+      </div>
 
       <PublishIdentitySection token={token} />
-      <Tabs
-        activeKey={section}
-        onChange={(key) => navigate(`/governance/${key}`)}
-        items={GOV_SECTIONS.filter((s) => s.group === "build").map(({ key, label }) => ({
-          key,
-          label,
-          children: sectionChildren[key],
-        }))}
-      />
-      <Divider orientation="left" plain>
-        管控
-      </Divider>
-      <Tabs
-        activeKey={section}
-        onChange={(key) => navigate(`/governance/${key}`)}
-        items={GOV_SECTIONS.filter((s) => s.group === "control").map(({ key, label }) => ({
-          key,
-          label,
-          children: sectionChildren[key],
-        }))}
-      />
+      <div className="atlas-star-chart">
+        <div className="atlas-star-chart__region">
+          <div className="atlas-star-chart__region-title">
+            <span className="star-badge star-badge--active">
+              <span className="star-badge__dot" aria-hidden="true" />
+              <span className="star-badge__label">build</span>
+            </span>
+            <Text type="secondary">语义构建面</Text>
+          </div>
+          <Tabs
+            activeKey={section}
+            onChange={(key) => navigate(`/governance/${key}`)}
+            items={GOV_SECTIONS.filter((s) => s.group === "build").map(({ key, label }) => ({
+              key,
+              label,
+              children: sectionChildren[key],
+            }))}
+          />
+        </div>
+        <div className="atlas-star-chart__region">
+          <div className="atlas-star-chart__region-title">
+            <span className="star-badge star-badge--superseded">
+              <span className="star-badge__dot" aria-hidden="true" />
+              <span className="star-badge__label">control</span>
+            </span>
+            <Text type="secondary">治理管控面</Text>
+          </div>
+          <Tabs
+            activeKey={section}
+            onChange={(key) => navigate(`/governance/${key}`)}
+            items={GOV_SECTIONS.filter((s) => s.group === "control").map(({ key, label }) => ({
+              key,
+              label,
+              children: sectionChildren[key],
+            }))}
+          />
+        </div>
+      </div>
     </div>
   );
 }

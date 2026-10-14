@@ -77,13 +77,19 @@ _ENDED_NODE_STATUS: dict[str, NodeStatus] = {
 
 @dataclass(frozen=True)
 class NodeView:
-    """归约出的单节点视图（同一 node_id 多次运行保留最近一次；edges 全量另记）。"""
+    """归约出的单节点视图（同一 node_id 多次运行保留最近一次；edges 全量另记）。
+
+    input_io / output_io（Phase 1 可视化）：从 NODE_STARTED / NODE_FINISHED 事件
+    payload 中提取的 node_io 快照，旧事件（无 node_io）为 None。
+    """
 
     node_id: str
     status: NodeStatus = "not_reached"
     node_run_id: str | None = None
     started_seq: int | None = None
     ended_seq: int | None = None
+    input_io: dict | None = None
+    output_io: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +133,7 @@ def reduce_events(
                 status="running",
                 node_run_id=event.node_run_id,
                 started_seq=event.seq,
+                input_io=event.payload.get("node_io"),  # type: ignore[arg-type]
             )
         elif event.event_type in _ENDED_NODE_STATUS:
             current = nodes.get(node_id)
@@ -136,6 +143,8 @@ def reduce_events(
                 node_run_id=event.node_run_id,
                 started_seq=current.started_seq if current else None,
                 ended_seq=event.seq,
+                input_io=current.input_io if current else None,
+                output_io=event.payload.get("node_io"),  # type: ignore[arg-type]
             )
         elif event.event_type == "EDGE_TAKEN":
             target = event.payload.get("to")

@@ -25,9 +25,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from eval.runner import git_short_sha
+from eval.runner import SNAPSHOT_DIR, git_short_sha
 from eval.workbench_baseline import BaselineReport
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 REPORTS_DIR = Path(__file__).resolve().parent / "reports"
 FAILURES_DIR = Path(__file__).resolve().parent / "failures"
 TZ = timezone(timedelta(hours=8))
@@ -66,6 +67,32 @@ def _field(data: dict[str, Any] | None, name: str, *path: str, default: str = MI
 def _row(label: str, value: str, source: str) -> str:
     """markdown 表格行：label | value | source。"""
     return f"| {label} | {value} | `{source}` |"
+
+
+def _snapshot_ref() -> str:
+    """数据快照引用：按 `created_at` 取最新 meta 文件（缺失 → 占位，不推断）。
+
+    头部曾硬编码 `data/snapshots/{sha}.meta.json`——快照 sha 是「最近一次
+    `make seed` 的绑定」，与 HEAD 无必然对应（HEAD 前进后引用指向不存在的
+    文件）。诚实红线：只展示真实存在的文件。目录取 `data/identity.py` 权威
+    常量（判据 5(b)：快照目录构造唯一，不新增副本）。
+    """
+    metas = sorted(SNAPSHOT_DIR.glob("*.meta.json"))
+    if not metas:
+        return "`<缺失：data/snapshots/ 无 *.meta.json，先运行 make seed>`"
+
+    def _created(meta: Path) -> str:
+        try:
+            return str(json.loads(meta.read_text(encoding="utf-8")).get("created_at", ""))
+        except (json.JSONDecodeError, OSError):
+            return ""
+
+    latest = max(metas, key=_created)
+    try:
+        shown = latest.relative_to(REPO_ROOT)
+    except ValueError:  # 测试把 SNAPSHOTS_DIR 注入仓库外目录时退化为文件名
+        shown = latest
+    return f"`{shown}`（按 `created_at` 取最新 meta；快照 sha 与 HEAD 无必然对应）"
 
 
 def _discover_main_reports() -> list[tuple[Path, str]]:
@@ -374,10 +401,63 @@ def _section_failures(sha: str) -> list[str]:
     return lines
 
 
+def _section_concept(sha: str) -> list[str]:
+    """§8 概念层一致率（ADR-0032；与 EX / Plan Acc 分开报告，ADR-0007 待办 1）。
+
+    机械转述 `concept-<sha>.json`（eval/concept_eval.py 产物）：matcher 三分
+    （hit/mismatch/miss）与 rate 原文 + 标注面统计分母；layer_enabled 如实标记
+    （false = 无层 0 命中基线，防误读为「概念层全错」）。
+    """
+    name = f"concept-{sha}.json"
+    d = _load(name)
+    lines = [
+        "## 8. 概念层一致率（`make concept-eval`；ADR-0032，与 EX / Plan Acc 分开报告）",
+        "",
+    ]
+    if d is None:
+        lines.append(_row("consistency", MISSING, name))
+        return lines
+    lines.append("| 指标 | 值 | source |")
+    lines.append("|---|---|---|")
+    lines.append(_row("stage", _field(d, "stage"), name))
+    lines.append(_row("layer_enabled", _field(d, "layer_enabled"), name))
+    for key in ("hit", "mismatch", "miss", "rate"):
+        lines.append(_row(key, _field(d, "consistency", key), name))
+    lines.append(_row("samples_annotated", _field(d, "stats", "samples_annotated"), name))
+    lines.append(_row("terms_total", _field(d, "stats", "terms_total"), name))
+    lines.append(_row("concepts_distinct", _field(d, "stats", "concepts_distinct"), name))
+    lines.append(
+        _row(
+            "registry_coverage.not_in_registry",
+            _field(d, "stats", "registry_coverage", "not_in_registry"),
+            name,
+        )
+    )
+    lines.append("")
+    if _field(d, "layer_enabled") == "False":
+        lines.append(
+            "> **layer_enabled=false（无层）**：全部标注计 miss，为 0 命中基线"
+            "（本体对照），非「概念层全错」。"
+        )
+        lines.append("")
+    lines.append(f"> 口径（转述产物 `notes`）：{_field(d, 'notes')}")
+    lines.append(
+        f"**评测脚本**：`eval/concept_eval.py`（{name} `created_at`={_field(d, 'created_at')}）"
+    )
+    return lines
+
+
 def _section_meta(sha: str) -> list[str]:
-    """§8 报告来源完整性：当前 sha 下全部报告清单（文件级可审计）。"""
-    lines = ["## 8. 报告来源清单（eval/reports/，绑定 sha）", ""]
-    names = sorted(p.name for p in REPORTS_DIR.glob(f"*-{sha}.json")) + [f"{sha}.json"]
+    """§9 报告来源完整性：当前 sha 下全部报告清单（文件级可审计）。
+
+    只列真实存在的文件：主报告缺失时省略其条目（缺失状态由 §1 占位行承载），
+    不产生幻影条目（2026-10-14 随 M1-T5 重生成修复——与头部假快照引用同类）。
+    """
+    lines = ["## 9. 报告来源清单（eval/reports/，绑定 sha）", ""]
+    names = sorted(p.name for p in REPORTS_DIR.glob(f"*-{sha}.json"))
+    main_name = f"{sha}.json"
+    if (REPORTS_DIR / main_name).exists():
+        names.append(main_name)
     lines.append("```")
     lines.extend(names)
     lines.append("```")
@@ -450,7 +530,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "",
         "> 生成器：`eval/report.py`（Day 39）；生成时间："
         f"{datetime.now(TZ).isoformat(timespec='seconds')}（仅时间戳不可复现）",
-        f"> 绑定 git sha：`{sha}`；数据快照：`data/snapshots/{sha}.meta.json`",
+        f"> 绑定 git sha：`{sha}`；数据快照：{_snapshot_ref()}",
         "> 规则：**无手写数字**；每格数字 source 列可追溯，缺失显示占位不推断。",
         f"> 聚合模式：{'--latest（跨 sha 取最新报告）' if args.latest else '当前 sha 单轮'}。",
         "",
@@ -472,6 +552,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     lines.extend(_section_security(sha))
     lines.append("")
     lines.extend(_section_failures(sha))
+    lines.append("")
+    lines.extend(_section_concept(sha))
     lines.append("")
     lines.extend(_section_meta(sha))
     lines.append("")

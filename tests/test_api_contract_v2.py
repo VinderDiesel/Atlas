@@ -3,13 +3,14 @@ r"""HTTP 契约 v2 防漂移测试（ADR-0022 判据 1/2/4/5/6/7/9/10；无 DB�
 
 口径（落地实测 2026-09-16；与 ADR-0022 判据原文的漂移逐条登记——N1 以实测为准）：
 
-- 判据 1/9：`EXPECTED_PATHS`（44 条字面量，0026 起 17、④a 增 /analyze/stream 为 18、
+- 判据 1/9：`EXPECTED_PATHS`（45 条字面量，0026 起 17、④a 增 /analyze/stream 为 18、
   ADR-0031 D13 增 auth 4 为 22、T05c 增 /runs 提交与视图 2 为 24、T05d 增 /feedback 为 25、
   T06a 增 sessions 2 与 artifact 1 为 28、T06b 增 /runs/{run_id}/events 为 29、
   T07a 增 /manage/sources 为 30、T07b 增 probes 为 31、T07c 增 deployments 列/创建与
   详情 2 为 33、T08a 增 /manage/drafts 列/创建与详情 2 为 35、T08a-s2 增
   validations/reviews/patch 3 为 38、T08b 增发布导入 1 与部署发布/回退 2 与发布列/详情 2 为 43、
-  T13 增 /manage/diagnostics 为 44）
+  T13 增 /manage/diagnostics 为 44、e71ff8d 增 /manage/files/content 为 45
+  ——e71ff8d 当时漏改本文件，事后基线修复补登记）
   == `app.openapi()["paths"]` 集合，
   且无前缀业务路径 404（硬切，无兼容期）。**P0b 已接入 TS 侧**：
   `frontend/src/api/endpoints.ts` 由本文件 `test_ts_endpoints_match_expected_paths`
@@ -88,18 +89,18 @@ from serving.ratelimit import (
 REPO = Path(__file__).resolve().parent.parent
 API = API_PREFIX  # 唯一前缀事实源（serving/api.py 常量；本文件不重复字面量）
 
-# 判据 1/9：43 条字面量（0026 增 /analyze 为 17；④a 增 /analyze/stream 为 18；
+# 判据 1/9：45 条字面量（0026 增 /analyze 为 17；④a 增 /analyze/stream 为 18；
 # D13 增 auth 4 为 22；T05c 增 /runs 提交与视图 2 为 24；T05d 增 /feedback 为 25；
 # T06a 增 sessions 2 与 artifact 1 为 28；T06b 增 /runs/{run_id}/events 为 29；
 # T07a 增 /manage/sources 为 30；T07b 增 /manage/sources/{source_id}/probes 为 31；
 # T07c 增 /manage/deployments 列/创建与详情 2 为 33；T08a 增 /manage/drafts
 #   列/创建与详情 2 为 35；T08a-s2 增 validations/reviews/patch 3 为 38；
 # T08b 增 /manage/releases/imports 1 与部署发布/回退 2 与发布列/详情 2 为 43；
-# T13 增 /manage/diagnostics 为 44）
+# T13 增 /manage/diagnostics 为 44；e71ff8d 增 /manage/files/content 为 45）
 # = 根 /health + 前缀 /health + 业务 6 + 治理 8 集合 + 2 钻取 + 认证 4 + 运行 4
 #   + 会话 2 + 反馈 1 + 源管理 2 + 部署 4（含 T08b 发布/回退）+ 草稿 5
-#   + 发布 3（T08b imports + 列/详情）（运行 4 = T05c 提交/视图 + T06a
-#   artifact 钻取 + T06b SSE）
+#   + 发布 3（T08b imports + 列/详情）+ 诊断 1 + 文件内容 1（运行 4 = T05c 提交/视图
+#   + T06a artifact 钻取 + T06b SSE）
 # ADR-0026 L246 / ADR-0028 ④a / ADR-0031 D13：增端点须同步 OpenAPI、前端路径集合
 # 与类型——本集合与 TS 侧双向相等即为该同步的机器断言
 EXPECTED_PATHS: frozenset[str] = frozenset(
@@ -148,6 +149,7 @@ EXPECTED_PATHS: frozenset[str] = frozenset(
         "/api/v1/manage/releases",
         "/api/v1/manage/releases/{release_id}",
         "/api/v1/manage/diagnostics",
+        "/api/v1/manage/files/content",
     }
 )
 
@@ -184,10 +186,16 @@ EXPLANATION_KEYS = frozenset(
 )
 
 # 诚实性标志位（判据 7 的实测快照——变更须有意更新，见模块 docstring）
+# 口径 = 提交后仓库集合；固定名 paraphrase-robustness.json 系 make paraphrase 本机残留，不计不入库
+# REPORT_PATTERNS 24→26、STRUCTURED_REPORTS 16→17、FIRST_SNAPSHOT_SHA 1e2e557→ad99a2b：
+# ADR-0032 M0 基线与预实现版（2026-10-14）入产物 paraphrase-robustness-<sha>、
+# concept-<sha>（M0-T2 concept_eval）、主报告 ad99a2b.json 与同名快照（created_at 最新）
+# REPORT_PATTERNS 26→27：ADR-0032 M2-T2 A/B 开臂产物 schema-link-bm25-<sha>-concept
+# （--tag 隔离新增模式；off 臂 schema-link-bm25-<sha> 为既有模式，不增量）
 SKIPPED_VALUES = 11
-STRUCTURED_REPORTS = 16
-REPORT_PATTERNS = 24
-FIRST_SNAPSHOT_SHA = "1e2e557"
+STRUCTURED_REPORTS = 17
+REPORT_PATTERNS = 27
+FIRST_SNAPSHOT_SHA = "ad99a2b"
 NON_FIRST_SNAPSHOT_SHA = "dc4f350"  # ADR 明写「断言它不是首条」
 
 GOLD102_Q = "按分支统计 2013 年佣金收入，列出前 5 名"
@@ -267,13 +275,14 @@ class TestOpenapiPaths(_BaseCase):
         )
         self.assertEqual(
             len(paths),
-            44,
-            f"设计页 §5 断言 44 条（0026 /analyze、④a /analyze/stream、D13 auth 4、"
+            45,
+            f"设计页 §5 断言 45 条（0026 /analyze、④a /analyze/stream、D13 auth 4、"
             f"T05c /runs 2、T05d /feedback 1、T06a sessions 2 与 artifact 1、"
             f"T06b /runs/{{run_id}}/events 1、T07a /manage/sources 1、"
             f"T07b probes 1、T07c deployments 2、T08a drafts 2、T08a-s2 drafts 3、"
             f"T08b releases imports 1 + deployments 发布/回退 2 + releases 2、"
-            f"T13 diagnostics 1），"
+            f"T13 diagnostics 1、e71ff8d files/content 1——原计 44 系 e71ff8d 漏改后"
+            f"基线修复补登记），"
             f"实测 {len(paths)}",
         )
 

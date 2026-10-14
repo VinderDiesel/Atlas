@@ -1,12 +1,14 @@
 """指标检索评测：BM25 / Milvus 稀疏向量 / RRF 融合 / 元数据 Rerank
-在 44 条可解析 gold 问句上的 Recall@1/@5（确定性召回，各引擎独立报告）。
+在 finance 域可解析 gold 问句（gold-1xx / ambiguous=false）上的 Recall@1/@5
+（确定性召回，各引擎独立报告）。
 
 口径（与 eval/runner.py 同一诚实基线）
 -------------------------------------
 - 语料：atlas_finance.ossie.yaml 的当前指标文档（名 + 同义词 + 描述，
   retrieval/metric_docs.py 确定性生成），与 gold 问句同源（Day 27 起为 20）。
-- 查询集：gold-1xx 中 ambiguous=false 的 44 条问句（expected_metric 为正确
-  指标）；歧义样本由 Planner 澄清承接，不进检索评测。
+- 查询集：`eval/gold/finance` 中 gold-1xx 且 ambiguous=false 的问句（expected_metric
+  为正确指标；条数随标注演进，以产物 queries.n 为准）；歧义样本由 Planner 澄清
+  承接，不进检索评测。
 - 指标：Recall@1 / Recall@5 = 正确指标出现在 top-1 / top-5 的比例。
 - 引擎：--engine bm25（内存 BM25，零依赖）、--engine milvus（Milvus
   稀疏词法向量，SPARSE_INVERTED_INDEX；需 atlas-milvus 服务在跑）、
@@ -35,13 +37,20 @@ from retrieval.metric_docs import build_metric_docs
 
 REPO = Path(__file__).resolve().parent.parent
 GOLD_DIR = REPO / "eval" / "gold"
+# gold 按域分目录（eval/gold/finance、retail…）；检索评测的对象是金融语义模型
+FINANCE_GOLD_DIR = GOLD_DIR / "finance"
 REPORTS_DIR = REPO / "eval" / "reports"
 
 
 def load_queries() -> list[dict[str, str]]:
-    """加载可解析 gold 样本作为查询集（id/question/expected_metric）。"""
+    """加载 finance 域可解析 gold 样本作为查询集（id/question/expected_metric）。
+
+    修复记录：gold 从平铺重构为按域子目录后，此处曾用平铺 glob（GOLD_DIR.glob）
+    静默匹配 0 条——产物 queries.n=0 / Recall 0/0 无对照意义（2026-10-14 基线
+    冻结时发现并修复；条数随标注演进，以产物 queries.n 为准）。
+    """
     queries: list[dict[str, str]] = []
-    for path in sorted(GOLD_DIR.glob("gold-*.json")):
+    for path in sorted(FINANCE_GOLD_DIR.glob("gold-1*.json")):
         sample = json.loads(path.read_text(encoding="utf-8"))
         if str(sample["id"]).startswith("gold-1") and not sample.get("ambiguous", False):
             queries.append(

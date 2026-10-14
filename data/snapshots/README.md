@@ -47,7 +47,7 @@
 
 **指纹组记法**（ADR-0019 决策 ⑥，2026-09-14 改）：同组 = `row_counts` 与
 `snapshot_ids` **全一致**的同数据多锁（数据未动，HEAD 前进后仅重锁新 sha）。
-盘上 21 份 meta 按此实测恰为两组：**组 1 双源 29 表 16 份** / **组 2 单源 25 表 5 份**。
+盘上 22 份 meta 按此实测恰为两组：**组 1 双源 29 表 17 份** / **组 2 单源 25 表 5 份**。
 分组与份数不是手工点数——本表的覆盖性由 `tests/test_identity.py::TestSnapshotLedgerCoverage`
 断言（漏记任何一份盘上存在的 meta 即测试变红）。本节曾与文件系统漂移 8 份，正是
 加这条断言的理由。
@@ -61,7 +61,7 @@
 - `a207284` / `30b8344`：TPC-DI 单源同数据多锁（后续批次 HEAD 前进后重锁，
   指纹与 b7e9ce7 全一致，见对应 eval 批次 commit）
 
-### 组 1 · 双源 29 表（TPC-DI + TPC-DS SF0.1，16 份，按 `created_at` 升序）
+### 组 1 · 双源 29 表（TPC-DI + TPC-DS SF0.1，17 份，按 `created_at` 升序）
 
 - `dc4f350`（09-04 12:54）：TPC-DI + TPC-DS SF0.1 双源 29 表（P2b 零售装载后首次全库锁定）
 - `92033c9`（09-04 13:08）：双源 29 表同数据多锁（P5 零售锚定前重锁，指纹与 dc4f350
@@ -108,6 +108,12 @@
 - `1e2e557`（09-17，同批）：双源 29 表同数据多锁（HEAD 再前进后重锁，指纹与 e0e0422
   全一致）；真链全量 `make eval` 绑定此 sha：`eval/reports/1e2e557.json`（EX 97/97、
   plan_acc 97/97、exec_errors 0、guard_blocked 0、ex_anchored 0）——GATE-④ 解锁时间前置证据
+- `ad99a2b`（10-14，ADR-0032 M0 基线冻结批次）：双源 29 表同数据多锁（HEAD
+  前进到无同名 meta 的 commit 后重锁，未动数据，指纹与 1e2e557/e0e0422 全一致）；
+  M0 四入口基线产物绑定此 sha：`eval/reports/ad99a2b.json`（EX finance 73/73 +
+  retail 24/24；clarify 6/6 + 3/3；exec_errors 0）、`retrieval-bm25-ad99a2b.json`
+  （Recall@1 69/73 @5 72/73）、`schema-link-bm25-ad99a2b.json`（指标 Recall@1
+  71/73，表真值子集 66/73）、`paraphrase-robustness-ad99a2b.json`（plan_acc 9/13）
 
 **7 位 hex 在本文件里有两种身份**：快照名，与 commit 短 sha。上头的「随 commit
 `4a547e7` 入库」这类出处、以及叙述里的 `9cf70c7` / `b2a2e5c` 属后者——盘上**没有**同名

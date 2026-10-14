@@ -149,6 +149,9 @@ def validate_file(path: Path, seen_names: dict[str, str]) -> list[str]:
         return [f"{path}: semantic_model 必须是非空列表"]
 
     for model in doc["semantic_model"]:
+        if not isinstance(model, dict):
+            errors.append(f"semantic_model 元素必须是对象，当前为 {type(model).__name__}: {model!r}")
+            continue
         validate_model(model, errors, seen_names)
     return errors
 

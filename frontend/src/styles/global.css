@@ -18,6 +18,7 @@
 [data-theme="dark"] {
   --atlas-bg: #0c1220;
   --atlas-surface: #131d2e;
+  --atlas-elevated: #1a2538; /* 新增：抬起层 */
   --atlas-border: #1e2d42;
   --atlas-primary: #6ee7f5;
   --atlas-accent: #f5b56e;
@@ -25,6 +26,7 @@
   --atlas-muted: #8b98a9;
   --atlas-success: #34d399;
   --atlas-danger: #f87171;
+  --atlas-handoff: #a78bfa; /* 新增：转人工 */
   --atlas-code-bg: #0a0f1a;
   --atlas-content-max: 1200px;
 }
@@ -34,6 +36,7 @@
 [data-theme="light"] {
   --atlas-bg: #f8fafc;
   --atlas-surface: #ffffff;
+  --atlas-elevated: #f1f5f9;
   --atlas-border: #e2e8f0;
   --atlas-primary: #0891b2;
   --atlas-accent: #d97706;
@@ -41,23 +44,49 @@
   --atlas-muted: #64748b;
   --atlas-success: #059669;
   --atlas-danger: #dc2626;
+  --atlas-handoff: #7c3aed;
   --atlas-code-bg: #f1f5f9;
 }
 
 /* ── 基础样式 ──────────────────────────────────────────── */
 
 body {
-  background: var(--atlas-bg);
+  background:
+    linear-gradient(rgba(110, 231, 245, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(110, 231, 245, 0.02) 1px, transparent 1px),
+    var(--atlas-bg);
+  background-size: 40px 40px, 40px 40px, 100% 100%;
   color: var(--atlas-text);
   font-family: "Outfit", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     "Noto Sans CJK SC", system-ui, sans-serif;
   transition: background 200ms, color 200ms;
 }
 
+[data-theme="light"] body {
+  background: var(--atlas-bg); /* 浅色主题不用网格 */
+}
+
 code,
 pre,
 .ant-typography code {
   font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ── 等宽字体强制（凡数字皆等宽） ─────────────────────── */
+
+.atlas-mono,
+.atlas-sha,
+.atlas-sql,
+.atlas-number {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 表格数字列 */
+.atlas-table-number {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* ── 滚动条（深色窄轨） ────────────────────────────────── */
@@ -295,6 +324,47 @@ pre,
   font-weight: 600;
 }
 
+/* ── 治理星图：控制台条与分区 ────────────────────────── */
+
+.atlas-console {
+  background: var(--atlas-elevated);
+  border: 1px solid var(--atlas-border);
+  border-radius: 8px;
+  padding: 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.atlas-console .atlas-rules {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.atlas-star-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.atlas-star-chart__region {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.atlas-star-chart__region-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+}
+
+.atlas-star-chart__region .ant-tabs-nav {
+  margin-bottom: 8px;
+}
+
 /* ── 规则折叠条 ────────────────────────────────────────── */
 
 .atlas-rules {
@@ -327,13 +397,309 @@ pre,
   color: var(--atlas-muted);
 }
 
+/* ── 数据接入港：航道导航（泊位节点 + 连接线） ────────── */
+
+.atlas-harbor-lane {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(140px, 1fr));
+  overflow-x: auto;
+  margin: 0 0 24px;
+  padding: 0;
+  list-style: none;
+}
+
+.atlas-harbor-lane__berth {
+  position: relative;
+  padding-right: 14px;
+}
+
+/* 连接线：泊位之间的横轨（自节点右侧至下一节点） */
+.atlas-harbor-lane__berth::after {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: 34px;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--atlas-border);
+}
+
+.atlas-harbor-lane__berth:last-child::after {
+  display: none;
+}
+
+.atlas-harbor-lane__berth--done::after {
+  background: color-mix(in srgb, var(--atlas-success) 45%, transparent);
+}
+
+.atlas-harbor-lane__berth--active::after {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--atlas-primary) 45%, transparent),
+    var(--atlas-border)
+  );
+}
+
+.atlas-harbor-lane__button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.atlas-harbor-lane__dot {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--atlas-border);
+  background: var(--atlas-surface);
+  color: var(--atlas-muted);
+  font-size: 11px;
+}
+
+.atlas-harbor-lane__title {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--atlas-muted);
+}
+
+.atlas-harbor-lane__desc {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--atlas-muted);
+  opacity: 0.8;
+}
+
+.atlas-harbor-lane__berth--done .atlas-harbor-lane__dot {
+  border-color: color-mix(in srgb, var(--atlas-success) 55%, transparent);
+  background: color-mix(in srgb, var(--atlas-success) 10%, transparent);
+  color: var(--atlas-success);
+}
+
+.atlas-harbor-lane__berth--done .atlas-harbor-lane__title {
+  color: var(--atlas-text);
+}
+
+.atlas-harbor-lane__berth--active .atlas-harbor-lane__dot {
+  border-color: color-mix(in srgb, var(--atlas-primary) 65%, transparent);
+  background: color-mix(in srgb, var(--atlas-primary) 10%, transparent);
+  color: var(--atlas-primary);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--atlas-primary) 35%, transparent);
+}
+
+.atlas-harbor-lane__berth--active .atlas-harbor-lane__title {
+  color: var(--atlas-primary);
+}
+
+/* ── 数据接入港：泊位号 chip（卡片标题前缀） ────────── */
+
+.atlas-berth-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 20px;
+  margin-right: 8px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--atlas-primary) 35%, transparent);
+  background: color-mix(in srgb, var(--atlas-primary) 8%, transparent);
+  color: var(--atlas-primary);
+  font-size: 11px;
+  vertical-align: middle;
+}
+
+/* ── 快照封印（Snapshot Seal） ─────────────────────── */
+
+.atlas-seal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.atlas-seal__label {
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.atlas-seal__value {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.atlas-seal--unbound {
+  opacity: 0.5;
+}
+
+/* ── 运行目录卡片（Run Observatory） ─────────────────── */
+
+.atlas-run-card {
+  padding: 12px 14px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 8px;
+  background: var(--atlas-surface);
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.atlas-run-card:hover {
+  border-color: var(--atlas-primary);
+}
+
+.atlas-run-card--selected {
+  border-color: var(--atlas-primary);
+  background: rgba(110, 231, 245, 0.06);
+}
+
+.atlas-run-card__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.atlas-run-card__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.atlas-run-card__dot--green { background: var(--atlas-success); }
+.atlas-run-card__dot--red { background: var(--atlas-danger); }
+.atlas-run-card__dot--orange { background: var(--atlas-accent); }
+.atlas-run-card__dot--blue { background: var(--atlas-primary); }
+
+.atlas-run-card__meta {
+  font-size: 13px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atlas-run-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ── 运行观测台布局（Run Observatory） ───────────────── */
+
+.atlas-observatory {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.atlas-observatory__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.atlas-observatory__main {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .atlas-observatory {
+    grid-template-columns: 1fr;
+  }
+
+  .atlas-observatory__sidebar {
+    max-height: none;
+  }
+}
+
+/* ── 运行状态仪表头（Run Observatory） ───────────────── */
+
+.atlas-run-header {
+  background: var(--atlas-elevated);
+  border: 1px solid var(--atlas-border);
+  border-radius: 8px;
+  padding: 14px 20px;
+  margin-bottom: 16px;
+}
+
+.atlas-run-header__title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.atlas-run-header__id {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.atlas-run-header__gauges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+}
+
+.atlas-gauge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.atlas-gauge__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--atlas-muted);
+}
+
+.atlas-gauge__value {
+  font-size: 12px;
+  color: var(--atlas-text);
+}
+
 /* ── 运行关系图（React Flow 容器与图例） ──── */
 
 .atlas-graph {
   height: 320px;
   border: 1px solid var(--atlas-border);
   border-radius: 8px;
-  background: var(--atlas-bg);
+  background:
+    linear-gradient(rgba(110, 231, 245, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(110, 231, 245, 0.03) 1px, transparent 1px),
+    var(--atlas-bg);
+  background-size: 32px 32px, 32px 32px, 100% 100%;
 }
 
 .atlas-legend-dot {
@@ -342,6 +708,274 @@ pre,
   height: 8px;
   border-radius: 4px;
   margin-right: 6px;
+}
+
+/* ── 事件日志（RunTimeline 仪器时间线） ── */
+
+.atlas-event-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 400px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.atlas-event-log__item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 6px;
+  background: var(--atlas-bg);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.atlas-event-log__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.atlas-event-log__dot--green { background: var(--atlas-success); }
+.atlas-event-log__dot--red { background: var(--atlas-danger); }
+.atlas-event-log__dot--blue { background: #1677ff; }
+.atlas-event-log__dot--orange { background: var(--atlas-accent); }
+.atlas-event-log__dot--purple { background: var(--atlas-handoff); }
+.atlas-event-log__dot--geekblue { background: #2f54eb; }
+.atlas-event-log__dot--volcano { background: #fa541c; }
+.atlas-event-log__dot--gold { background: #faad14; }
+.atlas-event-log__dot--default { background: var(--atlas-muted); }
+
+.atlas-event-log__seq {
+  color: var(--atlas-muted);
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.atlas-event-log__tag {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.atlas-event-log__node {
+  flex-shrink: 0;
+  color: var(--atlas-text);
+  font-size: 11px;
+}
+
+.atlas-event-log__time {
+  color: var(--atlas-muted);
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.atlas-event-log__summary {
+  color: var(--atlas-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+/* ── 运行节点（仪器节点；状态色与图例同源） ── */
+.atlas-run-node {
+  min-width: 76px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  border: 1.5px solid var(--atlas-border);
+  background: var(--atlas-surface);
+  text-align: center;
+  cursor: pointer;
+  transition: border-width 150ms ease, border-color 150ms ease,
+    background 150ms ease, box-shadow 150ms ease;
+}
+
+.atlas-run-node__label {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--atlas-text);
+}
+
+.atlas-run-node__status {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.atlas-run-node--selected {
+  border-width: 2.5px;
+  background: var(--atlas-elevated);
+  box-shadow: 0 0 12px rgba(110, 231, 245, 0.25);
+}
+
+.atlas-run-node--not_reached .atlas-run-node__status {
+  color: var(--atlas-muted);
+}
+
+.atlas-run-node--running {
+  border-color: var(--atlas-primary);
+}
+
+.atlas-run-node--running .atlas-run-node__status {
+  color: var(--atlas-primary);
+}
+
+.atlas-run-node--finished {
+  border-color: var(--atlas-success);
+}
+
+.atlas-run-node--finished .atlas-run-node__status {
+  color: var(--atlas-success);
+}
+
+.atlas-run-node--failed {
+  border-color: var(--atlas-danger);
+}
+
+.atlas-run-node--failed .atlas-run-node__status {
+  color: var(--atlas-danger);
+}
+
+.atlas-run-node--skipped {
+  border-color: var(--atlas-accent);
+}
+
+.atlas-run-node--skipped .atlas-run-node__status {
+  color: var(--atlas-accent);
+}
+
+/* 运行中节点脉冲（prefers-reduced-motion 已全局关闭） */
+@keyframes nodePulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(110, 231, 245, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(110, 231, 245, 0);
+  }
+}
+
+.atlas-run-node--running {
+  animation: nodePulse 1.5s ease-in-out infinite;
+}
+
+/* ── 星体徽章（Star Badge；治理面状态） ────────────────── */
+
+.star-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.star-badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.star-badge--active {
+  color: var(--atlas-success);
+  border-color: color-mix(in srgb, var(--atlas-success) 40%, transparent);
+  background: color-mix(in srgb, var(--atlas-success) 8%, transparent);
+}
+
+.star-badge--active .star-badge__dot {
+  background: var(--atlas-success);
+  box-shadow: 0 0 6px var(--atlas-success);
+}
+
+.star-badge--draft {
+  color: var(--atlas-accent);
+  border-color: color-mix(in srgb, var(--atlas-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--atlas-accent) 8%, transparent);
+}
+
+.star-badge--draft .star-badge__dot {
+  background: var(--atlas-accent);
+}
+
+.star-badge--verified {
+  color: var(--atlas-primary);
+  border-color: color-mix(in srgb, var(--atlas-primary) 40%, transparent);
+  background: color-mix(in srgb, var(--atlas-primary) 8%, transparent);
+}
+
+.star-badge--verified .star-badge__dot {
+  background: var(--atlas-primary);
+}
+
+.star-badge--retired {
+  color: var(--atlas-muted);
+  border-color: color-mix(in srgb, var(--atlas-muted) 40%, transparent);
+  background: color-mix(in srgb, var(--atlas-muted) 8%, transparent);
+}
+
+.star-badge--retired .star-badge__dot {
+  background: var(--atlas-muted);
+}
+
+.star-badge--failed {
+  color: var(--atlas-danger);
+  border-color: color-mix(in srgb, var(--atlas-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--atlas-danger) 8%, transparent);
+}
+
+.star-badge--failed .star-badge__dot {
+  background: var(--atlas-danger);
+  box-shadow: 0 0 6px var(--atlas-danger);
+}
+
+.star-badge--superseded {
+  color: var(--atlas-handoff);
+  border-color: color-mix(in srgb, var(--atlas-handoff) 40%, transparent);
+  background: color-mix(in srgb, var(--atlas-handoff) 8%, transparent);
+}
+
+.star-badge--superseded .star-badge__dot {
+  background: var(--atlas-handoff);
+}
+
+.star-badge--unknown {
+  color: var(--atlas-muted);
+  border-color: var(--atlas-border);
+  background: transparent;
+}
+
+.star-badge--unknown .star-badge__dot {
+  background: var(--atlas-muted);
+  opacity: 0.5;
+}
+
+/* ── 确定性徽标（Determinism Badge） ────────────────── */
+
+.atlas-badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.atlas-badge--compiler {
+  border-color: var(--atlas-primary);
+  color: var(--atlas-primary);
+}
+
+.atlas-badge--llm {
+  border-color: var(--atlas-accent);
+  color: var(--atlas-accent);
 }
 
 /* ── 会话条目（本标签页日志；当前会话高亮） ───────────── */
@@ -358,16 +992,46 @@ pre,
   background: rgba(8, 145, 178, 0.06);
 }
 
-/* ── 治理子页：来源路径列表 ────────────────────────────── */
+/* ── 治理子页：来源路径列表（星图视觉：节点 + 连接线） ── */
 
 .atlas-source-list {
   margin: 0 0 12px;
-  padding-left: 20px;
+  padding: 2px 0 2px 14px;
   font-size: 13px;
+  list-style: none;
+  border-left: 1px solid color-mix(in srgb, var(--atlas-accent) 30%, transparent);
 }
 
-.atlas-source-list li + li {
-  margin-top: 4px;
+.atlas-source-list__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.atlas-source-list__item + .atlas-source-list__item {
+  margin-top: 6px;
+}
+
+/* 星体节点（文件图标）：小方块 + 光晕，与状态圆点区分（方=来源，圆=状态） */
+.atlas-source-list__node {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--atlas-accent) 85%, transparent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--atlas-accent) 40%, transparent);
+}
+
+/* 连接线：竖轨到星体节点的短横线 */
+.atlas-source-list__item::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  width: 14px;
+  height: 1px;
+  background: color-mix(in srgb, var(--atlas-accent) 30%, transparent);
 }
 
 /* ── 表格：表头降噪 ────────────────────────────────────── */
@@ -383,6 +1047,62 @@ pre,
 .atlas-row-stripe td {
   background: color-mix(in srgb, var(--atlas-text, #e2e8f0) 3%, transparent) !important;
 }
+
+/* ── 溯源脊（Provenance Spine） ─────────────────────── */
+
+.atlas-spine {
+  position: relative;
+  display: flex;
+  gap: 16px;
+}
+
+.atlas-spine__line {
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--atlas-primary);
+  opacity: 0.3;
+}
+
+.atlas-spine__content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 节点圆点（由子组件添加 .atlas-spine__node） */
+.atlas-spine__node {
+  position: relative;
+  padding-left: 24px;
+}
+
+.atlas-spine__node::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--atlas-primary);
+  box-shadow: 0 0 0 3px var(--atlas-bg);
+}
+
+/* Staggered reveal 动效 */
+.atlas-spine__node {
+  animation: fadeSlideIn 300ms ease-out both;
+}
+
+.atlas-spine__node:nth-child(1) { animation-delay: 0ms; }
+.atlas-spine__node:nth-child(2) { animation-delay: 50ms; }
+.atlas-spine__node:nth-child(3) { animation-delay: 100ms; }
+.atlas-spine__node:nth-child(4) { animation-delay: 150ms; }
+.atlas-spine__node:nth-child(5) { animation-delay: 200ms; }
+.atlas-spine__node:nth-child(6) { animation-delay: 250ms; }
+.atlas-spine__node:nth-child(7) { animation-delay: 300ms; }
 
 /* ── 动效：答案区渐入 ──────────────────────────────────── */
 

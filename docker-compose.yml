@@ -242,7 +242,7 @@ services:
       # `make down` 不删命名卷；`docker compose down -v` 会删（AGENTS.md §6 禁用）。
       - atlas-api-state:/app/serving/state
     ports:
-      - "8010:8000" # 宿主机 8000 被用户资产配置服务占用，映射到 8010
+      - "8010:8020" # 宿主机 8000 被用户资产配置服务占用，映射到 8010
     # doris-fe 只在 doris_net（compose：指定 networks 即只入该网），
     # atlas-api 必须同网才能解析 atlas-doris-fe:9030
     networks:
@@ -252,7 +252,7 @@ services:
       # 将其收窄为「路由前缀化后本行**不需要同步**」——双挂保证此处字符串逐字
       # 不变，判据 2 的 git diff 断言由此成立）。/api/v1/health 为新增双挂点，
       # 同一 handler、同 body。
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/health', timeout=5)"]
       interval: 15s
       timeout: 5s
       retries: 5

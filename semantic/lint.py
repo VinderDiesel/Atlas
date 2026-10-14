@@ -8,6 +8,8 @@
 4. 权威源唯一性     —— semantic/ 下语义定义文件只允许住在权威目录（ADR-0002/0015）
 5. values 快照锁定  —— semantic/values/*.json 可被运行时加载、且绑定当前锁定快照（ADR-0016）
 6. analysis schema   —— eval/analysis/**/*.json 结构（ADR-0026 T01；schema.json 自身不当样本）
+7. 概念索引与别名     —— semantic/ontology/ 索引产物与 semantic/synonyms/ 别名文件的
+   漂移防线（ADR-0032 ⑤：改源不重建 = 红）
 
 任一环节失败即返回非零退出码。
 
@@ -17,6 +19,7 @@
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import os
 import sys
@@ -26,7 +29,17 @@ from typing import Any
 import jsonschema
 import yaml
 
+from agent.concept_index import parse_concept_index
 from agent.value_domain import parse_profile
+
+# 概念层校验与构建器同口径的单一事实源：路径常量与对象定位 / 映射提取逻辑直接
+# 复用（私有名引用是有意的——双份实现 = 漂移风险；重组接口须先改构建器再改此处）
+from data.fibo.build_concept_index import (
+    OSSIE_PATH,
+    REGISTRY_PATH,
+    _extract_mapped,
+    _object_synonyms,
+)
 from data.identity import SNAPSHOT_DIR
 from semantic import governance_validate, ossie_validate
 
@@ -35,11 +48,17 @@ GOLD_SCHEMA = REPO / "eval" / "gold" / "schema.json"
 ANALYSIS_SCHEMA = REPO / "eval" / "analysis" / "schema.json"
 SEMANTIC_ROOT = REPO / "semantic"
 VALUES_DIR = SEMANTIC_ROOT / "values"
+ONTOLOGY_DIR = SEMANTIC_ROOT / "ontology"
+SYNONYMS_DIR = SEMANTIC_ROOT / "synonyms"
+# 第 7 节目标文件名（构建器/别名文件的唯一产物名，见 data/fibo/build_concept_index.py）
+_INDEX_FILENAME = "atlas_finance.concept_index.json"
+_ALIAS_FILENAME = "concepts_zh_cn.yml"
 # SNAPSHOT_DIR 从 data.identity 导入（ADR-0019 决策 ②：快照目录路径唯一权威）
 # 语义定义文件（*.yaml / *.yml）允许存放的目录（ADR-0002：权威源唯一 = ossie/；
 # ADR-0015：locale 同义词/形态词典在 synonyms/；行级策略声明在 policies/；
-# ADR-0016：维度值域快照在 values/——机器生成，与词典/策略同一目录职责纪律）
-_AUTHORITATIVE_DIRS = frozenset({"ossie", "synonyms", "policies", "values"})
+# ADR-0016：维度值域快照在 values/——机器生成，与词典/策略同一目录职责纪律；
+# ADR-0032：概念索引 AOT 产物在 ontology/——清单数据与 AGENTS §7.3 同源维护）
+_AUTHORITATIVE_DIRS = frozenset({"ossie", "synonyms", "policies", "values", "ontology"})
 # 不检查位置的非定义目录（`_*` 前缀归档区另走豁免分支）
 _EXEMPT_DIRS = _AUTHORITATIVE_DIRS | {"__pycache__"}
 
@@ -53,7 +72,8 @@ def check_semantic_authority(root: Path | None = None) -> list[str]:
     作设计演进对照（零代码引用）。
 
     规则：除 `_*` 前缀目录（归档区，如 `_legacy/`）外，*.yaml/*.yml 只允许出现在
-    `ossie/`、`synonyms/`、`policies/`；JSON Schema 与 migrations 叙述性文档不受限。
+    `ossie/`、`synonyms/`、`policies/`、`values/`、`ontology/`；JSON Schema 与
+    migrations 叙述性文档不受限。
     """
     base = root or SEMANTIC_ROOT
     errors: list[str] = []
@@ -249,6 +269,191 @@ def check_value_profiles(
     return errors
 
 
+def _registry() -> dict[str, str]:
+    """iri_registry.json 的概念集合（短名 → IRI；data/fibo 为唯一权威）。"""
+    doc = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    return dict(doc["concepts"])
+
+
+def _load_alias_terms(synonyms_dir: Path) -> dict[str, list[str]]:
+    """别名文件 → 概念短名 → 术语列表（第 7 节 S3 比对的合并视图）。
+
+    与 `data/fibo/build_concept_index.py::_load_aliases` 同口径（单文件
+    concepts_zh_cn.yml；扩多 locale 时两处同步演进）。文件缺失 / 畸形 → {}；
+    畸形由 _check_alias_file 另行响亮上报，本函数只供比对。
+    """
+    alias_path = synonyms_dir / _ALIAS_FILENAME
+    if not alias_path.exists():
+        return {}
+    try:
+        doc = yaml.safe_load(alias_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    concepts = doc.get("concepts") or {}
+    if not isinstance(concepts, dict):
+        return {}
+    return {str(name): [str(t) for t in (terms or [])] for name, terms in concepts.items()}
+
+
+def _check_alias_file(synonyms_dir: Path) -> list[str]:
+    """别名文件校验（ADR-0032 ⑤）：键 ∈ registry；术语非空、同概念去重；
+    同一术语不得映射多个概念（同 locale 歧义 = curation bug）。
+
+    文件不存在 → 跳过（别名未启用是合法形态）。
+    """
+    alias_path = synonyms_dir / _ALIAS_FILENAME
+    if not alias_path.exists():
+        return []
+    try:
+        doc = yaml.safe_load(alias_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        return [f"{_ALIAS_FILENAME}：YAML 解析失败（{exc}）"]
+    if doc is not None and not isinstance(doc, dict):
+        return [f"{_ALIAS_FILENAME}：顶层必须是映射（concepts: {{概念短名: [术语, ...]}}）"]
+    concepts = (doc or {}).get("concepts") or {}
+    if not isinstance(concepts, dict):
+        return [f"{_ALIAS_FILENAME}：concepts 必须是映射（概念短名 → 术语列表）"]
+    known = set(_registry())
+    errors: list[str] = []
+    owners: dict[str, set[str]] = {}
+    for raw_name, terms in concepts.items():
+        name = str(raw_name)
+        if name not in known:
+            errors.append(
+                f"{_ALIAS_FILENAME}：概念 {name!r} 不在 iri_registry.json"
+                "（先跑 check_iris.py 入 registry 再改名文件）"
+            )
+        if not isinstance(terms, list):
+            errors.append(f"{_ALIAS_FILENAME}：概念 {name!r} 的术语必须是列表")
+            continue
+        seen: set[str] = set()
+        for i, raw_term in enumerate(terms):
+            term = str(raw_term).strip()
+            if not term:
+                errors.append(f"{_ALIAS_FILENAME}：概念 {name!r} 含空术语（第 {i + 1} 条）")
+                continue
+            if term in seen:
+                errors.append(f"{_ALIAS_FILENAME}：概念 {name!r} 术语重复：{term!r}")
+            seen.add(term)
+            owners.setdefault(term, set()).add(name)
+    for term, names in sorted(owners.items()):
+        if len(names) > 1:
+            errors.append(
+                f"{_ALIAS_FILENAME}：术语 {term!r} 同时映射到多个概念：{sorted(names)}"
+                "（同 locale 歧义 = curation bug）"
+            )
+    return errors
+
+
+def _ossie_object_space() -> tuple[dict[str, Any], dict[str, Any], list[Any]]:
+    """finance 语义模型的（数据集 / 指标 / 关系）——_object_synonyms 的定位空间。"""
+    doc = yaml.safe_load(OSSIE_PATH.read_text(encoding="utf-8"))
+    model = doc["semantic_model"][0]
+    return (
+        {d["name"]: d for d in model["datasets"]},
+        {m["name"]: m for m in model["metrics"]},
+        list(model["relationships"]),
+    )
+
+
+def _check_concept_index(ontology_dir: Path, synonyms_dir: Path) -> list[str]:
+    """概念索引漂移校验（ADR-0032 ⑤：两级漂移防线的 CI 面）。
+
+    规则：结构合法（复用运行时 parse_concept_index 强校验）；概念 IRI ∈
+    iri_registry；objects 可在语义模型定位（复用构建器定位逻辑，口径同源）；
+    与 ossie fibo_alignment 双向一致（孤儿 / 漏配）；source_semantic_sha =
+    当前 ossie 文件 sha256；索引内 S3 术语 = 当前别名文件合并结果——
+    「改源不重建 = 红」。
+
+    索引文件不存在 → 跳过（atlas_retail 无映射不生成产物，是合法形态）。
+    """
+    index_path = ontology_dir / _INDEX_FILENAME
+    if not index_path.exists():
+        return []
+    try:
+        index = parse_concept_index(index_path)
+    except ValueError as exc:
+        return [str(exc)]
+    errors: list[str] = []
+    known_iris = set(_registry().values())
+    datasets, metrics, relationships = _ossie_object_space()
+
+    # a) 概念 IRI ∈ registry（ADR-0032 ⑤）
+    for name, entry in index.concepts.items():
+        if entry.iri not in known_iris:
+            errors.append(f"概念 {name} 的 iri 不在 iri_registry.json：{entry.iri}")
+
+    # b) objects 可在语义模型定位 + 收集索引侧映射集
+    index_mapped: set[tuple[str, str]] = set()
+    for name, entry in index.concepts.items():
+        for obj_map in entry.objects:
+            index_mapped.add((obj_map.object, entry.iri))
+            try:
+                _object_synonyms(obj_map.object, datasets, metrics, relationships)
+            except ValueError as exc:
+                errors.append(f"概念 {name} 的对象不在语义模型：{obj_map.object!r}（{exc}）")
+
+    # c) 与 ossie fibo_alignment 双向一致（孤儿 = 索引有 ossie 无；漏配 = 反之）
+    ossie_mapped = {(m["object"], m["concept_iri"]) for m in _extract_mapped()}
+    for obj, iri in sorted(index_mapped - ossie_mapped):
+        errors.append(f"索引对象未对齐 fibo_alignment（孤儿）：{obj!r} → {iri}")
+    for obj, iri in sorted(ossie_mapped - index_mapped):
+        errors.append(f"fibo_alignment 映射未落位索引（漏配）：{obj!r} → {iri}")
+
+    # d) source_semantic_sha = 当前 ossie 文件 sha256（改源不重建 = 红）
+    current_sha = hashlib.sha256(OSSIE_PATH.read_bytes()).hexdigest()
+    if index.source_semantic_sha != current_sha:
+        errors.append(
+            f"索引 source_semantic_sha {index.source_semantic_sha} ≠ 当前 ossie 文件 "
+            "sha256（改源不重建，请重跑 make ontology-build）"
+        )
+
+    # e) 索引内 S3 术语 = 当前别名文件合并结果（改源不重建 = 红）
+    aliases = _load_alias_terms(synonyms_dir)
+    for name, entry in index.concepts.items():
+        indexed = {t.text for t in entry.terms if t.source == "S3"}
+        declared = set(aliases.get(name, []))
+        if indexed != declared:
+            errors.append(
+                f"概念 {name} 的 S3 术语与 {_ALIAS_FILENAME} 合并结果不一致"
+                f"（改源不重建，请重跑 make ontology-build）："
+                f"索引多 {sorted(indexed - declared)}，别名多 {sorted(declared - indexed)}"
+            )
+    return errors
+
+
+def check_concept_layer(
+    ontology_dir: Path | None = None,
+    synonyms_dir: Path | None = None,
+) -> list[str]:
+    """概念索引与别名校验（`make lint` 第 7 节；ADR-0032 ⑤）。
+
+    组合两个子检查——各自在目标文件缺失时跳过不报错（概念层未启用的合法形态）：
+    1. 别名文件：键 ∈ registry；术语非空 / 去重；同术语不得跨概念歧义；
+    2. 索引：结构 / IRI / objects 定位 / 双向一致 / sha / S3 合并。
+
+    ontology_dir / synonyms_dir 参数化供测试指向 TemporaryDirectory（与
+    check_value_profiles 同一模式）。
+    """
+    synonyms = synonyms_dir or SYNONYMS_DIR
+    errors = _check_alias_file(synonyms)
+    errors.extend(_check_concept_index(ontology_dir or ONTOLOGY_DIR, synonyms))
+    return errors
+
+
+def _concept_layer_counts() -> tuple[int, int]:
+    """第 7 节成功行的计数（概念数 / 别名术语条数）；文件缺失按 0。"""
+    index_path = ONTOLOGY_DIR / _INDEX_FILENAME
+    n_concepts = 0
+    if index_path.exists():
+        doc = json.loads(index_path.read_text(encoding="utf-8"))
+        n_concepts = len(doc.get("concepts") or {})
+    aliases = _load_alias_terms(SYNONYMS_DIR)
+    return n_concepts, sum(len(terms) for terms in aliases.values())
+
+
 def main() -> int:
     files = sorted(Path(REPO / "semantic" / "ossie").glob("*.ossie.yaml"))
 
@@ -303,7 +508,8 @@ def main() -> int:
     if errors:
         print(f"\n[authority] 校验失败：{len(errors)} 个问题")
         return 1
-    print("✅ [authority] 语义定义文件仅在权威目录（ossie/ synonyms/ policies/ values/）")
+    # 成功消息动态引用清单（原先写死四目录，ADR-0032 加 ontology/ 时暴露漂移风险）
+    print(f"✅ [authority] 语义定义文件仅在权威目录（{'/ '.join(sorted(_AUTHORITATIVE_DIRS))}/）")
 
     # 5) 值域快照绑定
     errors = check_value_profiles()
@@ -329,6 +535,19 @@ def main() -> int:
         [p for p in sorted((REPO / "eval" / "analysis").rglob("*.json")) if p.name != "schema.json"]
     )
     print(f"✅ [analysis] 分析样本 schema 校验通过：{n_analysis} 条样本")
+
+    # 7) 概念索引与别名校验（ADR-0032 ⑤：改源不重建 = 红；两级漂移防线的 CI 面）
+    errors = check_concept_layer()
+    for err in errors:
+        print(f"  ❌ [concept] {err}")
+    if errors:
+        print(f"\n[concept] 校验失败：{len(errors)} 个问题")
+        return 1
+    n_concepts, n_aliases = _concept_layer_counts()
+    if n_concepts:
+        print(f"✅ [concept] 概念索引与别名校验通过（{n_concepts} 概念 / {n_aliases} 条别名）")
+    else:
+        print("✅ [concept] 概念层未启用（无索引产物，跳过校验）")
 
     print("\nlint 全部通过")
     return 0

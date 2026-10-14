@@ -128,3 +128,26 @@ Iceberg + Polaris + Doris（物理层）
 - [ ] 概念映射准确率实测值进入 EVAL_REPORT（与 EX / Plan Acc 分开报告）
 - [ ] 至少 3 条黄金集问句展示"业务术语 → FIBO 概念 → 语义字段 → SQL"的完整可解释链
 - [ ] 检索链路中，FIBO 概念扩展确实提升 Schema Linking 的 Recall@K（对照实验，`<待实测>`）
+
+---
+
+## 末端注记（2026-10-14，ADR-0032）
+
+ADR-0032《概念层接入运行时（本体驱动的检索/解析/解释增强）》经评审 accepted
+（2026-10-08），承接本文的落地实施。**正文一字未改**；以下修订以本注记为准：
+
+1. **背景节「边界（不可动摇）」中"FIBO 不进入查询路径"修订为**：本体不在请求路径
+   被解析或推理；概念索引以**构建期编译产物**形态（`semantic/ontology/` 下的
+   `.concept_index.json`）、以**确定性查表**参与解析辅助与候选生成；不参与 SQL
+   编译、执行与数值计算。与决策 3"MVP 不做推理，只做 TBox 查询"的边界一致
+   （TBox 查询从运行时移至构建期）。
+2. **rdflib 边界收紧**（决策 3"仅解析层使用"）：收紧为**仅构建期**使用
+   （`uv run --with rdflib==7.6.0` 注入，不进 pyproject、不进运行时依赖树；
+   运行时为纯 JSON 加载）。
+3. **验证方式中三个未兑现待办由 ADR-0032 承接**，关闭判据见其 M1–M5：
+   - 概念映射准确率实测值进入 EVAL_REPORT（与 EX / Plan Acc 分开报告）
+     → 承接于 ADR-0032 M1-T5（`eval/concept_eval.py` 真版 + EVAL_REPORT 独立节）；
+   - ≥3 条黄金集问句的完整可解释链（plan+compile 级）
+     → 承接于 ADR-0032 M4（解释缝）；
+   - FIBO 概念扩展提升 Schema Linking Recall@K（对照实验）
+     → 承接于 ADR-0032 M2（`make schema-link` 扩展开/关 A/B）。

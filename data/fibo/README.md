@@ -22,6 +22,8 @@ data/fibo/
 ├── check_iris.py      # 候选概念 IRI 存在性验证（29 条权威清单）
 ├── probe_namespaces.py # 命名空间探查（找真实类名，不猜测）
 ├── validate_alignments.py # fibo_alignment 校验（ADR-0007 CI 校验点）
+├── probe_annotations.py # 注解属性统计（29 概念覆盖 + cmns-av 存量）
+├── annotation_stats.json # 上者的产物（入库；O 系列软文数字来源）
 ├── fibo-src/          # FIBO 仓库 sparse checkout（gitignore）
 │   ├── FND/           # Foundations 域（1.4MB，入口 AllFND.rdf）
 │   ├── FBC/           # Financial Business and Commerce 域（6.1MB，闭包所需）
@@ -56,6 +58,11 @@ data/fibo/
 3. **加载性能**：扩展种子闭包 1100+ 个 owl:Class、1.2s 完成（含 TransactionsExt 与
    FBC 域）；AllFND 基础闭包为 55 个文件、22,730 条三元组、0.3s（rdflib 7.6.0, Python 3.11）
 4. **TBox 规模**：MVP 阶段完全可内存加载，无需推理引擎（符合 ADR-0007 L2 决策）
+5. **注解属性存量（2026-10-08，`annotation_stats.json`）**：锁定闭包 1100 个 owl:Class
+   中，`cmns-av:synonym` 仅 114 个类（200 条值）、`cmns-av:abbreviation` 47 个类（57 条值）；
+   registry 29 概念覆盖：`rdfs:label` 29/29、`skos:definition` 28/29、`cmns-av:synonym`
+   7/29、`skos:prefLabel` 3/29、`cmns-av:abbreviation` 0/29。FIBO 已弃用 `skos:altLabel`
+   （闭包内仅剩 3 个类使用），改荐 `cmns-av:synonym` / `cmns-av:abbreviation`
 
 ## 覆盖审计（2026-09-03 Day 54）
 
@@ -78,10 +85,14 @@ Fee（经纪服务费，政府税语义不贴切）。补映射需先扩展闭�
 ## 语义模型映射校验（ADR-0007 CI 校验点）
 
 ```bash
-# 概念 IRI 存在性回归保护（29 条权威清单，应输出 29/29）
-.venv/bin/python check_iris.py
-# 语义模型映射校验：governance schema + FIBO 闭包 IRI 存在性
-.venv/bin/python validate_alignments.py semantic/ossie/atlas_finance.ossie.yaml
+# rdflib 为可选依赖（未入主依赖），用 uv --with 注入锁定版本运行
+RUN="uv run --with rdflib==7.6.0 python"
+# 概念 IRI 存在性回归保护（29 条权威清单，应输出 29/29 存在）
+$RUN data/fibo/check_iris.py
+# 语义模型映射校验：governance schema + FIBO 闭包 IRI 存在性（31 条映射全部在闭包）
+$RUN data/fibo/validate_alignments.py semantic/ossie/atlas_finance.ossie.yaml
+# 注解属性统计（产物 data/fibo/annotation_stats.json，环境 python 3.11 / rdflib 7.6.0）
+$RUN data/fibo/probe_annotations.py
 ```
 
 ## 复现
@@ -90,8 +101,8 @@ Fee（经纪服务费，政府税语义不贴切）。补映射需先扩展闭�
 # 1) 重建 FIBO sparse checkout
 git clone --depth 1 --filter=blob:none --sparse https://github.com/edmcouncil/fibo.git fibo-src
 cd fibo-src && git sparse-checkout set FND FBC BE && cd ..
-# 2) 校验（应输出：✅ import 闭包完整，无缺失）
-.venv/bin/python smoke_fibo.py
+# 2) 校验（应输出：✅ import 闭包完整，无缺失；55 文件 / 22,730 三元组）
+uv run --with rdflib==7.6.0 python data/fibo/smoke_fibo.py
 ```
 
 ## 许可与署名

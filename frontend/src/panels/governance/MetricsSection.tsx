@@ -9,6 +9,7 @@
 import { Descriptions, Space, Table, Tag, Typography } from "antd";
 
 import type { FiboMappingEntry, MetricsItem } from "../../api/types";
+import StarBadge from "../../components/StarBadge";
 
 import { dashOr, SectionData, type CollectionState } from "./GovernanceSection";
 
@@ -108,7 +109,8 @@ export default function MetricsSection({ state }: Props) {
             {
               title: "status",
               dataIndex: "status",
-              render: (value: string | null) => dashOr(value),
+              render: (value: string | null) =>
+                value === null ? dashOr(value) : <StarBadge status={value} />,
             },
             {
               title: "FIBO 对齐",
@@ -123,7 +125,10 @@ export default function MetricsSection({ state }: Props) {
                     <Text style={{ maxWidth: 300 }} ellipsis={{ tooltip: entry.concept }}>
                       {entry.concept}
                     </Text>
-                    <Text type="secondary">{`${entry.match_type} · ${entry.confidence}`}</Text>
+                    <Space size={4}>
+                      <StarBadge status={entry.match_type} />
+                      <Text type="secondary">{`confidence=${entry.confidence}`}</Text>
+                    </Space>
                   </Space>
                 );
               },

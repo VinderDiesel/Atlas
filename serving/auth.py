@@ -51,7 +51,7 @@ from fastapi import Depends, Header, HTTPException
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 POLICY_PATH = _REPO_ROOT / "semantic" / "policies" / "row_policy.yml"
 
-TOKEN_TTL_SECONDS = 3600  # 本地开发 token 有效期 1 小时
+TOKEN_TTL_SECONDS = int(os.environ.get("ATLAS_TOKEN_TTL", "3600"))  # 本地开发 token 有效期（默认 1 小时；可设 28800=8h / 86400=24h）
 
 # 角色注册表：claims 契约 + 说明（**不含策略名**——域 → 策略见 ossie
 # default_row_policy，ADR-0021 决策 ①；角色条件来自 semantic/policies/row_policy.yml

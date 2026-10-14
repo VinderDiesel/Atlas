@@ -20,14 +20,18 @@ interface Props {
 export default function SnapshotBadge({ health, error }: Props) {
   if (error !== null) {
     return (
-      <Tag color="red" title={error}>
-        快照不可用：{error}
+      <Tag className="atlas-seal" color="red" title={error}>
+        <span className="atlas-seal__label">snapshot</span>
+        <span className="atlas-seal__value atlas-mono">错误：{error}</span>
       </Tag>
     );
   }
   if (health === null) {
     return (
-      <Tag aria-live="polite">快照状态加载中…</Tag>
+      <Tag className="atlas-seal" aria-live="polite">
+        <span className="atlas-seal__label">snapshot</span>
+        <span className="atlas-seal__value atlas-mono">加载中…</span>
+      </Tag>
     );
   }
   const badge = snapshotBadge(health);
@@ -37,7 +41,10 @@ export default function SnapshotBadge({ health, error }: Props) {
         health.snapshot_tables ?? "null"
       } · boot_id=${health.boot_id}`}
     >
-      <Tag color={SEVERITY_COLOR[badge.severity]}>{badge.text}</Tag>
+      <Tag className="atlas-seal" color={SEVERITY_COLOR[badge.severity]}>
+        <span className="atlas-seal__label">snapshot</span>
+        <span className="atlas-seal__value atlas-mono">{badge.text}</span>
+      </Tag>
     </Tooltip>
   );
 }

@@ -66,6 +66,6 @@ COPY --from=frontend /app/frontend/dist ./frontend/dist
 # 依赖；ARG 已在文件头声明并被守卫校验过非空，这里只取值（决策 ④）。
 ENV ATLAS_GIT_SHA=${GIT_SHA}
 
-EXPOSE 8000
+EXPOSE 8020
 # 单进程（workers=1）+ 0.0.0.0（容器网络）
-CMD [".venv/bin/uvicorn", "serving.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD [".venv/bin/uvicorn", "serving.api:app", "--host", "0.0.0.0", "--port", "8020"]

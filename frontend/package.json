@@ -18,12 +18,14 @@
   "dependencies": {
     "@xyflow/react": "^12.11.6",
     "antd": "^5",
+    "js-yaml": "^5.4.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.4",
     "recharts": "^2"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.13.5",
     "@types/react": "^18.3",
     "@types/react-dom": "^18.3",

@@ -280,6 +280,27 @@ def build_control_router(
             return _error(404, "not_found", f"运行不存在：{run_id!r}")
         return JSONResponse(status_code=200, content=view.model_dump())
 
+    @router.delete(
+        "/runs/{run_id}",
+        response_model=None,
+        summary="删除运行记录（本人；级联删除关联事件）",
+    )
+    def delete_run(run_id: str, claims: BearerClaims) -> JSONResponse:
+        """对象级 ACL：不可见与不存在一律 404（不泄露存在性）。"""
+        services = services_factory()
+        principal, error = _principal_or_error(claims, services)
+        if error is not None:
+            return error
+        try:
+            # 先验证存在性（ACL 检查）
+            services.runs.view(principal=principal, run_id=run_id)
+        except (RunNotFound, KeyError):
+            return _error(404, "not_found", f"运行不存在：{run_id!r}")
+        deleted = services.runs.delete(principal=principal, run_id=run_id)
+        if not deleted:
+            return _error(404, "not_found", f"运行不存在：{run_id!r}")
+        return JSONResponse(status_code=200, content={"deleted": True, "run_id": run_id})
+
     @router.get(
         "/runs",
         response_model=None,
@@ -641,6 +662,29 @@ def build_control_router(
             return _error(404, "not_found", f"部署不存在：{deployment_id!r}")
         return JSONResponse(status_code=200, content=record.model_dump())
 
+    @router.delete(
+        "/manage/deployments/{deployment_id}",
+        response_model=None,
+        summary="删除部署（仅允许 draft 状态；有活动发布需先回退）",
+    )
+    def delete_deployment(deployment_id: str, claims: BearerClaims) -> JSONResponse:
+        """删除无活动发布的部署；有活动发布抛 409。"""
+        services = services_factory()
+        principal, error = _principal_or_error(claims, services)
+        if error is not None:
+            return error
+        try:
+            deleted = services.deployments.delete(principal, deployment_id)
+        except ControlForbidden as exc:
+            return _error(403, "forbidden", str(exc))
+        except KeyError:
+            return _error(404, "not_found", f"部署不存在：{deployment_id!r}")
+        except ReleaseConflict as exc:
+            return _error(409, "release_conflict", str(exc))
+        if not deleted:
+            return _error(404, "not_found", f"部署不存在：{deployment_id!r}")
+        return JSONResponse(status_code=200, content={"deleted": True, "deployment_id": deployment_id})
+
     @router.post(
         "/manage/drafts",
         status_code=201,
@@ -840,6 +884,35 @@ def build_control_router(
         except KeyError:
             return _error(404, "not_found", f"草稿不存在：{draft_id!r}")
         return JSONResponse(status_code=200, content=view.model_dump())
+
+    @router.get(
+        "/manage/files/content",
+        response_model=None,
+        summary="读取 Git 对象库中的文件内容（用于草稿创建时加载现有文件）",
+    )
+    def get_file_content(
+        path: str,
+        sha: str | None = None,
+        claims: BearerClaims = None,
+    ) -> JSONResponse:
+        """读取指定 sha（默认 HEAD）下的文件内容；路径不存在返回 404。
+
+        只读对象库（git show），不读工作树。"""
+        services = services_factory()
+        principal, error = _principal_or_error(claims, services)
+        if error is not None:
+            return error
+        try:
+            from .drafts import _git_show_file
+            from data.identity import REPO_ROOT, git_full_sha
+            if sha is None:
+                sha = git_full_sha(REPO_ROOT)
+            content = _git_show_file(sha, path)
+            if content is None:
+                return _error(404, "not_found", f"文件不存在：{path!r}（sha={sha}）")
+            return JSONResponse(status_code=200, content={"path": path, "sha": sha, "content": content})
+        except Exception as exc:
+            return _error(500, "internal_error", str(exc))
 
     @router.post(
         "/manage/releases/imports",

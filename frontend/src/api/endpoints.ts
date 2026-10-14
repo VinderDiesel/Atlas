@@ -87,6 +87,9 @@ export const API = {
   manageDraftReviews: "/api/v1/manage/drafts/{draft_id}/reviews",
   manageDraftPatch: "/api/v1/manage/drafts/{draft_id}/patch",
 
+  // 文件内容读取（用于草稿创建时加载现有文件；只读 Git 对象库）
+  manageFileContent: "/api/v1/manage/files/content",
+
   // 发布面 5 条（ADR-0031 D04/D13；T08b：POST 制品导入 + POST 部署发布/回退；
   // GET 发布列/详情；导入只接受通过门禁的 Git 制品；发布/回退以当前指针做 CAS）
   // 发布动作需 release.publish/rollback；读取面折叠 release.import 与 deployment.manage

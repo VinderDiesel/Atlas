@@ -15,6 +15,8 @@
 import React from "react";
 import { Card, Descriptions, Tag, Space, Alert, Table, Typography } from "antd";
 
+import StarBadge from "../../components/StarBadge";
+
 const { Text } = Typography;
 
 /** 训练任务状态 */
@@ -76,15 +78,7 @@ const DEFAULT_RECIPE: TrainingRecipe = {
   min_samples: 50,
 };
 
-/** 状态标签颜色 */
-const STATUS_COLOR: Record<JobStatus, string> = {
-  queued: "blue",
-  running: "processing",
-  succeeded: "success",
-  failed: "error",
-  blocked: "warning",
-  cancelled: "default",
-};
+/** 状态标签颜色（已由 StarBadge 承担——保留状态契约类型）。 */
 
 /** 阻塞理由说明 */
 const BLOCKED_REASON_LABELS: Record<string, string> = {
@@ -110,16 +104,32 @@ const RecipeCard: React.FC<{ recipe: TrainingRecipe }> = ({ recipe }) => (
       <Descriptions.Item label="许可">
         <Tag color="green">Apache-2.0</Tag>
       </Descriptions.Item>
-      <Descriptions.Item label="LoRA r/α">{recipe.lora_r}/{recipe.lora_alpha}</Descriptions.Item>
-      <Descriptions.Item label="Dropout">{recipe.lora_dropout}</Descriptions.Item>
-      <Descriptions.Item label="Epochs">{recipe.epochs}</Descriptions.Item>
-      <Descriptions.Item label="Learning Rate">{recipe.learning_rate}</Descriptions.Item>
-      <Descriptions.Item label="Batch × GradAccum">
-        {recipe.batch_size} × {recipe.grad_accum_steps} = {recipe.batch_size * recipe.grad_accum_steps}
+      <Descriptions.Item label="LoRA r/α">
+        <span className="atlas-mono">{recipe.lora_r}/{recipe.lora_alpha}</span>
       </Descriptions.Item>
-      <Descriptions.Item label="Max Length">{recipe.max_length}</Descriptions.Item>
-      <Descriptions.Item label="Seed">{recipe.seed}</Descriptions.Item>
-      <Descriptions.Item label="Min Samples">{recipe.min_samples}</Descriptions.Item>
+      <Descriptions.Item label="Dropout">
+        <span className="atlas-mono">{recipe.lora_dropout}</span>
+      </Descriptions.Item>
+      <Descriptions.Item label="Epochs">
+        <span className="atlas-mono">{recipe.epochs}</span>
+      </Descriptions.Item>
+      <Descriptions.Item label="Learning Rate">
+        <span className="atlas-mono">{recipe.learning_rate}</span>
+      </Descriptions.Item>
+      <Descriptions.Item label="Batch × GradAccum">
+        <span className="atlas-mono">
+          {recipe.batch_size} × {recipe.grad_accum_steps} = {recipe.batch_size * recipe.grad_accum_steps}
+        </span>
+      </Descriptions.Item>
+      <Descriptions.Item label="Max Length">
+        <span className="atlas-mono">{recipe.max_length}</span>
+      </Descriptions.Item>
+      <Descriptions.Item label="Seed">
+        <span className="atlas-mono">{recipe.seed}</span>
+      </Descriptions.Item>
+      <Descriptions.Item label="Min Samples">
+        <span className="atlas-mono">{recipe.min_samples}</span>
+      </Descriptions.Item>
     </Descriptions>
   </Card>
 );
@@ -173,14 +183,17 @@ export const TrainingJobPanel: React.FC = () => {
   const [preflight] = React.useState<PreflightResult | null>(null);
 
   const columns = [
-    { title: "Job ID", dataIndex: "job_id", key: "job_id" },
+    {
+      title: "Job ID",
+      dataIndex: "job_id",
+      key: "job_id",
+      render: (id: string) => <Text code>{id}</Text>,
+    },
     {
       title: "状态",
       dataIndex: "status",
       key: "status",
-      render: (status: JobStatus) => (
-        <Tag color={STATUS_COLOR[status]}>{status}</Tag>
-      ),
+      render: (status: JobStatus) => <StarBadge status={status} />,
     },
     {
       title: "预算已扣",
@@ -188,12 +201,22 @@ export const TrainingJobPanel: React.FC = () => {
       key: "budget_charged",
       render: (charged: boolean) => (charged ? "是" : "否"),
     },
-    { title: "创建时间", dataIndex: "created_at", key: "created_at" },
-    { title: "更新时间", dataIndex: "updated_at", key: "updated_at" },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      key: "created_at",
+      render: (ts: string) => <span className="atlas-mono">{ts}</span>,
+    },
+    {
+      title: "更新时间",
+      dataIndex: "updated_at",
+      key: "updated_at",
+      render: (ts: string) => <span className="atlas-mono">{ts}</span>,
+    },
   ];
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size={16}>
+    <div className="atlas-page">
       <RecipeCard recipe={DEFAULT_RECIPE} />
       <PreflightPanel result={preflight} />
       <Card title="训练任务历史" size="small">
@@ -222,7 +245,7 @@ export const TrainingJobPanel: React.FC = () => {
         }
         showIcon
       />
-    </Space>
+    </div>
   );
 };
 

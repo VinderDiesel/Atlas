@@ -1,0 +1,9 @@
+{
+  "term": "营收",
+  "suggest_for": "total_revenue",
+  "suggest_kind": "metric",
+  "source_feedback": "user_feedback/t2-nd1.json",
+  "source_kind": "wrong_metric",
+  "question": "营收多少",
+  "comment": "应该看总营收"
+}

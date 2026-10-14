@@ -25,7 +25,7 @@ import sqlite3
 
 from serving.control.auth import ControlForbidden, Principal, authorize
 from serving.control.contracts import DeploymentRecord, DeploymentRequest, Owner
-from serving.control.store import ControlStore
+from serving.control.store import ControlStore, ReleaseConflict
 
 DEPLOYMENT_MANAGE_CAPABILITY = "deployment.manage"
 # 读取门：部署管理或发布动作（发布/回退以当前指针做 CAS，需先读）。
@@ -89,6 +89,26 @@ class DeploymentService:
         return [
             record for record in self._store.list_deployments() if record.scope in principal.scopes
         ]
+
+    def delete(self, principal: Principal, deployment_id: str) -> bool:
+        """删除无活动发布的部署；有活动发布抛 ReleaseConflict（需先回退）。
+
+        Raises
+        ------
+        ControlForbidden
+            缺 `deployment.manage` 或 scope ∉ principal.scopes。
+        ReleaseConflict
+            部署有活动发布，不允许删除（需先回退）。
+        """
+        authorize(principal, DEPLOYMENT_MANAGE_CAPABILITY, self._scope_of(deployment_id))
+        return self._store.delete_deployment(deployment_id)
+
+    def _scope_of(self, deployment_id: str) -> str:
+        """读取部署的 scope（用于作用域授权）；不存在抛 KeyError。"""
+        record = self._store.get_deployment(deployment_id)
+        if record is None:
+            raise KeyError(deployment_id)
+        return record.scope
 
     @staticmethod
     def _require_read(principal: Principal) -> None:

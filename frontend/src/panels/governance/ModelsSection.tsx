@@ -8,6 +8,7 @@
 import { Descriptions, Space, Table, Tag, Typography } from "antd";
 
 import type { ModelsItem } from "../../api/types";
+import StarBadge from "../../components/StarBadge";
 
 import { dashOr, SectionData, type CollectionState } from "./GovernanceSection";
 
@@ -79,10 +80,16 @@ export default function ModelsSection({ state }: Props) {
             },
             {
               title: "治理（owner · version · status）",
-              render: (_, item) =>
-                `${dashOr(item.governance.owner)} · ${dashOr(item.governance.version)} · ${dashOr(
-                  item.governance.status,
-                )}`,
+              render: (_, item) => (
+                <Space size={6} wrap>
+                  <span>{`${dashOr(item.governance.owner)} · ${dashOr(item.governance.version)}`}</span>
+                  {item.governance.status === null ? (
+                    dashOr(null)
+                  ) : (
+                    <StarBadge status={item.governance.status} />
+                  )}
+                </Space>
+              ),
             },
             {
               title: "新鲜度（schedule · SLA 分钟）",

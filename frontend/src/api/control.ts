@@ -9,7 +9,7 @@
  * - 值为 undefined/空串时不附带（URL 干净，测试锁定）；
  * - `GET /feedback` 无分页语义 → 解包 `{items}` 为数组（T12 接审核队列前不扩）。
  */
-import { getJson, postJson, putJson } from "./client";
+import { deleteJson, getJson, postJson, putJson } from "./client";
 import { API } from "./endpoints";
 import type {
   ActivationBody,
@@ -31,6 +31,7 @@ import type {
   ReleaseImportBody,
   ReleaseImportRecord,
   ReleaseRecord,
+  RunReceipt,
   RunStatus,
   RunSummary,
   RunView,
@@ -81,9 +82,31 @@ export function listRuns(token: string, query: RunListQuery = {}): Promise<Page<
   );
 }
 
+/** POST /runs：提交运行（202 收据；幂等，client_request_id 为客户端幂等键）。 */
+export function submitRun(
+  body: {
+    deployment_id: string;
+    mode: "ask";
+    client_request_id: string;
+    question: string;
+    session_id?: string;
+  },
+  token: string,
+): Promise<RunReceipt> {
+  return postJson<RunReceipt>(API.runs, body, token);
+}
+
 /** GET /runs/{id}：运行详情视图（10 键；result 按 ACL 与 result_availability 裁剪）。 */
 export function getRun(runId: string, token: string): Promise<RunView> {
   return getJson<RunView>(API.runDetail.replace("{run_id}", encodeURIComponent(runId)), token);
+}
+
+/** DELETE /runs/{id}：删除运行记录（本人；级联删除关联事件）。 */
+export function deleteRun(runId: string, token: string): Promise<{ deleted: boolean; run_id: string }> {
+  return deleteJson<{ deleted: boolean; run_id: string }>(
+    API.runDetail.replace("{run_id}", encodeURIComponent(runId)),
+    token,
+  );
 }
 
 /** GET /runs/{id}/artifacts/{aid}：显式捕获正文（清理后 410 artifact_expired）。 */
@@ -203,6 +226,18 @@ export function getDeployment(deploymentId: string, token: string): Promise<Depl
   return getJson<DeploymentRecord>(path, token);
 }
 
+/** DELETE /manage/deployments/{id}：删除 draft 部署（有活动发布 409）。 */
+export function deleteDeployment(
+  deploymentId: string,
+  token: string,
+): Promise<{ deleted: boolean; deployment_id: string }> {
+  const path = API.manageDeploymentDetail.replace(
+    "{deployment_id}",
+    encodeURIComponent(deploymentId),
+  );
+  return deleteJson<{ deleted: boolean; deployment_id: string }>(path, token);
+}
+
 // ---------------------------------------------------------------------------
 // 语义草稿 / 校验 / 审核 / 补丁（T08a/T08a-s2；ADR-0031 D02/D04/D13）
 // ---------------------------------------------------------------------------
@@ -313,4 +348,18 @@ export async function listReleases(token: string): Promise<ReleaseRecord[]> {
 export function getRelease(releaseId: string, token: string): Promise<ReleaseRecord> {
   const path = API.manageReleaseDetail.replace("{release_id}", encodeURIComponent(releaseId));
   return getJson<ReleaseRecord>(path, token);
+}
+
+/** GET /manage/files/content：读取 Git 对象库中的文件内容（用于草稿创建时加载现有文件）。 */
+export function getFileContent(
+  path: string,
+  token: string,
+  sha?: string,
+): Promise<{ path: string; sha: string; content: string }> {
+  const params = new URLSearchParams({ path });
+  if (sha) params.set("sha", sha);
+  return getJson<{ path: string; sha: string; content: string }>(
+    `${API.manageFileContent}?${params.toString()}`,
+    token,
+  );
 }

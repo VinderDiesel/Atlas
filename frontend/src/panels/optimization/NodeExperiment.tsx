@@ -12,7 +12,11 @@
  */
 
 import React, { useState, useCallback } from "react";
-import { Card, Form, Input, Select, Button, Tag, Space, Alert } from "antd";
+import { Card, Form, Input, Select, Button, Space, Alert, Typography } from "antd";
+
+import StarBadge from "../../components/StarBadge";
+
+const { Text } = Typography;
 
 /** 已注册节点类型（与 agent/flows/contracts.py REGISTERED_NODE_TYPES 一致） */
 const REGISTERED_NODE_TYPES = [
@@ -34,7 +38,7 @@ interface ExperimentSpec {
   dataset_version: string;
 }
 
-interface ExperimentReceipt {
+export interface ExperimentReceipt {
   experiment_id: string;
   status: string;
   baseline_release_id: string;
@@ -43,6 +47,39 @@ interface ExperimentReceipt {
   dataset_version: string;
   comparison: Record<string, unknown>;
 }
+
+/**
+ * 实验结果卡片（星图仪表化）。
+ *
+ * - 状态用 StarBadge 契约原文（completed → active / pending → draft）
+ * - 实验 ID / 节点 / release SHA 短写为等宽读数
+ */
+export const ResultCard: React.FC<{ result: ExperimentReceipt }> = ({ result }) => (
+  <Card title="实验结果" style={{ marginBottom: 24 }}>
+    <Space direction="vertical" style={{ width: "100%" }}>
+      <div>
+        <strong>实验 ID：</strong>
+        <Text code>{result.experiment_id}</Text>
+      </div>
+      <div>
+        <strong>状态：</strong>
+        <StarBadge status={result.status} />
+      </div>
+      <div>
+        <strong>节点：</strong>
+        <Text code>{result.node_id}</Text>
+      </div>
+      <div>
+        <strong>Baseline：</strong>
+        <Text code>{`${result.baseline_release_id.slice(0, 12)}...`}</Text>
+      </div>
+      <div>
+        <strong>Candidate：</strong>
+        <Text code>{`${result.candidate_release_id.slice(0, 12)}...`}</Text>
+      </div>
+    </Space>
+  </Card>
+);
 
 /**
  * 节点实验面板：提交对照实验并查看历史。
@@ -75,7 +112,7 @@ export const NodeExperimentPanel: React.FC = () => {
   }, []);
 
   return (
-    <div style={{ padding: 24 }}>
+    <div className="atlas-page">
       <Card title="节点对照实验" style={{ marginBottom: 24 }}>
         <Alert
           message="实验不修改 active 发布，不影响在线会话"
@@ -145,34 +182,7 @@ export const NodeExperimentPanel: React.FC = () => {
         <Alert message="实验失败" description={error} type="error" showIcon />
       )}
 
-      {result && (
-        <Card title="实验结果" style={{ marginBottom: 24 }}>
-          <Space direction="vertical" style={{ width: "100%" }}>
-            <div>
-              <strong>实验 ID：</strong>
-              <Tag>{result.experiment_id}</Tag>
-            </div>
-            <div>
-              <strong>状态：</strong>
-              <Tag color={result.status === "completed" ? "green" : "orange"}>
-                {result.status}
-              </Tag>
-            </div>
-            <div>
-              <strong>节点：</strong>
-              <Tag>{result.node_id}</Tag>
-            </div>
-            <div>
-              <strong>Baseline：</strong>
-              <code>{result.baseline_release_id.slice(0, 12)}...</code>
-            </div>
-            <div>
-              <strong>Candidate：</strong>
-              <code>{result.candidate_release_id.slice(0, 12)}...</code>
-            </div>
-          </Space>
-        </Card>
-      )}
+      {result && <ResultCard result={result} />}
 
       <Card title="实验历史">
         <Alert

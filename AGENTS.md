@@ -66,6 +66,7 @@
 | **Agent** | LangGraph 状态机编排 | "Bot"、"助手" |
 | **FIBO** | Financial Industry Business Ontology，金融业务本体，项目的语义锚点（ADR-0007） | 泛指时的"本体" |
 | **fibo_alignment** | 语义对象 → FIBO 概念 IRI 的映射（L2 概念对齐层，挂 custom_extensions） | "映射"（含糊）、"标签" |
+| **Concept Index**（概念索引） | 构建期 AOT 编译的静态概念索引（semantic/ontology/*.json）：FIBO 层级 / 术语 / 英文定义 / 反向索引；运行时只做确定性查表，不解析、不推理、不参与 SQL | "本体缓存"、"FIBO 库" |
 
 ---
 
@@ -83,6 +84,7 @@ atlas-data-platform/
 │   │                    # 机器生成值本体 + 人工追加别名；snapshot_sha 绑定锁定快照
 │   ├── policies/        # RowPolicy 行级权限与脱敏策略声明
 │   ├── migrations/      # 语义层变更记录（版本演进）
+│   ├── ontology/        # 概念索引 AOT 产物（ADR-0032）：构建期编译、入库提交，运行时确定性查表
 │   └── _legacy/         # ❌ 已归档：ADR-0002 前的自研 DSL 定义，零引用，仅演进对照
 ├── sql/
 │   ├── tpcds_ddl/       # TPC-DS 原始 DDL（零售历史，只读，勿改）
@@ -211,8 +213,9 @@ make adr TITLE="xxx"            # 新建 ADR 模板
 - 2 空格缩进，禁止 Tab
 - 每个文件顶部注释说明 owner 与最后修改原因
 - 语义模型必须通过 `make lint`（ossie 结构 + 治理扩展 + 黄金集 schema +
-  **权威源唯一性**）；`semantic/` 下除 `ossie/`、`synonyms/`、`policies/` 与 `_*`
-  归档区外不得存在 `*.yaml/*.yml`（新增权威目录需先补 ADR，见 ADR-0015）
+  **权威源唯一性**）；`semantic/` 下除 `ossie/`、`synonyms/`、`policies/`、`values/`、
+  `ontology/` 与 `_*` 归档区外不得存在 `*.yaml/*.yml`（新增权威目录需先补 ADR，
+  见 ADR-0015 / ADR-0016 / ADR-0032）
 - 日期用 ISO 8601，时区显式声明（`+08:00`）
 
 ### 7.4 提示词

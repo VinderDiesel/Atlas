@@ -1,0 +1,1403 @@
+{
+  "commons_release": "20250801",
+  "concepts": {
+    "cmns-dt:Date": {
+      "children": [],
+      "definition": "calendar day on some calendar",
+      "iri": "https://www.omg.org/spec/Commons/DatesAndTimes/Date",
+      "label": "date",
+      "objects": [
+        {
+          "confidence": "high",
+          "match_type": "exact_match",
+          "note": "FIBO 2.0 时间基础概念位于 OMG Commons DatesAndTimes",
+          "object": "dim_date"
+        }
+      ],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "date",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "日历",
+          "via": "dim_date"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "日期维度",
+          "via": "dim_date"
+        }
+      ]
+    },
+    "cmns-org:FormalOrganization": {
+      "children": [
+        {
+          "concept": "cmns-org:LegalEntity",
+          "transitive": false
+        }
+      ],
+      "definition": "organization that is recognized in some legal jurisdiction, with associated rights and responsibilities",
+      "iri": "https://www.omg.org/spec/Commons/Organizations/FormalOrganization",
+      "label": "formal organisation",
+      "objects": [],
+      "parents": [
+        {
+          "concept": "cmns-org:Organization",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "formal organisation",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "formal organization",
+          "via": null
+        }
+      ]
+    },
+    "cmns-org:LegalEntity": {
+      "children": [],
+      "definition": "legal person that is a partnership, corporation, or other organization having the capacity to negotiate contracts, assume financial obligations, and pay off debts, organized under the laws of some jurisdiction",
+      "iri": "https://www.omg.org/spec/Commons/Organizations/LegalEntity",
+      "label": "legal entity",
+      "objects": [],
+      "parents": [
+        {
+          "concept": "cmns-org:FormalOrganization",
+          "transitive": false
+        },
+        {
+          "concept": "cmns-org:LegalPerson",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "artificial person",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "juridical entity",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "juridical person",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "juristic person",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "legal entity",
+          "via": null
+        }
+      ]
+    },
+    "cmns-org:LegalPerson": {
+      "children": [
+        {
+          "concept": "cmns-org:LegalEntity",
+          "transitive": false
+        }
+      ],
+      "definition": "party that is recognized as having rights and obligations under the law, including but not limited to the right to sue and be sued, enter into contracts, own property, and incur financial and other obligations",
+      "iri": "https://www.omg.org/spec/Commons/Organizations/LegalPerson",
+      "label": "legal person",
+      "objects": [],
+      "parents": [
+        {
+          "concept": "cmns-pts:Party",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "legal person",
+          "via": null
+        }
+      ]
+    },
+    "cmns-org:Organization": {
+      "children": [
+        {
+          "concept": "cmns-org:FormalOrganization",
+          "transitive": false
+        },
+        {
+          "concept": "cmns-org:OrganizationalSubUnit",
+          "transitive": false
+        }
+      ],
+      "definition": "framework of authority within which a person, persons, or groups of people act, or are designated to act, towards some purpose, such as to meet a need or pursue collective goals",
+      "iri": "https://www.omg.org/spec/Commons/Organizations/Organization",
+      "label": "organisation",
+      "objects": [],
+      "parents": [
+        {
+          "concept": "cmns-pts:Party",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "organisation",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "organization",
+          "via": null
+        }
+      ]
+    },
+    "cmns-org:OrganizationalSubUnit": {
+      "children": [],
+      "definition": "any department or other entity within a larger organization that only has full recognition within the context of that organization, but requires identification for some purpose",
+      "iri": "https://www.omg.org/spec/Commons/Organizations/OrganizationalSubUnit",
+      "label": "organisational sub-unit",
+      "objects": [
+        {
+          "confidence": "medium",
+          "match_type": "broad_match",
+          "note": "营业部/分支是组织的子单元，FIBO 2.0 该概念位于 OMG Commons",
+          "object": "dim_broker.Branch"
+        }
+      ],
+      "parents": [
+        {
+          "concept": "cmns-org:Organization",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "organisational sub-unit",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "organization part",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "organizational sub-unit",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "分支",
+          "via": "dim_broker.Branch"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "分行",
+          "via": "dim_broker.Branch"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "网点",
+          "via": "dim_broker.Branch"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "营业厅",
+          "via": "dim_broker.Branch"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "营业部",
+          "via": "dim_broker.Branch"
+        }
+      ]
+    },
+    "cmns-pts:Party": {
+      "children": [
+        {
+          "concept": "cmns-org:LegalPerson",
+          "transitive": false
+        },
+        {
+          "concept": "cmns-org:Organization",
+          "transitive": false
+        },
+        {
+          "concept": "fibo-fnd-pty-pty:Person",
+          "transitive": false
+        }
+      ],
+      "definition": "person or organization",
+      "iri": "https://www.omg.org/spec/Commons/PartiesAndSituations/Party",
+      "label": "party",
+      "objects": [],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "independent party",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "party",
+          "via": null
+        }
+      ]
+    },
+    "cmns-pts:PartyRole": {
+      "children": [
+        {
+          "concept": "fibo-fbc-pas-ca:AccountHolder",
+          "transitive": true
+        },
+        {
+          "concept": "fibo-fnd-txn-mkt:TransactionCounterparty",
+          "transitive": true
+        }
+      ],
+      "definition": "role played by an organization or individual that may be time bound",
+      "iri": "https://www.omg.org/spec/Commons/PartiesAndSituations/PartyRole",
+      "label": "party role",
+      "objects": [],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "party role",
+          "via": null
+        }
+      ]
+    },
+    "cmns-qtu:ScalarQuantity": {
+      "children": [],
+      "definition": "property of a phenomenon, body, or substance, where the property has a magnitude that can be expressed by means of a number and a reference",
+      "iri": "https://www.omg.org/spec/Commons/QuantitiesAndUnits/ScalarQuantity",
+      "label": "scalar quantity",
+      "objects": [
+        {
+          "confidence": "medium",
+          "match_type": "related",
+          "note": "持仓量=带单位（股）的标量数量（口径同上）",
+          "object": "metric:holdings_quantity"
+        },
+        {
+          "confidence": "medium",
+          "match_type": "related",
+          "note": "成交量=带单位（股）的标量数量；闭包扩展 QUDT QuantityValue 后可升级",
+          "object": "metric:total_trade_quantity"
+        }
+      ],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "scalar quantity",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "总成交量",
+          "via": "metric:total_trade_quantity"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "总持仓量",
+          "via": "metric:holdings_quantity"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "成交量",
+          "via": "metric:total_trade_quantity"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "持仓量",
+          "via": "metric:holdings_quantity"
+        }
+      ]
+    },
+    "fibo-be-fe:FunctionalEntity": {
+      "children": [
+        {
+          "concept": "fibo-fbc-fse:BrokerageFirm",
+          "transitive": true
+        }
+      ],
+      "definition": "party defined in terms of a function they or it performs",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/FunctionalEntities/FunctionalEntities/FunctionalEntity",
+      "label": "functional entity",
+      "objects": [],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "functional entity",
+          "via": null
+        }
+      ]
+    },
+    "fibo-fbc-fi-fi:EquityInstrument": {
+      "children": [],
+      "definition": "financial instrument representing an ownership interest in an entity or pool of assets",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/EquityInstrument",
+      "label": "equity instrument",
+      "objects": [],
+      "parents": [
+        {
+          "concept": "fibo-fbc-fi-fi:Security",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "equity instrument",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S3",
+          "text": "个股",
+          "via": null
+        }
+      ]
+    },
+    "fibo-fbc-fi-fi:FinancialInstrument": {
+      "children": [
+        {
+          "concept": "fibo-fbc-fi-fi:Security",
+          "transitive": false
+        }
+      ],
+      "definition": "written contract that gives rise to both a financial asset of one entity and a financial liability of another entity",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/FinancialInstrument",
+      "label": "financial instrument",
+      "objects": [],
+      "parents": [
+        {
+          "concept": "fibo-fnd-agr-ctr:Contract",
+          "transitive": true
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "financial instrument",
+          "via": null
+        }
+      ]
+    },
+    "fibo-fbc-fi-fi:SecuritiesTransaction": {
+      "children": [],
+      "definition": "transaction between two or more parties involving the exchange of commonly defined financial products",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "label": "securities transaction",
+      "objects": [
+        {
+          "confidence": "high",
+          "match_type": "exact_match",
+          "note": "TPC-DI 交易事实即证券交易；上层概念 MarketTransaction（FND/TransactionsExt）亦已验证存在",
+          "object": "fact_trades"
+        },
+        {
+          "confidence": "high",
+          "match_type": "related",
+          "note": "交易笔数是对证券交易事件的计数",
+          "object": "metric:trade_count"
+        }
+      ],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "financial transaction",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "securities transaction",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "交易数量",
+          "via": "metric:trade_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "交易明细",
+          "via": "fact_trades"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "交易流水",
+          "via": "fact_trades"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "交易笔数",
+          "via": "metric:trade_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "成交笔数",
+          "via": "metric:trade_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "成交记录",
+          "via": "fact_trades"
+        }
+      ]
+    },
+    "fibo-fbc-fi-fi:Security": {
+      "children": [
+        {
+          "concept": "fibo-fbc-fi-fi:EquityInstrument",
+          "transitive": false
+        }
+      ],
+      "definition": "financial instrument that can be bought or sold",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/Security",
+      "label": "security",
+      "objects": [
+        {
+          "confidence": "high",
+          "match_type": "exact_match",
+          "note": "TPC-DI 证券（股票/基金）即 FIBO Security 的子类集合",
+          "object": "dim_security"
+        },
+        {
+          "confidence": "high",
+          "match_type": "related",
+          "note": "持仓证券数=对证券的去重计数",
+          "object": "metric:holding_security_count"
+        },
+        {
+          "confidence": "high",
+          "match_type": "related",
+          "note": "成交证券数=对证券的去重计数",
+          "object": "metric:traded_security_count"
+        }
+      ],
+      "parents": [
+        {
+          "concept": "fibo-fbc-fi-fi:FinancialInstrument",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "security",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "成交标的数",
+          "via": "metric:traded_security_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "成交证券数",
+          "via": "metric:traded_security_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "持仓标的数",
+          "via": "metric:holding_security_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "持仓证券数",
+          "via": "metric:holding_security_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "标的维度",
+          "via": "dim_security"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "证券主数据",
+          "via": "dim_security"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "证券维度",
+          "via": "dim_security"
+        }
+      ]
+    },
+    "fibo-fbc-fse:BrokerageFirm": {
+      "children": [],
+      "definition": "firm in the business of buying and selling securities, operating as both a broker and a dealer, depending on the transaction",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/FinancialServicesEntities/BrokerageFirm",
+      "label": "brokerage firm",
+      "objects": [
+        {
+          "confidence": "medium",
+          "match_type": "broad_match",
+          "note": "TPC-DI broker 为经纪公司雇员，映射至其所属机构 BrokerageFirm；个体角色映射待扩展",
+          "object": "dim_broker"
+        }
+      ],
+      "parents": [
+        {
+          "concept": "fibo-be-fe:FunctionalEntity",
+          "transitive": true
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "brokerage firm",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "market maker",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "员工主数据",
+          "via": "dim_broker"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "经纪人维度",
+          "via": "dim_broker"
+        }
+      ]
+    },
+    "fibo-fbc-pas-ca:Account": {
+      "children": [
+        {
+          "concept": "fibo-fbc-pas-ca:BrokerageAccount",
+          "transitive": true
+        },
+        {
+          "concept": "fibo-fbc-pas-ca:CustomerAccount",
+          "transitive": false
+        }
+      ],
+      "definition": "container for records associated with a business arrangement for regular transactions and services",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Account",
+      "label": "account",
+      "objects": [],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "account",
+          "via": null
+        }
+      ]
+    },
+    "fibo-fbc-pas-ca:AccountHolder": {
+      "children": [],
+      "definition": "party that owns an account",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/AccountHolder",
+      "label": "account holder",
+      "objects": [
+        {
+          "confidence": "medium",
+          "match_type": "related",
+          "note": "账户与客户的归属关系对应 AccountHolder 语义",
+          "object": "dim_account->dim_customer"
+        }
+      ],
+      "parents": [
+        {
+          "concept": "cmns-pts:PartyRole",
+          "transitive": true
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "account holder",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "账户持有人关联",
+          "via": "dim_account->dim_customer"
+        }
+      ]
+    },
+    "fibo-fbc-pas-ca:Balance": {
+      "children": [],
+      "definition": "amount of money available or owed",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Balance",
+      "label": "balance",
+      "objects": [
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "现金余额是账户余额的一种",
+          "object": "fact_cash_balances.Cash"
+        },
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "户均现金余额即账户 Balance（Day 27 审核发布）",
+          "object": "metric:average_cash_balance"
+        },
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "现金余额即账户 Balance",
+          "object": "metric:cash_balance"
+        }
+      ],
+      "parents": [
+        {
+          "concept": "fibo-fnd-acc-cur:MonetaryAmount",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "balance",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "余额",
+          "via": "fact_cash_balances.Cash"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "可用资金",
+          "via": "metric:cash_balance"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "平均账户余额",
+          "via": "metric:average_cash_balance"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "户均现金余额",
+          "via": "metric:average_cash_balance"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "现金",
+          "via": "fact_cash_balances.Cash"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "现金余额",
+          "via": "metric:cash_balance"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "账户现金",
+          "via": "metric:cash_balance"
+        }
+      ]
+    },
+    "fibo-fbc-pas-ca:BrokerageAccount": {
+      "children": [],
+      "definition": "account offered by a broker that allows the investor to deposit funds and place investment orders",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/BrokerageAccount",
+      "label": "brokerage account",
+      "objects": [
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "TPC-DI 账户为证券经纪账户，FIBO BrokerageAccount = 由经纪公司提供的投资账户",
+          "object": "dim_account"
+        },
+        {
+          "confidence": "high",
+          "match_type": "related",
+          "note": "活跃账户数是对经纪账户的计数",
+          "object": "metric:active_account_count"
+        },
+        {
+          "confidence": "high",
+          "match_type": "related",
+          "note": "现金账户=有现金余额的经纪账户（锁定闭包无 CashAccount 类）",
+          "object": "metric:cash_account_count"
+        },
+        {
+          "confidence": "high",
+          "match_type": "related",
+          "note": "持仓账户数=持有证券的经纪账户去重计数",
+          "object": "metric:holding_account_count"
+        }
+      ],
+      "parents": [
+        {
+          "concept": "fibo-fbc-pas-ca:Account",
+          "transitive": true
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "brokerage account",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "交易账户数",
+          "via": "metric:active_account_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "动账账户数",
+          "via": "metric:active_account_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "持仓账户数",
+          "via": "metric:holding_account_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "有余额账户数",
+          "via": "metric:cash_account_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "活跃账户数",
+          "via": "metric:active_account_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "现金账户数",
+          "via": "metric:cash_account_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "账户主数据",
+          "via": "dim_account"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "账户维度",
+          "via": "dim_account"
+        }
+      ]
+    },
+    "fibo-fbc-pas-ca:CustomerAccount": {
+      "children": [],
+      "definition": "account that represents an identified, named collection of balances and cumulative totals used to summarize customer transaction-related activity over a designated period of time",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/CustomerAccount",
+      "label": "customer account",
+      "objects": [],
+      "parents": [
+        {
+          "concept": "fibo-fbc-pas-ca:Account",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "customer account",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "financial service account",
+          "via": null
+        }
+      ]
+    },
+    "fibo-fbc-pas-ca:Fee": {
+      "children": [],
+      "definition": "charge for services performed",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Fee",
+      "label": "fee",
+      "objects": [
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "佣金是经纪服务收取的费用",
+          "object": "fact_trades.Commission"
+        },
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "每笔佣金属于经纪服务 Fee（Day 27 审核发布）",
+          "object": "metric:average_commission_per_trade"
+        },
+        {
+          "confidence": "high",
+          "match_type": "related",
+          "note": "佣金率是 Fee 相对成交金额的占比，量纲为比率（Day 27 审核发布）",
+          "object": "metric:commission_rate"
+        },
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "佣金收入对应经纪服务 Fee",
+          "object": "metric:commission_revenue"
+        }
+      ],
+      "parents": [
+        {
+          "concept": "fibo-fnd-acc-cur:MonetaryAmount",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "fee",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "佣金",
+          "via": "fact_trades.Commission"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "佣金",
+          "via": "metric:commission_revenue"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "佣金收入",
+          "via": "metric:commission_revenue"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "佣金率",
+          "via": "metric:commission_rate"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "佣金费率",
+          "via": "metric:commission_rate"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "平均每笔佣金",
+          "via": "metric:average_commission_per_trade"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "手续费",
+          "via": "fact_trades.Commission"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "手续费",
+          "via": "metric:commission_revenue"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "手续费收入",
+          "via": "metric:commission_revenue"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "手续费率",
+          "via": "metric:commission_rate"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "笔均佣金",
+          "via": "metric:average_commission_per_trade"
+        },
+        {
+          "lang": "zh",
+          "source": "S3",
+          "text": "券商抽成",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S3",
+          "text": "经纪服务费",
+          "via": null
+        }
+      ]
+    },
+    "fibo-fnd-acc-cur:MonetaryAmount": {
+      "children": [
+        {
+          "concept": "fibo-fbc-pas-ca:Balance",
+          "transitive": false
+        },
+        {
+          "concept": "fibo-fbc-pas-ca:Fee",
+          "transitive": false
+        },
+        {
+          "concept": "fibo-fnd-acc-cur:UnitPrice",
+          "transitive": true
+        }
+      ],
+      "definition": "measure that is an amount of money specified in monetary units",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount",
+      "label": "monetary amount",
+      "objects": [
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "成交价是货币金额",
+          "object": "fact_trades.TradePrice"
+        },
+        {
+          "confidence": "high",
+          "match_type": "related",
+          "note": "户均持仓市值按货币金额度量（Day 27 审核发布）",
+          "object": "metric:average_holding_value"
+        },
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "每笔成交金额的量纲是货币金额（Day 27 审核发布）",
+          "object": "metric:average_trade_value"
+        },
+        {
+          "confidence": "high",
+          "match_type": "related",
+          "note": "持仓市值按货币金额度量；持仓本体概念（MD 域）未纳入本次子集，待扩展",
+          "object": "metric:holdings_value"
+        },
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "交易额的量纲是货币金额",
+          "object": "metric:total_trade_value"
+        }
+      ],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "monetary amount",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "交易量金额",
+          "via": "metric:total_trade_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "交易额",
+          "via": "metric:total_trade_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "价格",
+          "via": "fact_trades.TradePrice"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "平均单笔交易额",
+          "via": "metric:average_trade_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "平均持仓市值",
+          "via": "metric:average_holding_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "平均每笔成交金额",
+          "via": "metric:average_trade_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "成交价",
+          "via": "fact_trades.TradePrice"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "成交单价",
+          "via": "fact_trades.TradePrice"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "成交金额",
+          "via": "metric:total_trade_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "成交额",
+          "via": "metric:total_trade_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "户均持仓市值",
+          "via": "metric:average_holding_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "持仓市值",
+          "via": "metric:holdings_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "持仓规模",
+          "via": "metric:holdings_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "持仓金额",
+          "via": "metric:holdings_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "笔均成交金额",
+          "via": "metric:average_trade_value"
+        },
+        {
+          "lang": "zh",
+          "source": "S3",
+          "text": "成交总金额",
+          "via": null
+        }
+      ]
+    },
+    "fibo-fnd-acc-cur:UnitPrice": {
+      "children": [],
+      "definition": "monetary price expressed in relation to a well-known measurable unit by which the goods or services are allocated",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/UnitPrice",
+      "label": "unit price",
+      "objects": [
+        {
+          "confidence": "high",
+          "match_type": "broad_match",
+          "note": "平均成交价=每股成交单价（UnitPrice=相对计量单位的货币价格）",
+          "object": "metric:avg_trade_price"
+        }
+      ],
+      "parents": [
+        {
+          "concept": "fibo-fnd-acc-cur:MonetaryAmount",
+          "transitive": true
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "unit price",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "平均成交价",
+          "via": "metric:avg_trade_price"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "成交均价",
+          "via": "metric:avg_trade_price"
+        }
+      ]
+    },
+    "fibo-fnd-agr-ctr:Contract": {
+      "children": [
+        {
+          "concept": "fibo-fbc-fi-fi:FinancialInstrument",
+          "transitive": true
+        }
+      ],
+      "definition": "voluntary, deliberate agreement between competent parties to which the parties agree to be legally bound, and for which the parties provide valuable consideration",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Contracts/Contract",
+      "label": "contract",
+      "objects": [],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "contract",
+          "via": null
+        }
+      ]
+    },
+    "fibo-fnd-oac-own:Holding": {
+      "children": [],
+      "definition": "owned financial interest consisting of legal or beneficial ownership of an asset or security that confers economic rights on its owner",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/OwnershipAndControl/Ownership/Holding",
+      "label": "holding",
+      "objects": [
+        {
+          "confidence": "medium",
+          "match_type": "broad_match",
+          "note": "持仓快照行=账户对证券的权益（Holding=owned financial interest）；MD 域细粒度持仓本体仍未纳入子集",
+          "object": "fact_holdings"
+        }
+      ],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "holding",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "持仓快照",
+          "via": "fact_holdings"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "持仓明细",
+          "via": "fact_holdings"
+        }
+      ]
+    },
+    "fibo-fnd-plc-adr:Address": {
+      "children": [],
+      "definition": "index to a location to which communications may be delivered",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Places/Addresses/Address",
+      "label": "address",
+      "objects": [],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "address",
+          "via": null
+        }
+      ]
+    },
+    "fibo-fnd-pty-pty:Person": {
+      "children": [],
+      "definition": "individual human being, with consciousness of self",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/Person",
+      "label": "person",
+      "objects": [
+        {
+          "confidence": "high",
+          "match_type": "exact_match",
+          "note": "TPC-DI 客户均为自然人（含 gender/DOB），FIBO Person = individual human being",
+          "object": "dim_customer"
+        },
+        {
+          "confidence": "high",
+          "match_type": "related",
+          "note": "活跃客户数=对客户（自然人）的去重计数",
+          "object": "metric:active_customer_count"
+        }
+      ],
+      "parents": [
+        {
+          "concept": "cmns-pts:Party",
+          "transitive": false
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "natural person",
+          "via": null
+        },
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "person",
+          "via": null
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "动账客户数",
+          "via": "metric:active_customer_count"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "客户主数据",
+          "via": "dim_customer"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "客户维度",
+          "via": "dim_customer"
+        },
+        {
+          "lang": "zh",
+          "source": "S2",
+          "text": "活跃客户数",
+          "via": "metric:active_customer_count"
+        }
+      ]
+    },
+    "fibo-fnd-txn-mkt:MarketTransaction": {
+      "children": [],
+      "definition": "Any transaction which defines a supply of some negotiable item in return for some Consideration. The Market Transaction has a Principal and a Counterparty, i.e. it is not symmetrical.",
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/TransactionsExt/MarketTransactions/MarketTransaction",
+      "label": "market transaction",
+      "objects": [],
+      "parents": [],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "market transaction",
+          "via": null
+        }
+      ]
+    },
+    "fibo-fnd-txn-mkt:TransactionCounterparty": {
+      "children": [],
+      "definition": null,
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/TransactionsExt/MarketTransactions/TransactionCounterparty",
+      "label": "transaction counterparty",
+      "objects": [],
+      "parents": [
+        {
+          "concept": "cmns-pts:PartyRole",
+          "transitive": true
+        }
+      ],
+      "terms": [
+        {
+          "lang": "en",
+          "source": "S1",
+          "text": "transaction counterparty",
+          "via": null
+        }
+      ]
+    }
+  },
+  "fibo_commit": "119fa8c091aa4beece7d22aefa6fe138021a4355",
+  "generated_at": "2026-10-14T16:03:42+08:00",
+  "schema_version": 1,
+  "source_semantic_sha": "a3ba5e2b708bcf578dc27b3587ca8050bef6ae0a4e2cc77290ffda586e345be4"
+}

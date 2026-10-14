@@ -50,6 +50,17 @@ dependencies = [
     # OpenAPI/校验原生，serving/api.py）
     "fastapi>=0.115",
     "uvicorn>=0.30",
+    # OIDC BFF（ADR-0031 D02/D13；serving/control/oidc.py）：Authlib 完成
+    # Authorization Code + PKCE 与 id_token 验签（固定算法，不信任 header.alg），
+    # HTTPX 承担 token/JWKS 请求（可注入 transport，测试不触网）。
+    # 许可：Authlib BSD-3-Clause（ADR-0031 §5 已读取上游 LICENSE），
+    # 具体锁版本在 T03 由 make license-check 核验；HTTPX 自 dev extras 提升。
+    "authlib>=1.3,<2",
+    "httpx>=0.27",
+    # Authlib 1.8 的 httpx 集成交互实际用 httpx2（其 _compat 的 httpx 回退已弃用；
+    # 环境里 httpx2 原为 openai 传递依赖）。显式声明避免上游变动后静默回退告警；
+    # 测试用 httpx2.MockTransport 注入受控 token/JWKS 响应。
+    "httpx2>=2.12",
     # 可观测
     "opentelemetry-api>=1.24",
     "opentelemetry-sdk>=1.24",
@@ -66,7 +77,6 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pre-commit>=3.8",
-    "httpx>=0.27",  # fastapi TestClient 依赖（tests/test_api.py）
 ]
 ml = [
     "torch>=2.4",
@@ -105,10 +115,11 @@ python_version = "3.11"
 strict = true
 files = ["agent", "semantic", "eval", "retrieval"]
 
-# 第三方库无类型 stub（或不在主依赖，如 rdflib 仅供 eval/gold 可选脚本）：
-# 边界值按 Any 处理，校验价值集中在 agent/semantic/eval 自身逻辑上。
+# 第三方库无类型 stub（或不在主依赖，如 rdflib 仅供 eval/gold 可选脚本；authlib
+# 为 ADR-0031 D02 认证依赖；pymysql 为 ADR-0031 T04 Doris 连接器驱动）——均不
+# 携带 py.typed：边界值按 Any 处理，校验价值集中在 agent/semantic/eval 自身逻辑上。
 [[tool.mypy.overrides]]
-module = ["yaml", "jsonschema", "rdflib", "rdflib.*", "pymilvus", "pymilvus.*", "networkx"]
+module = ["yaml", "jsonschema", "rdflib", "rdflib.*", "pymilvus", "pymilvus.*", "networkx", "authlib", "authlib.*", "pymysql", "mcp", "mcp.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

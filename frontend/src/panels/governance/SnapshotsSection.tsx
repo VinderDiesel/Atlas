@@ -14,6 +14,7 @@
 import { Space, Table, Tag, Typography } from "antd";
 
 import type { SnapshotsItem } from "../../api/types";
+import StarBadge from "../../components/StarBadge";
 import { LATEST_SNAPSHOT_BADGE } from "../../lib/honesty";
 import { shortSha } from "../../lib/sha";
 
@@ -92,7 +93,7 @@ export default function SnapshotsSection({ state }: Props) {
                 title: "与 HEAD",
                 dataIndex: "bound_to_head",
                 render: (value: boolean) =>
-                  value ? <Tag color="green">与 HEAD 一致</Tag> : <Tag>与 HEAD 不一致</Tag>,
+                  value ? <StarBadge status="bound" /> : <StarBadge status="unbound" />,
               },
               { title: "表数", dataIndex: "table_count" },
               {

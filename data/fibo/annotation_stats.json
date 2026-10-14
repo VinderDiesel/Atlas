@@ -1,0 +1,312 @@
+{
+  "closure": {
+    "annotations": {
+      "cmns_av_abbreviation": {
+        "class_subjects": 47,
+        "subjects": 53,
+        "triples": 57
+      },
+      "cmns_av_synonym": {
+        "class_subjects": 114,
+        "subjects": 134,
+        "triples": 200
+      },
+      "rdfs_label": {
+        "class_subjects": 1033,
+        "subjects": 3092,
+        "triples": 3193
+      },
+      "skos_alt_label": {
+        "class_subjects": 3,
+        "subjects": 3,
+        "triples": 3
+      },
+      "skos_definition": {
+        "class_subjects": 1021,
+        "subjects": 2976,
+        "triples": 2976
+      },
+      "skos_pref_label": {
+        "class_subjects": 11,
+        "subjects": 11,
+        "triples": 11
+      }
+    },
+    "owl_class_count": 1100
+  },
+  "commons_release": "20250801",
+  "description": "FIBO 注解属性统计（registry 概念覆盖 + 闭包/源文件存量），由 probe_annotations.py 生成",
+  "environment": {
+    "python": "3.11.15",
+    "rdflib": "7.6.0"
+  },
+  "fibo_commit": "119fa8c091aa4beece7d22aefa6fe138021a4355",
+  "generated_by": "data/fibo/probe_annotations.py",
+  "registry_coverage": {
+    "concepts": {
+      "cmns-dt:Date": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "cmns-org:FormalOrganization": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 2,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 1
+      },
+      "cmns-org:LegalEntity": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 4,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "cmns-org:LegalPerson": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "cmns-org:Organization": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 2,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 1
+      },
+      "cmns-org:OrganizationalSubUnit": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 1,
+        "rdfs_label": 2,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 1
+      },
+      "cmns-pts:Party": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 1,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "cmns-pts:PartyRole": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "cmns-qtu:ScalarQuantity": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-be-fe:FunctionalEntity": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-fi-fi:EquityInstrument": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-fi-fi:FinancialInstrument": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-fi-fi:SecuritiesTransaction": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 1,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-fi-fi:Security": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-fse:BrokerageFirm": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 1,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-pas-ca:Account": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-pas-ca:AccountHolder": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-pas-ca:Balance": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-pas-ca:BrokerageAccount": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-pas-ca:CustomerAccount": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 1,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fbc-pas-ca:Fee": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fnd-acc-cur:MonetaryAmount": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fnd-acc-cur:UnitPrice": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fnd-agr-ctr:Contract": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fnd-oac-own:Holding": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fnd-plc-adr:Address": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fnd-pty-pty:Person": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 1,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fnd-txn-mkt:MarketTransaction": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 1,
+        "skos_pref_label": 0
+      },
+      "fibo-fnd-txn-mkt:TransactionCounterparty": {
+        "cmns_av_abbreviation": 0,
+        "cmns_av_synonym": 0,
+        "rdfs_label": 1,
+        "skos_alt_label": 0,
+        "skos_definition": 0,
+        "skos_pref_label": 0
+      }
+    },
+    "summary": {
+      "cmns_av_abbreviation": 0,
+      "cmns_av_synonym": 7,
+      "rdfs_label": 29,
+      "skos_alt_label": 0,
+      "skos_definition": 28,
+      "skos_pref_label": 3
+    },
+    "total_concepts": 29
+  },
+  "source_scan": {
+    "rdf_file_count": 151,
+    "scope": "fibo-src/**/*.rdf（sparse checkout FND+FBC+BE，含域外文件）",
+    "tokens": {
+      "cmns-av:abbreviation": {
+        "files": 30,
+        "lines": 133
+      },
+      "cmns-av:synonym": {
+        "files": 45,
+        "lines": 228
+      },
+      "skos:altLabel": {
+        "files": 5,
+        "lines": 5
+      },
+      "skos:prefLabel": {
+        "files": 0,
+        "lines": 0
+      }
+    }
+  }
+}
