@@ -1,10 +1,13 @@
 /**
  * 根组件（P2：路由布局 + 全局单源状态）。
  *
- * 顶栏：标题、SnapshotBadge（/api/v1/health 公开面）、导航（工作台 /
- * 接入 / 治理）、
- * SessionEntry（ADR-0031 D02/D13 认证区：探测 /auth/session 决定形态——演示模式
- * 才是 RoleSwitcher；私有模式为登录入口 /配置阻塞 /身份+退出，token 只存内存）。
+ * 全局骨架（M5-T1，ADR-0032 计划 §4.6）：左侧导航 Sider（品牌区 + 4 项
+ * Menu inline，`collapsible` + `breakpoint="lg"` = 窄屏自动折叠）＋ 顶部工具栏
+ * （SnapshotBadge（/api/v1/health 公开面）、主题切换、SessionEntry（ADR-0031
+ * D02/D13 认证区：探测 /auth/session 决定形态——演示模式才是 RoleSwitcher；
+ * 私有模式为登录入口 /配置阻塞 /身份+退出，token 只存内存））＋ 内容区。
+ * 导航活跃指示 `.atlas-nav-item--active` 由 selectedKey 驱动（`/governance* →
+ * /governance` 映射原样保留）；路由表零改动。
  *
  * 全局单源（P2 起，四条）：
  * - `domain`：工作台 model / 顶栏角色清单过滤 / 治理页域选择器共用一个域；
@@ -22,6 +25,12 @@
  * `/governance` → `/governance/models`；`/governance/:section`（8 子页）；`*` 未知路径说明。
  */
 import { Alert, App as AntdApp, Layout, Menu, Typography } from "antd";
+import {
+  ApartmentOutlined,
+  ConsoleSqlOutlined,
+  DatabaseOutlined,
+  HistoryOutlined,
+} from "@ant-design/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Navigate,
@@ -74,10 +83,10 @@ const AUTO_RENEW_MARGIN_SECONDS = 300;
 const AUTO_RENEW_INTERVAL_MS = 60_000;
 
 const NAV_ITEMS = [
-  { key: "/ask", label: "工作台" },
-  { key: "/runs", label: "运行" },
-  { key: "/setup", label: "数据" },
-  { key: "/governance", label: "治理" },
+  { key: "/ask", label: "工作台", icon: <ConsoleSqlOutlined /> },
+  { key: "/runs", label: "运行", icon: <HistoryOutlined /> },
+  { key: "/setup", label: "数据", icon: <DatabaseOutlined /> },
+  { key: "/governance", label: "治理", icon: <ApartmentOutlined /> },
 ];
 
 /** `/runs` 路由包装（ADR-0031 D13 运行历史）：解析 `?run=` 深链选中。
@@ -261,6 +270,11 @@ export default function App() {
   const selectedKey = location.pathname.startsWith("/governance")
     ? "/governance"
     : location.pathname;
+  // 活跃指示：数据驱动 className（SSR 可断言；折叠态图标由 inline Menu 自持）
+  const navItems = NAV_ITEMS.map((item) => ({
+    ...item,
+    className: item.key === selectedKey ? "atlas-nav-item atlas-nav-item--active" : "atlas-nav-item",
+  }));
 
   return (
     <>
@@ -268,71 +282,85 @@ export default function App() {
         跳至主内容
       </a>
       <Layout style={{ minHeight: "100vh" }}>
-        <Layout.Header className="atlas-header">
-          <Typography.Title level={4} className="atlas-header__title">
-            Atlas 控制台
-          </Typography.Title>
-          <SnapshotBadge health={health} error={healthError} />
+        <Layout.Sider
+          className="atlas-sider"
+          theme="light"
+          collapsible
+          breakpoint="lg"
+          width={200}
+          collapsedWidth={64}
+        >
+          <div className="atlas-sider__brand">
+            <span className="atlas-sider__mark" aria-hidden="true">
+              A
+            </span>
+            <Typography.Title level={4} className="atlas-sider__title">
+              Atlas 控制台
+            </Typography.Title>
+          </div>
           <Menu
-            mode="horizontal"
+            mode="inline"
             selectedKeys={[selectedKey]}
             onClick={({ key }) => navigate(key)}
-            items={NAV_ITEMS}
-            style={{ flex: 1, minWidth: 0, background: "transparent" }}
+            items={navItems}
+            className="atlas-sider__menu"
           />
-          <ThemeSwitcher />
-          <SessionEntry identity={identity} domain={domain} onActivate={activateIdentity} />
-        </Layout.Header>
-        <Layout.Content className="atlas-content">
-        <Routes>
-          <Route path="/" element={<Navigate to="/ask" replace />} />
-          <Route
-            path="/ask"
-            element={
-              <AskWorkbench
-                key={sessionState.id}
-                token={identity?.token ?? ""}
-                model={domain}
-                onModelChange={setDomain}
-                sessionId={sessionState.id}
-                onTurnSeen={handleTurnSeen}
-                queryHistory={queryHistory}
-                onRecordHistory={handleRecordHistory}
-                onDeleteHistory={handleDeleteHistory}
-                onClearHistory={handleClearHistory}
+        </Layout.Sider>
+        <Layout>
+          <Layout.Header className="atlas-header">
+            <SnapshotBadge health={health} error={healthError} />
+            <span className="atlas-header__spacer" aria-hidden="true" />
+            <ThemeSwitcher />
+            <SessionEntry identity={identity} domain={domain} onActivate={activateIdentity} />
+          </Layout.Header>
+          <Layout.Content id="main-content" className="atlas-content">
+            <Routes>
+              <Route path="/" element={<Navigate to="/ask" replace />} />
+              <Route
+                path="/ask"
+                element={
+                  <AskWorkbench
+                    key={sessionState.id}
+                    token={identity?.token ?? ""}
+                    model={domain}
+                    onModelChange={setDomain}
+                    sessionId={sessionState.id}
+                    onTurnSeen={handleTurnSeen}
+                    queryHistory={queryHistory}
+                    onRecordHistory={handleRecordHistory}
+                    onDeleteHistory={handleDeleteHistory}
+                    onClearHistory={handleClearHistory}
+                  />
+                }
               />
-            }
-          />
-          <Route path="/runs" element={<RunRoute token={identity?.token ?? ""} />} />
-          <Route
-            path="/setup"
-            element={<SetupPipeline token={identity?.token ?? ""} />}
-          />
-          <Route path="/governance" element={<Navigate to="/governance/models" replace />} />
-          <Route
-            path="/governance/:section"
-            element={
-              <GovernanceLayout
-                token={identity?.token ?? null}
-                domain={domain}
-                onDomainChange={setDomain}
+              <Route path="/runs" element={<RunRoute token={identity?.token ?? ""} />} />
+              <Route path="/setup" element={<SetupPipeline token={identity?.token ?? ""} />} />
+              <Route path="/governance" element={<Navigate to="/governance/models" replace />} />
+              <Route
+                path="/governance/:section"
+                element={
+                  <GovernanceLayout
+                    token={identity?.token ?? null}
+                    domain={domain}
+                    onDomainChange={setDomain}
+                  />
+                }
               />
-            }
-          />
-          <Route
-            path="*"
-            element={
-              <Alert
-                type="warning"
-                showIcon
-                message="未知路径"
-                description="控制台有四个入口：/ask（工作台）、/runs（运行历史）、/setup（数据源接入 + 语义草稿与发布）、/governance/:section（治理 8 子页）。"
+              <Route
+                path="*"
+                element={
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message="未知路径"
+                    description="控制台有四个入口：/ask（工作台）、/runs（运行历史）、/setup（数据源接入 + 语义草稿与发布）、/governance/:section（治理 8 子页）。"
+                  />
+                }
               />
-            }
-          />
-        </Routes>
-      </Layout.Content>
-    </Layout>
+            </Routes>
+          </Layout.Content>
+        </Layout>
+      </Layout>
     </>
   );
 }

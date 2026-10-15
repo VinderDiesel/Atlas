@@ -141,7 +141,97 @@ pre,
   outline-offset: 2px;
 }
 
-/* ── 顶栏与内容容器 ────────────────────────────────────── */
+/* ── 侧栏导航（M5-T1：主流数据平台骨架；surface 底） ──── */
+
+.atlas-sider {
+  /* antd CSS-in-JS 运行时注入晚于本文件：背景覆盖需 !important */
+  background: var(--atlas-surface) !important;
+  border-right: 1px solid var(--atlas-border);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+/* 品牌区：展开态标题；折叠态（ant-layout-sider-collapsed）字符徽标 */
+.atlas-sider__brand {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--atlas-border);
+}
+
+.atlas-sider__title {
+  margin: 0 !important;
+  white-space: nowrap;
+  font-size: 16px !important;
+}
+
+.atlas-sider__mark {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--atlas-primary);
+  border-radius: 6px;
+  color: var(--atlas-primary);
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ant-layout-sider-collapsed .atlas-sider__brand {
+  justify-content: center;
+  padding: 0;
+}
+
+.ant-layout-sider-collapsed .atlas-sider__title {
+  display: none;
+}
+
+.ant-layout-sider-collapsed .atlas-sider__mark {
+  display: inline-flex;
+}
+
+/* Menu 面：透明底；去 antd inline 菜单默认右侧分隔线 */
+.atlas-sider__menu {
+  background: transparent !important;
+  border-inline-end: none !important;
+  padding: 8px 0;
+}
+
+/* 导航项：150ms 过渡（prefers-reduced-motion 由 WIG 全局段统一关闭） */
+.atlas-nav-item {
+  transition: background 150ms ease, box-shadow 150ms ease;
+}
+
+.atlas-sider__menu .atlas-nav-item:hover {
+  background: var(--atlas-elevated) !important;
+}
+
+/* 活跃指示：左缘 2px 青色指示 + 发光（仪器感，非 bounce/spring） */
+.atlas-sider__menu .atlas-nav-item--active {
+  color: var(--atlas-primary) !important;
+  background: color-mix(in srgb, var(--atlas-primary) 10%, transparent) !important;
+  box-shadow:
+    inset 2px 0 0 var(--atlas-primary),
+    0 0 12px color-mix(in srgb, var(--atlas-primary) 18%, transparent);
+}
+
+.atlas-sider__menu .atlas-nav-item--active:hover {
+  background: color-mix(in srgb, var(--atlas-primary) 14%, transparent) !important;
+}
+
+/* 折叠触发器：跟随主题面（antd 默认深色底） */
+.atlas-sider .ant-layout-sider-trigger {
+  background: var(--atlas-elevated) !important;
+  border-top: 1px solid var(--atlas-border);
+  color: var(--atlas-text) !important;
+}
+
+/* ── 顶栏（工具栏）与内容容器 ──────────────────────────── */
 
 .atlas-header {
   display: flex;
@@ -153,14 +243,9 @@ pre,
   z-index: 20;
 }
 
-.atlas-header__title {
-  margin: 0 !important;
-  white-space: nowrap;
-}
-
-/* 顶栏菜单自带的下边界与顶栏 border-bottom 重复，去掉 */
-.atlas-header .ant-menu-horizontal {
-  border-bottom: none !important;
+/* 工具栏弹性占位：快照封印靠左，主题 / 身份靠右 */
+.atlas-header__spacer {
+  flex: 1;
 }
 
 .atlas-content {
